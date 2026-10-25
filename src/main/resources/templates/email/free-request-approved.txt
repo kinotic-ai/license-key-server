@@ -1,0 +1,9 @@
+Good news: the free Kinotic Enterprise license for {{organization}} is approved. Here is the license key; paste it into your Kinotic deployment to enable the Enterprise Features.
+
+{{key}}
+
+The key is valid until {{expiresOn}}. A free license is renewed by re-certifying that your organization still qualifies, which you can do from your account before the key expires:
+
+{{accountUrl}}
+
+— Minds Ignited, makers of Kinotic

@@ -1,0 +1,9 @@
+Thank you for your interest in Kinotic Enterprise. We reviewed the free license request for {{organization}} and couldn't approve it: the free plan is for small organizations below about $1M in annual revenue and about $3M raised.
+
+Every paid plan is self-serve and bills monthly, and you can start one any time:
+
+{{siteUrl}}
+
+If you believe this was a mistake, reply to this email and we'll take another look.
+
+— Minds Ignited, makers of Kinotic
