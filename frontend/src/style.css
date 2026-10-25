@@ -1,0 +1,18 @@
+@import "tailwindcss";
+@import "tailwindcss-primeui";
+
+/* Tailwind v4 skips node_modules during source detection, so the shared package is scanned explicitly */
+@source "../node_modules/@kinotic-ai/frontend-common/dist";
+
+/* useTheme toggles .dark on <html> and PrimeVue's darkModeSelector follows it; bind dark: to the class too */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Keys, ids and code render in JetBrains Mono */
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+html,
+body {
+  overscroll-behavior: none;
+}

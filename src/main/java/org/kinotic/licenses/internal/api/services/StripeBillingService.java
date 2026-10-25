@@ -10,13 +10,16 @@ import com.stripe.model.StripeObject;
 import com.stripe.model.Subscription;
 import com.stripe.model.SubscriptionItem;
 import com.stripe.model.checkout.Session;
+import com.stripe.service.V1Services;
 import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.PriceListParams;
 import com.stripe.param.SubscriptionRetrieveParams;
 import com.stripe.param.checkout.SessionCreateParams;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 import org.kinotic.licenses.api.config.KinoticLicensesProperties;
 import org.kinotic.licenses.api.model.Customer;
@@ -48,6 +51,7 @@ import java.util.Map;
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class StripeBillingService {
 
     private static final Duration PLAN_CACHE_LIFETIME = Duration.ofMinutes(10);
@@ -64,22 +68,9 @@ public class StripeBillingService {
     private final LicenseRepository licenseRepository;
     private final LicenseService licenseService;
     private final Vertx vertx;
-    private final StripeClient stripe;
 
+    private volatile V1Services stripe;
     private volatile PlanCatalog catalog;
-
-    public StripeBillingService(KinoticLicensesProperties properties,
-                                CustomerRepository customerRepository,
-                                LicenseRepository licenseRepository,
-                                LicenseService licenseService,
-                                Vertx vertx) {
-        this.properties = properties;
-        this.customerRepository = customerRepository;
-        this.licenseRepository = licenseRepository;
-        this.licenseService = licenseService;
-        this.vertx = vertx;
-        this.stripe = new StripeClient(properties.getLicenses().getStripe().getSecretKey());
-    }
 
     /**
      * The plans with their current prices, read from Stripe and cached for a few minutes.
@@ -120,7 +111,7 @@ public class StripeBillingService {
                                                                                  .putMetadata(PLAN_METADATA, plan.name())
                                                                                  .build())
                         .build();
-                return stripe.checkout().sessions().create(params).getUrl();
+                return stripe().checkout().sessions().create(params).getUrl();
             }));
         });
     }
@@ -132,7 +123,7 @@ public class StripeBillingService {
      */
     public Future<String> createPortalSession(Customer customer) {
         Validate.validState(customer.getStripeCustomerId() != null, "The customer %s has never bought a plan", customer.getId());
-        return blocking(() -> stripe.billingPortal().sessions().create(
+        return blocking(() -> stripe().billingPortal().sessions().create(
                 com.stripe.param.billingportal.SessionCreateParams.builder()
                                                                    .setCustomer(customer.getStripeCustomerId())
                                                                    .setReturnUrl(properties.getLicenses().getPublicBaseUrl() + ACCOUNT_PATH)
@@ -180,7 +171,7 @@ public class StripeBillingService {
 
     private Future<Void> createLicenseFor(Customer customer, Session session) {
         Validate.validState(customer != null, "The Checkout Session %s names no customer of this server", session.getId());
-        return blocking(() -> stripe.subscriptions().retrieve(session.getSubscription(),
+        return blocking(() -> stripe().subscriptions().retrieve(session.getSubscription(),
                                                               SubscriptionRetrieveParams.builder().addExpand("items.data.price").build()))
                 .compose(subscription -> {
                     SubscriptionItem item = subscription.getItems().getData().getFirst();
@@ -271,7 +262,7 @@ public class StripeBillingService {
         if (customer.getStripeCustomerId() != null) {
             ret = Future.succeededFuture(customer.getStripeCustomerId());
         } else {
-            ret = blocking(() -> stripe.customers().create(CustomerCreateParams.builder()
+            ret = blocking(() -> stripe().customers().create(CustomerCreateParams.builder()
                                                                                .setName(customer.getLegalName())
                                                                                .setEmail(contactEmail)
                                                                                .setDescription("Billing contact: " + contactName)
@@ -296,7 +287,7 @@ public class StripeBillingService {
 
     private PlanCatalog readCatalog() throws Exception {
         List<String> lookupKeys = Arrays.stream(Plan.values()).filter(plan -> plan != Plan.FREE).map(Plan::lookupKey).toList();
-        List<Price> prices = stripe.prices().list(PriceListParams.builder()
+        List<Price> prices = stripe().prices().list(PriceListParams.builder()
                                                                  .setActive(true)
                                                                  .addAllLookupKey(lookupKeys)
                                                                  .addExpand("data.product")
@@ -330,6 +321,23 @@ public class StripeBillingService {
                           .setRequiresApproval(true));
         plans.sort(Comparator.comparing(PlanInfo::getId));
         return new PlanCatalog(List.copyOf(plans), priceIds, Instant.now());
+    }
+
+    // built on first use, so a server with no Stripe key boots and fails only the calls that need Stripe
+    private V1Services stripe() {
+        V1Services ret = stripe;
+        if (ret == null) {
+            synchronized (this) {
+                ret = stripe;
+                if (ret == null) {
+                    String secretKey = properties.getLicenses().getStripe().getSecretKey();
+                    Validate.validState(StringUtils.isNotBlank(secretKey), "kinotic.licenses.stripe.secretKey is not set");
+                    ret = new StripeClient(secretKey).v1();
+                    stripe = ret;
+                }
+            }
+        }
+        return ret;
     }
 
     // stripe-java blocks on its HTTP calls, so every call runs on a worker thread

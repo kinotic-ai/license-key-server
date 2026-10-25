@@ -107,6 +107,14 @@ dependencies {
     testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
 }
 
+// The Vue app built in frontend/ (pnpm install && pnpm build) is served from the jar's webroot; a build without it
+// serves the API alone
+processResources {
+    from('frontend/dist') {
+        into 'webroot'
+    }
+}
+
 // Ignite 2.18 reflects into these JDK packages
 def igniteJvmArgs = [
         '--add-opens=java.base/java.nio=ALL-UNNAMED',
