@@ -53,6 +53,15 @@ public class FreeLicenseRequestRepository {
                    .map(rows -> PgValues.map(rows, FreeLicenseRequestRepository::toRequest));
     }
 
+    /**
+     * The customer's requests, newest first.
+     */
+    public Future<List<FreeLicenseRequest>> findByCustomerId(String customerId) {
+        return pool.preparedQuery(SELECT + " WHERE r.customer_id = $1 ORDER BY r.created_at DESC")
+                   .execute(Tuple.of(customerId))
+                   .map(rows -> PgValues.map(rows, FreeLicenseRequestRepository::toRequest));
+    }
+
     public Future<FreeLicenseRequest> review(String id, FreeLicenseRequestStatus status, String reviewedBy, Instant reviewedAt) {
         return pool.preparedQuery("UPDATE free_license_request SET status = $2, reviewed_by = $3, reviewed_at = $4 WHERE id = $1")
                    .execute(Tuple.of(id, status.name(), reviewedBy, PgValues.timestamp(reviewedAt)))

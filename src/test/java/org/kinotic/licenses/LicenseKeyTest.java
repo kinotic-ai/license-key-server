@@ -1,21 +1,12 @@
 package org.kinotic.licenses;
 
-import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
-import io.vertx.ext.web.client.WebClient;
-import io.vertx.ext.web.client.WebClientOptions;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.kinotic.licenses.api.model.ContactRole;
 import org.kinotic.licenses.api.model.Customer;
-import org.kinotic.licenses.api.model.CustomerContact;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
-import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
-import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.kinotic.licenses.internal.api.services.LicenseService;
 import org.kinotic.licenses.support.ServerTest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,7 +26,6 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -48,27 +38,8 @@ class LicenseKeyTest extends ServerTest {
 
     private static final Base64.Decoder BASE64URL = Base64.getUrlDecoder();
 
-    private static Vertx vertx;
-    private static WebClient client;
-
     @Autowired
     private LicenseService licenseService;
-    @Autowired
-    private CustomerRepository customerRepository;
-    @Autowired
-    private CustomerContactRepository contactRepository;
-
-    @BeforeAll
-    static void startClient() {
-        vertx = Vertx.vertx();
-        client = WebClient.create(vertx, new WebClientOptions().setDefaultHost("localhost").setDefaultPort(PORT));
-    }
-
-    @AfterAll
-    static void stopClient() {
-        client.close();
-        vertx.close();
-    }
 
     @Test
     void aNewLicenseGetsAKeyThatVerifiesAgainstThePublicKey() throws Exception {
@@ -76,7 +47,7 @@ class LicenseKeyTest extends ServerTest {
         Instant periodEnd = Instant.now().plus(Duration.ofDays(30));
 
         License license = await(licenseService.createLicense(customer, Plan.STARTUP, "sub_" + UUID.randomUUID(),
-                                                             "cs_" + UUID.randomUUID(), periodEnd));
+                                                             "cs_" + UUID.randomUUID(), periodEnd)).license();
         assertThat(license.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
         assertThat(license.getTermEnd()).isEqualTo(LicenseService.termEnd(license.getTermStart()));
 
@@ -126,8 +97,7 @@ class LicenseKeyTest extends ServerTest {
 
     // the key a verifier builds from GET /api/signing-key
     private static PublicKey publishedPublicKey() throws Exception {
-        JsonObject jwk = client.get("/api/signing-key").send().toCompletionStage().toCompletableFuture()
-                               .get(10, TimeUnit.SECONDS).bodyAsJsonObject();
+        JsonObject jwk = get("/api/signing-key", null).bodyAsJsonObject();
         assertThat(jwk.getString("kty")).isEqualTo("EC");
         assertThat(jwk.getString("crv")).isEqualTo("P-256");
         assertThat(jwk.getString("alg")).isEqualTo("ES256");
@@ -138,15 +108,4 @@ class LicenseKeyTest extends ServerTest {
         return KeyFactory.getInstance("EC").generatePublic(new ECPublicKeySpec(point, parameters.getParameterSpec(ECParameterSpec.class)));
     }
 
-    private Customer seedCustomer() throws Exception {
-        Customer customer = await(customerRepository.save(new Customer().setId(UUID.randomUUID().toString()).setLegalName("Acme Robotics Inc")));
-        await(contactRepository.save(new CustomerContact().setId(UUID.randomUUID().toString()).setCustomerId(customer.getId())
-                                                          .setName("Ada Lovelace").setEmail("ada-" + customer.getId() + "@acme.example")
-                                                          .setRole(ContactRole.BILLING)));
-        return customer;
-    }
-
-    private static <T> T await(io.vertx.core.Future<T> future) throws Exception {
-        return future.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
-    }
 }

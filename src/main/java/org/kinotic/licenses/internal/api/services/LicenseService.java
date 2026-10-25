@@ -12,6 +12,7 @@ import org.kinotic.licenses.api.model.LicenseKeyClaims;
 import org.kinotic.licenses.api.model.LicensePurpose;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
+import org.kinotic.licenses.internal.api.model.NewLicense;
 import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.kinotic.licenses.internal.api.repositories.IssuedKeyRepository;
@@ -25,11 +26,10 @@ import java.time.ZoneOffset;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
-import java.util.function.Function;
 
 /**
  * The lifecycle of a license and the keys issued for it. A license runs in twelve-month terms; each term's key lives
- * the term plus a short buffer, and is emailed to the customer's contacts and kept in the append-only key log. A key,
+ * the term plus a short buffer, is emailed to the customer's contacts, and is kept in the append-only key log. A key,
  * once issued, is never withdrawn: it is verified offline and works until it expires, so revoking or cancelling a
  * license only stops new keys.
  */
@@ -55,17 +55,18 @@ public class LicenseService {
     private final EmailService emailService;
 
     /**
-     * Creates a license whose term starts now, issues its first key and emails the key to the customer's contacts.
+     * Creates a license whose term starts now and issues its first key. The caller emails the key, with the message
+     * that fits how the license came about.
      *
      * @param customer             the licensee
      * @param plan                 the plan
      * @param stripeSubscriptionId the Stripe Subscription billing it, or {@code null} for a free license
      * @param checkoutSessionId    the Stripe Checkout Session that bought it, or {@code null} for a free license
      * @param currentPeriodEnd     the end of the first billing period, or {@code null} for a free license
-     * @return the license
+     * @return the license and its key
      */
-    public Future<License> createLicense(Customer customer, Plan plan, String stripeSubscriptionId, String checkoutSessionId,
-                                         Instant currentPeriodEnd) {
+    public Future<NewLicense> createLicense(Customer customer, Plan plan, String stripeSubscriptionId, String checkoutSessionId,
+                                            Instant currentPeriodEnd) {
         Instant now = Instant.now();
         License license = new License()
                 .setId(UUID.randomUUID().toString())
@@ -80,34 +81,54 @@ public class LicenseService {
                 .setTermEnd(termEnd(now))
                 .setLastPaymentAt(stripeSubscriptionId != null ? now : null);
         return licenseRepository.save(license)
-                                .compose(saved -> issueKey(saved)
-                                        .compose(key -> emailContacts(saved, (contact, organization) ->
-                                                emailService.sendNewKey(contact, organization, saved, key)))
-                                        .map(saved));
+                                .compose(saved -> issueKey(saved).map(key -> new NewLicense(saved, key)));
     }
 
     /**
-     * Starts the license's next term and issues and emails its key. The current key keeps working until it expires.
+     * Starts the license's next term and issues its key. The current key keeps working until it expires.
      */
     public Future<IssuedKey> issueRenewalKey(License license) {
         license.setTermStart(license.getTermEnd()).setTermEnd(termEnd(license.getTermEnd()));
-        return licenseRepository.update(license)
-                                .compose(this::issueKey)
-                                .compose(key -> emailContacts(license, (contact, organization) ->
-                                        emailService.sendRenewalKey(contact, organization, license, key)).map(key));
+        return licenseRepository.update(license).compose(this::issueKey);
     }
 
     /**
-     * Issues and emails another key for the license's current term.
+     * Issues another key for the license's current term.
      */
     public Future<IssuedKey> issueReplacementKey(License license) {
-        return issueKey(license)
-                .compose(key -> emailContacts(license, (contact, organization) ->
-                        emailService.sendNewKey(contact, organization, license, key)).map(key));
+        return issueKey(license);
     }
 
     /**
-     * Emails the license's newest key to the customer's contacts again.
+     * Emails a key to the licensee's contacts as the license's first key or a replacement.
+     */
+    public Future<Void> emailNewKey(License license, IssuedKey key) {
+        return emailContacts(license, (contact, organization) -> emailService.sendNewKey(contact, organization, license, key));
+    }
+
+    /**
+     * Emails a renewal key to the licensee's contacts.
+     */
+    public Future<Void> emailRenewalKey(License license, IssuedKey key) {
+        return emailContacts(license, (contact, organization) -> emailService.sendRenewalKey(contact, organization, license, key));
+    }
+
+    /**
+     * Emails the key of an approved free license, or of its approved renewal, to the licensee's contacts.
+     */
+    public Future<Void> emailFreeApproval(License license, IssuedKey key) {
+        return emailContacts(license, (contact, organization) -> emailService.sendFreeRequestApproved(contact, organization, license, key));
+    }
+
+    /**
+     * Tells the licensee's contacts a payment failed and no renewal key is issued until one succeeds.
+     */
+    public Future<Void> emailPastDue(License license) {
+        return emailContacts(license, (contact, organization) -> emailService.sendPastDue(contact, organization, license));
+    }
+
+    /**
+     * Emails the license's newest key to the licensee's contacts again.
      *
      * @throws IllegalArgumentException when the license has no key
      */
@@ -116,8 +137,7 @@ public class LicenseService {
             if (key == null) {
                 throw new IllegalArgumentException("The license " + license.getId() + " has no key to resend");
             }
-            return emailContacts(license, (contact, organization) ->
-                    emailService.sendNewKey(contact, organization, license, key));
+            return emailNewKey(license, key);
         });
     }
 
@@ -146,12 +166,17 @@ public class LicenseService {
     }
 
     /**
-     * Marks a payment failed and tells the customer's contacts; no renewal key is issued until a payment succeeds.
+     * Marks a payment failed; no renewal key is issued until a payment succeeds.
      */
     public Future<License> markPastDue(License license) {
-        return licenseRepository.update(license.setStatus(LicenseStatus.PAST_DUE))
-                                .compose(updated -> emailContacts(updated, (contact, organization) ->
-                                        emailService.sendPastDue(contact, organization, updated)).map(updated));
+        return licenseRepository.update(license.setStatus(LicenseStatus.PAST_DUE));
+    }
+
+    /**
+     * Marks the subscription ended; no renewal key is issued.
+     */
+    public Future<License> cancel(License license) {
+        return licenseRepository.update(license.setStatus(LicenseStatus.CANCELED));
     }
 
     /**

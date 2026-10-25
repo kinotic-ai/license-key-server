@@ -65,6 +65,15 @@ public class LicenseRepository {
         return findOne("checkout_session_id = $1", checkoutSessionId);
     }
 
+    /**
+     * The customer's free license, or {@code null} when it has none.
+     */
+    public Future<License> findFreeLicense(String customerId) {
+        return pool.preparedQuery("SELECT " + COLUMNS + " FROM license WHERE customer_id = $1 AND plan = $2 ORDER BY created_at DESC LIMIT 1")
+                   .execute(Tuple.of(customerId, Plan.FREE.name()))
+                   .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
+    }
+
     public Future<List<License>> findByCustomerId(String customerId) {
         return pool.preparedQuery("SELECT " + COLUMNS + " FROM license WHERE customer_id = $1 ORDER BY created_at DESC")
                    .execute(Tuple.of(customerId))
@@ -72,11 +81,12 @@ public class LicenseRepository {
     }
 
     /**
-     * The licenses in good standing whose term ends before {@code termEndsBefore}, which are due a renewal key.
+     * The paid licenses in good standing whose term ends before {@code termEndsBefore}, which are due a renewal key.
+     * A free license renews only through a re-certification staff approve.
      */
-    public Future<List<License>> findRenewalsDue(Instant termEndsBefore) {
-        return pool.preparedQuery("SELECT " + COLUMNS + " FROM license WHERE status = $1 AND term_end < $2 ORDER BY term_end")
-                   .execute(Tuple.of(LicenseStatus.ACTIVE.name(), PgValues.timestamp(termEndsBefore)))
+    public Future<List<License>> findPaidRenewalsDue(Instant termEndsBefore) {
+        return pool.preparedQuery("SELECT " + COLUMNS + " FROM license WHERE status = $1 AND plan <> $2 AND term_end < $3 ORDER BY term_end")
+                   .execute(Tuple.of(LicenseStatus.ACTIVE.name(), Plan.FREE.name(), PgValues.timestamp(termEndsBefore)))
                    .map(rows -> PgValues.map(rows, LicenseRepository::toLicense));
     }
 
