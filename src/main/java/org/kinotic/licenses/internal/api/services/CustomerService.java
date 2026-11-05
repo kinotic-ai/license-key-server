@@ -2,6 +2,7 @@ package org.kinotic.licenses.internal.api.services;
 
 import io.vertx.core.Future;
 import lombok.RequiredArgsConstructor;
+import org.kinotic.core.api.exceptions.AlreadyExistsException;
 import org.apache.commons.lang3.Validate;
 import org.kinotic.licenses.api.model.AgreementAcceptance;
 import org.kinotic.licenses.api.model.AgreementTerms;
@@ -28,12 +29,14 @@ public class CustomerService {
     private final AgreementAcceptanceRepository acceptanceRepository;
 
     /**
-     * Creates the customer with its billing contact and records that the contact accepted the current terms.
+     * Creates the customer with its billing contact and records that the contact accepted the current terms. An email
+     * address belongs to one customer: a sign-up with an address that already has an account is refused, and the
+     * person signs in to that account instead.
      *
      * @param legalName    the customer's legal name
      * @param contactName  the billing contact's name, who accepted the terms
      * @param contactEmail the billing contact's email
-     * @return the customer
+     * @return the customer, or a failure with {@link AlreadyExistsException} when the address already has an account
      */
     public Future<Customer> createCustomer(String legalName, String contactName, String contactEmail) {
         Validate.notBlank(legalName, "The legal name is required");
@@ -52,7 +55,12 @@ public class CustomerService {
                 .setTermsVersion(AgreementTerms.VERSION)
                 .setAcceptedByName(contact.getName())
                 .setAcceptedByEmail(contact.getEmail());
-        return customerRepository.save(customer)
+        // checked before anything is written, so a refused sign-up leaves no customer behind; the unique index on the
+        // contact's email refuses the one that loses a race past this check
+        return contactRepository.findByEmail(contact.getEmail())
+                                .compose(existing -> existing.isEmpty()
+                                        ? customerRepository.save(customer)
+                                        : Future.failedFuture(new AlreadyExistsException(CustomerContactRepository.EMAIL_TAKEN)))
                                  .compose(saved -> contactRepository.save(contact))
                                  .compose(savedContact -> acceptanceRepository.save(acceptance))
                                  .compose(savedAcceptance -> customerRepository.findById(customer.getId()));

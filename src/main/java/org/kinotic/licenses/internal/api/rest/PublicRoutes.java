@@ -5,6 +5,7 @@ import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.Validate;
+import org.kinotic.core.api.exceptions.AlreadyExistsException;
 import org.kinotic.core.api.service.SuppliesGatewayRoutes;
 import org.kinotic.licenses.api.config.KinoticLicensesProperties;
 import org.kinotic.licenses.api.model.AgreementTerms;
@@ -91,7 +92,7 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
         customerService.createCustomer(RestSupport.requiredString(body, "legalName"), contactName, contactEmail)
                        .compose(customer -> billingService.startCheckout(customer, contactName, contactEmail, plan))
                        .onSuccess(url -> RestSupport.respondJson(ctx, 200, new JsonObject().put("url", url)))
-                       .onFailure(ctx::fail);
+                       .onFailure(t -> failSignUp(ctx, t));
     }
 
     /**
@@ -129,7 +130,16 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
                                    RestSupport.requiredString(body, "contactEmail"),
                                    certification)
                           .onSuccess(request -> RestSupport.respondJson(ctx, 201, new JsonObject().put("id", request.getId())))
-                          .onFailure(ctx::fail);
+                          .onFailure(t -> failSignUp(ctx, t));
+    }
+
+    // an address that already has an account is a conflict the form explains, not a server error
+    private static void failSignUp(RoutingContext ctx, Throwable t) {
+        if (t instanceof AlreadyExistsException) {
+            RestSupport.respondJson(ctx, 409, new JsonObject().put("error", t.getMessage()));
+        } else {
+            ctx.fail(t);
+        }
     }
 
     private static Plan plan(JsonObject body) {

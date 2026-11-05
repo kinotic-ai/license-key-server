@@ -15,7 +15,8 @@ CREATE TABLE customer_contact (
     email       TEXT NOT NULL,
     role        TEXT NOT NULL
 );
-CREATE INDEX customer_contact_email_idx ON customer_contact (lower(email));
+-- one address belongs to one customer, so a sign-in code always names one account
+CREATE UNIQUE INDEX customer_contact_email_idx ON customer_contact (lower(email));
 CREATE INDEX customer_contact_customer_idx ON customer_contact (customer_id);
 
 CREATE TABLE agreement_acceptance (

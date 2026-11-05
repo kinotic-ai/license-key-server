@@ -142,6 +142,27 @@ class FreeLicenseTest extends ServerTest {
     }
 
     @Test
+    void anAddressThatAlreadyHasAnAccountIsSentToSignIn() throws Exception {
+        String email = "taken-" + UUID.randomUUID() + "@tiny.example";
+        assertThat(post("/api/free-requests", requestBody(email).put("acceptTerms", true), null).statusCode()).isEqualTo(201);
+        CustomerContact original = await(contactRepository.findByEmail(email)).getFirst();
+
+        HttpResponse<Buffer> again = post("/api/free-requests", requestBody(email.toUpperCase()).put("acceptTerms", true), null);
+        assertThat(again.statusCode()).isEqualTo(409);
+        assertThat(again.bodyAsJsonObject().getString("error")).contains("Sign in");
+
+        // a purchase is refused the same way, before Stripe is called
+        HttpResponse<Buffer> checkout = post("/api/checkout", new JsonObject().put("plan", "STARTUP").put("legalName", "Other Co")
+                                                                          .put("contactName", "Someone Else").put("contactEmail", email)
+                                                                          .put("acceptTerms", true), null);
+        assertThat(checkout.statusCode()).isEqualTo(409);
+
+        // the address still signs in to the account it belongs to
+        assertThat(await(contactRepository.findByEmail(email))).extracting(CustomerContact::getCustomerId)
+                                                               .containsExactly(original.getCustomerId());
+    }
+
+    @Test
     void nothingIsRecordedWithoutTheAcceptance() throws Exception {
         HttpResponse<Buffer> response = post("/api/free-requests", requestBody("nobody-" + UUID.randomUUID() + "@x.example"), null);
         assertThat(response.statusCode()).isEqualTo(400);

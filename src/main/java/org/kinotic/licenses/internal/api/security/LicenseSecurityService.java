@@ -2,6 +2,7 @@ package org.kinotic.licenses.internal.api.security;
 
 import io.vertx.core.Future;
 import org.kinotic.core.api.exceptions.AuthenticationException;
+import org.kinotic.core.api.security.AuthenticationContext;
 import org.kinotic.core.api.security.Participant;
 import org.kinotic.core.api.security.SecurityService;
 import org.springframework.stereotype.Component;
@@ -17,7 +18,7 @@ import java.util.Map;
 public class LicenseSecurityService implements SecurityService {
 
     @Override
-    public Future<Participant> authenticate(Map<String, String> authenticationInfo) {
+    public Future<Participant> authenticate(Map<String, String> authenticationInfo, AuthenticationContext context) {
         return Future.failedFuture(new AuthenticationException("Sign in first"));
     }
 }
