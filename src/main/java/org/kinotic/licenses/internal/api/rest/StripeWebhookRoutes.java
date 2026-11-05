@@ -60,10 +60,12 @@ public class StripeWebhookRoutes implements SuppliesGatewayRoutes {
                        .compose(isNew -> {
                            Future<Void> handled;
                            if (isNew) {
-                               // a failure forgets the event, so Stripe's redelivery handles it afresh
-                               handled = billingService.handleEvent(event)
-                                                       .recover(t -> eventRepository.forget(event.getId())
-                                                                                    .compose(v -> Future.failedFuture(t)));
+                               // a failure forgets the event, so Stripe's redelivery handles it afresh; the handler runs inside
+                               // the chain so a synchronous throw, as an unreadable payload raises, is a failure like any other
+                               handled = Future.<Void>succeededFuture()
+                                               .compose(v -> billingService.handleEvent(event))
+                                               .recover(t -> eventRepository.forget(event.getId())
+                                                                            .compose(v -> Future.failedFuture(t)));
                            } else {
                                log.debug("The Stripe event {} was already processed", event.getId());
                                handled = Future.succeededFuture();

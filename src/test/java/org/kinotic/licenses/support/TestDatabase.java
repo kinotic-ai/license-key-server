@@ -1,6 +1,5 @@
 package org.kinotic.licenses.support;
 
-import org.junit.jupiter.api.Assumptions;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.PostgreSQLContainer;
 
@@ -9,7 +8,7 @@ import java.net.URI;
 /**
  * The Postgres the suite runs against: the one {@code LICENSES_TEST_DATABASE_URL} names
  * ({@code postgresql://user:password@host:port/db}), else a Testcontainers container when Docker is available.
- * A suite with neither is skipped.
+ * A suite with neither is skipped by {@link #available()}.
  */
 public final class TestDatabase {
 
@@ -32,7 +31,15 @@ public final class TestDatabase {
     }
 
     /**
-     * The suite's database, started on first use; skips the calling test when none is available.
+     * Whether a database is available to the suite: the condition the server tests are enabled on.
+     */
+    public static boolean available() {
+        String url = System.getenv(URL_VARIABLE);
+        return (url != null && !url.isBlank()) || DockerClientFactory.instance().isDockerAvailable();
+    }
+
+    /**
+     * The suite's database, started on first use.
      */
     public static TestDatabase get() {
         TestDatabase ret = instance;
@@ -57,8 +64,9 @@ public final class TestDatabase {
             ret = new TestDatabase(uri.getHost(), uri.getPort(), uri.getPath().substring(1), userInfo[0],
                                    userInfo.length > 1 ? userInfo[1] : "");
         } else {
-            Assumptions.assumeTrue(DockerClientFactory.instance().isDockerAvailable(),
-                                   "No Postgres: set " + URL_VARIABLE + " or run Docker for Testcontainers");
+            if (!DockerClientFactory.instance().isDockerAvailable()) {
+                throw new IllegalStateException("No Postgres: set " + URL_VARIABLE + " or run Docker for Testcontainers");
+            }
             PostgreSQLContainer container = new PostgreSQLContainer("postgres:16-alpine");
             // lives for the JVM; Testcontainers' reaper removes it afterwards
             container.start();

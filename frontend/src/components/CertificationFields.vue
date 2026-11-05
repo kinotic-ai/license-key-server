@@ -14,13 +14,13 @@ const intendedUse = defineModel<string>('intendedUse', { required: true })
   <div class="grid gap-5 sm:grid-cols-2">
     <div>
       <label for="annual-revenue" class="mb-2 block text-sm font-medium">Annual revenue (USD)</label>
-      <InputNumber id="annual-revenue" v-model="annualRevenue" class="w-full" mode="currency" currency="USD" locale="en-US"
+      <InputNumber input-id="annual-revenue" v-model="annualRevenue" class="w-full" mode="currency" currency="USD" locale="en-US"
                    :min="0" :max-fraction-digits="0" />
       <p class="app-subtle-text mt-1 text-xs">The free plan is for organizations below about $1M.</p>
     </div>
     <div>
       <label for="capital-raised" class="mb-2 block text-sm font-medium">Capital raised (USD)</label>
-      <InputNumber id="capital-raised" v-model="capitalRaised" class="w-full" mode="currency" currency="USD" locale="en-US"
+      <InputNumber input-id="capital-raised" v-model="capitalRaised" class="w-full" mode="currency" currency="USD" locale="en-US"
                    :min="0" :max-fraction-digits="0" />
       <p class="app-subtle-text mt-1 text-xs">Below about $3M in total.</p>
     </div>

@@ -6,6 +6,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Limits how many times a key may act within a sliding window. State is held in this node's memory, which is the
@@ -16,6 +17,7 @@ public class SlidingWindowRateLimiter {
     private final int limit;
     private final Duration window;
     private final Map<String, Deque<Instant>> attempts = new ConcurrentHashMap<>();
+    private volatile Instant lastSweep = Instant.EPOCH;
 
     /**
      * @param limit  the most acts a key may make within the window
@@ -33,23 +35,30 @@ public class SlidingWindowRateLimiter {
      */
     public boolean tryAcquire(String key, Instant now) {
         Instant windowStart = now.minus(window);
-        Deque<Instant> times = attempts.computeIfAbsent(key, k -> new ArrayDeque<>());
-        boolean ret;
-        synchronized (times) {
-            while (!times.isEmpty() && times.peekFirst().isBefore(windowStart)) {
-                times.pollFirst();
+        AtomicBoolean allowed = new AtomicBoolean();
+        // pruning and recording happen under the key's own map lock, so a concurrent sweep never detaches the deque
+        attempts.compute(key, (k, times) -> {
+            Deque<Instant> ret = times != null ? times : new ArrayDeque<>();
+            while (!ret.isEmpty() && ret.peekFirst().isBefore(windowStart)) {
+                ret.pollFirst();
             }
-            ret = times.size() < limit;
-            if (ret) {
-                times.addLast(now);
+            allowed.set(ret.size() < limit);
+            if (allowed.get()) {
+                ret.addLast(now);
+            }
+            return ret;
+        });
+        sweep(now, windowStart);
+        return allowed.get();
+    }
+
+    // keys that have gone quiet are dropped at most once per window, so the map tracks only recent callers
+    private void sweep(Instant now, Instant windowStart) {
+        if (lastSweep.plus(window).isBefore(now)) {
+            lastSweep = now;
+            for (String key : attempts.keySet()) {
+                attempts.computeIfPresent(key, (k, times) -> times.isEmpty() || times.peekLast().isBefore(windowStart) ? null : times);
             }
         }
-        // keys that have gone quiet are dropped so the map tracks only recent callers
-        attempts.entrySet().removeIf(entry -> {
-            synchronized (entry.getValue()) {
-                return entry.getValue().isEmpty() || entry.getValue().peekLast().isBefore(windowStart);
-            }
-        });
-        return ret;
     }
 }

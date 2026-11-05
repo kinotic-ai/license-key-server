@@ -154,11 +154,11 @@ public class StripeBillingService {
             log.warn("The Checkout Session {} completed without a subscription; no license is created", session.getId());
             ret = Future.succeededFuture();
         } else {
-            // the success page can call before this event arrives, and Stripe can deliver it more than once
+            // Stripe redelivers an event this server failed, so a license that exists is one whose key or email failed
             ret = licenseRepository.findByCheckoutSessionId(session.getId()).compose(existing -> {
                 Future<Void> created;
                 if (existing != null) {
-                    created = Future.succeededFuture();
+                    created = finishFulfillment(existing);
                 } else {
                     created = customerRepository.findById(session.getClientReferenceId())
                                                 .compose(customer -> createLicenseFor(customer, session));
@@ -176,11 +176,23 @@ public class StripeBillingService {
                 .compose(subscription -> {
                     SubscriptionItem item = subscription.getItems().getData().getFirst();
                     Plan plan = Plan.fromLookupKey(item.getPrice().getLookupKey());
-                    return licenseService.createLicense(customer, plan, subscription.getId(), session.getId(),
-                                                        Instant.ofEpochSecond(item.getCurrentPeriodEnd()));
+                    Instant periodEnd = Instant.ofEpochSecond(item.getCurrentPeriodEnd());
+                    LicenseStatus status = statusOf(subscription.getStatus());
+                    return licenseService.createLicense(customer, plan, subscription.getId(), session.getId(), periodEnd)
+                                         // the subscription may already have moved on by the time this event is handled
+                                         .compose(created -> status == LicenseStatus.ACTIVE
+                                                 ? Future.succeededFuture(created)
+                                                 : licenseService.syncSubscription(created.license(), plan, status, periodEnd).map(created));
                 })
                 .compose(created -> licenseService.emailNewKey(created.license(), created.key()))
                 .onSuccess(v -> log.info("The Checkout Session {} bought a license for customer {}", session.getId(), customer.getId()));
+    }
+
+    // issues the key a failed first attempt never got to, or emails again the one it issued but never sent
+    private Future<Void> finishFulfillment(License license) {
+        return licenseService.keysOf(license.getId()).compose(keys -> keys.isEmpty()
+                ? licenseService.issueReplacementKey(license).compose(key -> licenseService.emailNewKey(license, key))
+                : licenseService.resendLatestKey(license));
     }
 
     private Future<Void> invoicePaid(Invoice invoice) {
@@ -192,8 +204,9 @@ public class StripeBillingService {
 
     private Future<Void> invoicePaymentFailed(Invoice invoice) {
         return withLicenseOf(subscriptionOf(invoice), license -> {
-            // Stripe retries the payment and sends this on each failure; the contacts hear from this server once
-            boolean firstFailure = license.getStatus() != LicenseStatus.PAST_DUE;
+            // Stripe retries the payment and sends this on each failure; the contacts hear from this server once, and a
+            // revoked license is past telling
+            boolean firstFailure = license.getStatus() == LicenseStatus.ACTIVE;
             return licenseService.markPastDue(license)
                                  .compose(updated -> firstFailure ? licenseService.emailPastDue(updated) : Future.succeededFuture());
         });

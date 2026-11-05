@@ -74,8 +74,11 @@ public class SignInCodeService {
                             .setEmail(contacts.getFirst().getEmail())
                             .setExpiresAt(now.plus(CODE_LIFETIME));
                     signInCode.setCodeHash(hash(signInCode.getId(), code));
+                    // the response ends once the code is stored; the send runs on, so the time a request takes does not
+                    // say whether an email went out
                     sent = codeRepository.save(signInCode)
-                                         .compose(v -> emailService.sendSignInCode(signInCode.getEmail(), code));
+                                         .onSuccess(v -> emailService.sendSignInCode(signInCode.getEmail(), code)
+                                                                     .onFailure(t -> log.error("The sign-in code could not be emailed", t)));
                 }
                 return sent;
             });

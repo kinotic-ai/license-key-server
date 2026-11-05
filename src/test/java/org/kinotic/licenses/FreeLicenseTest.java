@@ -135,6 +135,10 @@ class FreeLicenseTest extends ServerTest {
         assertThat(rejected.getStatus()).isEqualTo(FreeLicenseRequestStatus.REJECTED);
         assertThat(await(licenseRepository.findFreeLicense(rejected.getCustomerId()))).isNull();
         assertThat(output.getAll()).contains("About your Kinotic free license request");
+
+        // a decision already made is not made again, and nothing is issued
+        assertThatThrownBy(() -> asStaff(() -> staffRequests.approve(requestId))).hasCauseInstanceOf(IllegalStateException.class);
+        assertThat(await(licenseRepository.findFreeLicense(rejected.getCustomerId()))).isNull();
     }
 
     @Test

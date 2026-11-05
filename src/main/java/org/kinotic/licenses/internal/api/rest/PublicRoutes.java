@@ -8,8 +8,10 @@ import org.apache.commons.lang3.Validate;
 import org.kinotic.core.api.service.SuppliesGatewayRoutes;
 import org.kinotic.licenses.api.config.KinoticLicensesProperties;
 import org.kinotic.licenses.api.model.AgreementTerms;
+import org.kinotic.licenses.api.model.CheckoutKeyStatus;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.Plan;
+import org.kinotic.licenses.api.model.SiteType;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.kinotic.licenses.internal.api.services.CustomerService;
 import org.kinotic.licenses.internal.api.services.FreeLicenseService;
@@ -36,9 +38,6 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
     /** How long after a license is created its success page may still show the key. */
     static final Duration KEY_SHOW_WINDOW = Duration.ofHours(1);
 
-    private static final String SITE_PUBLIC = "PUBLIC";
-    private static final String SITE_STAFF = "STAFF";
-
     private final KinoticLicensesProperties properties;
     private final LicenseSigningKey signingKey;
     private final StripeBillingService billingService;
@@ -63,8 +62,8 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
 
     /** Which site the request reached, so the one SPA shows the public pages or the staff dashboard. */
     private void site(RoutingContext ctx) {
-        String site = RestSupport.addressedTo(ctx, properties.getLicenses().getStaffBaseUrl()) ? SITE_STAFF : SITE_PUBLIC;
-        RestSupport.respondJson(ctx, 200, new JsonObject().put("site", site).put("termsVersion", AgreementTerms.VERSION));
+        SiteType site = RestSupport.addressedTo(ctx, properties.getLicenses().getStaffBaseUrl()) ? SiteType.STAFF : SiteType.PUBLIC;
+        RestSupport.respondJson(ctx, 200, new JsonObject().put("site", site.name()).put("termsVersion", AgreementTerms.VERSION));
     }
 
     /** The public half of the key license keys are signed with, as a JSON Web Key. */
@@ -103,12 +102,12 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
         String sessionId = ctx.pathParam("sessionId");
         licenseRepository.findByCheckoutSessionId(sessionId)
                          .compose(license -> license == null
-                                 ? io.vertx.core.Future.succeededFuture(new JsonObject().put("status", "PENDING"))
+                                 ? io.vertx.core.Future.succeededFuture(new JsonObject().put("status", CheckoutKeyStatus.PENDING.name()))
                                  : licenseService.keysOf(license.getId()).map(keys -> {
-                                     JsonObject ret = new JsonObject().put("status", "SHOWN");
+                                     JsonObject ret = new JsonObject().put("status", CheckoutKeyStatus.SHOWN.name());
                                      boolean withinWindow = license.getCreatedAt().plus(KEY_SHOW_WINDOW).isAfter(Instant.now());
                                      if (withinWindow && !keys.isEmpty() && shownKeys.add(sessionId)) {
-                                         ret.put("status", "READY")
+                                         ret.put("status", CheckoutKeyStatus.READY.name())
                                             .put("key", keys.getLast().getKey())
                                             .put("expiresAt", keys.getLast().getExpiresAt().toString());
                                      }

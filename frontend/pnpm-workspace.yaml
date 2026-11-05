@@ -1,0 +1,7 @@
+# This package alone; the file carries the build-script approvals pnpm 10 reads from here
+packages:
+  - '.'
+
+allowBuilds:
+  '@tailwindcss/oxide': true
+  esbuild: true

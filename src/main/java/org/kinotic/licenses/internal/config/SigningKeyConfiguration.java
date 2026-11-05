@@ -28,8 +28,9 @@ import java.util.UUID;
 
 /**
  * Supplies the key license keys are signed with. With {@code kinotic.licenses.signingKeyId} set, that is the ES256
- * key in Azure Key Vault, which signs in the vault and never leaves it. Without it, as on a developer's machine, the
- * server signs with a P-256 key it generates at startup and forgets at shutdown, and says so in the log.
+ * key in Azure Key Vault, which signs in the vault and never leaves it. With {@code kinotic.licenses.ephemeralSigningKey}
+ * on instead, as on a developer's machine, the server signs with a P-256 key it generates at startup and forgets at
+ * shutdown, and says so in the log. With neither, the server does not start.
  */
 @Slf4j
 @Configuration
@@ -43,10 +44,13 @@ public class SigningKeyConfiguration {
         LicenseSigningKey ret;
         if (StringUtils.isNotBlank(keyId)) {
             ret = keyVaultKey(keyId);
-        } else {
-            log.warn("kinotic.licenses.signingKeyId is not set: license keys are signed with an ephemeral key that no"
-                             + " verifier trusts. Set it to the Key Vault key before issuing a key to anyone.");
+        } else if (properties.getLicenses().isEphemeralSigningKey()) {
+            log.warn("kinotic.licenses.ephemeralSigningKey is on: license keys are signed with an ephemeral key that no"
+                             + " verifier trusts");
             ret = ephemeralKey();
+        } else {
+            throw new IllegalStateException("kinotic.licenses.signingKeyId is not set. Set it to the Key Vault key, or set"
+                                                    + " kinotic.licenses.ephemeralSigningKey=true on a developer's machine");
         }
         return ret;
     }

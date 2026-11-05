@@ -52,8 +52,9 @@ Every setting is a Spring property, set through the environment:
 | `KINOTIC_CORS_ALLOWEDORIGINPATTERN` | see below |
 | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_FEDERATED_TOKEN_FILE` | set by the platform for the workload identity `DefaultAzureCredential` uses |
 
-Without `KINOTIC_LICENSES_SIGNINGKEYID` the server signs with an ephemeral key no verifier trusts and warns at
-startup; it is for development only.
+`KINOTIC_LICENSES_SIGNINGKEYID` is required: without it the server refuses to start. The one exception is
+`kinotic.licenses.ephemeralSigningKey=true`, which the development and test profiles set so a developer's machine
+signs with a key generated at startup that no verifier trusts. Never set it in production.
 
 ### CORS
 

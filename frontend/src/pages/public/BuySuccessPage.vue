@@ -13,21 +13,37 @@ import { downloadKey, formatDate } from '@/util/format'
  * browser lands here, so the page polls until the key is ready, then shows it this once.
  */
 const POLL_MS = 2000
+// ten minutes of polling, well past the time Stripe takes to deliver the webhook
+const MAX_POLLS = 300
 
 const route = useRoute()
 const toast = useToast()
 const sessionId = String(route.query.session_id ?? '')
 const result = ref<CheckoutKey>({ status: 'PENDING' })
+const gaveUp = ref(false)
+let polls = 0
+let unmounted = false
 let timer: ReturnType<typeof setTimeout> | null = null
 
 async function poll() {
+  polls++
   try {
-    result.value = await fetchCheckoutKey(sessionId)
+    const fetched = await fetchCheckoutKey(sessionId)
+    if (!unmounted) {
+      result.value = fetched
+    }
   } catch (err) {
-    showErrorToast(toast, 'The key could not be fetched', err)
+    if (!unmounted) {
+      showErrorToast(toast, 'The key could not be fetched', err)
+      gaveUp.value = true
+    }
   }
-  if (result.value.status === 'PENDING') {
-    timer = setTimeout(poll, POLL_MS)
+  if (!unmounted && !gaveUp.value && result.value.status === 'PENDING') {
+    if (polls < MAX_POLLS) {
+      timer = setTimeout(poll, POLL_MS)
+    } else {
+      gaveUp.value = true
+    }
   }
 }
 
@@ -43,6 +59,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  unmounted = true
   if (timer) {
     clearTimeout(timer)
   }
@@ -53,6 +70,13 @@ onBeforeUnmount(() => {
   <div class="mx-auto max-w-2xl">
     <PageHeader title="Thank you" description="Your Kinotic Enterprise license is on its way." />
     <div v-if="!sessionId" class="app-muted-text text-sm">This page is reached from Stripe Checkout.</div>
+    <div v-else-if="gaveUp" class="app-card-surface rounded-xl border p-5 text-sm">
+      <p class="app-heading-text">Your key is on its way.</p>
+      <p class="app-muted-text mt-2">
+        It is emailed to your billing contact as soon as Stripe confirms the payment, and it is always available in
+        <RouterLink to="/account" class="underline">your account</RouterLink>.
+      </p>
+    </div>
     <div v-else-if="result.status === 'PENDING'" class="app-card-surface rounded-xl border p-5 text-sm">
       <i class="pi pi-spin pi-spinner mr-2" /> Waiting for Stripe to confirm the payment… your key appears here as soon as it is issued.
     </div>

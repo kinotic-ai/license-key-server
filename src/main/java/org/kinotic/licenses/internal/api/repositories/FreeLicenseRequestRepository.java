@@ -62,10 +62,26 @@ public class FreeLicenseRequestRepository {
                    .map(rows -> PgValues.map(rows, FreeLicenseRequestRepository::toRequest));
     }
 
+    /**
+     * Records the decision on a pending request. The update is conditional on the request still being pending, so two
+     * decisions on one request leave exactly one recorded.
+     *
+     * @return the reviewed request, or {@code null} when the request was not pending or does not exist
+     */
     public Future<FreeLicenseRequest> review(String id, FreeLicenseRequestStatus status, String reviewedBy, Instant reviewedAt) {
-        return pool.preparedQuery("UPDATE free_license_request SET status = $2, reviewed_by = $3, reviewed_at = $4 WHERE id = $1")
-                   .execute(Tuple.of(id, status.name(), reviewedBy, PgValues.timestamp(reviewedAt)))
-                   .compose(rows -> findById(id));
+        return pool.preparedQuery("UPDATE free_license_request SET status = $2, reviewed_by = $3, reviewed_at = $4"
+                                          + " WHERE id = $1 AND status = $5")
+                   .execute(Tuple.of(id, status.name(), reviewedBy, PgValues.timestamp(reviewedAt), FreeLicenseRequestStatus.PENDING.name()))
+                   .compose(rows -> rows.rowCount() == 1 ? findById(id) : Future.succeededFuture(null));
+    }
+
+    /**
+     * Returns a decided request to pending, with no reviewer, as when issuing after an approval failed.
+     */
+    public Future<Void> reopen(String id) {
+        return pool.preparedQuery("UPDATE free_license_request SET status = $2, reviewed_by = NULL, reviewed_at = NULL WHERE id = $1")
+                   .execute(Tuple.of(id, FreeLicenseRequestStatus.PENDING.name()))
+                   .mapEmpty();
     }
 
     private static FreeLicenseRequest toRequest(Row row) {

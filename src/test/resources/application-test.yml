@@ -11,6 +11,7 @@ kinotic:
     allowedOriginPattern: "http:\\/\\/localhost:(5173|5174)"
     allowCredentials: true
   licenses:
+    ephemeralSigningKey: true
     publicBaseUrl: http://localhost:5173
     staffBaseUrl: http://localhost:5174
     stripe:

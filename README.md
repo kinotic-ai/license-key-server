@@ -26,7 +26,7 @@ cd frontend && pnpm dev:staff                                      # the staff d
 ```
 
 The development profile (`application-development.yml`) points at Postgres on 5433 as `postgres`/`postgres`, logs
-emails instead of sending them, and signs keys with an ephemeral key. Stripe and the staff OIDC provider need real
+emails instead of sending them, and signs keys with an ephemeral key (`kinotic.licenses.ephemeralSigningKey`). Stripe and the staff OIDC provider need real
 test-mode settings in an `application-local.yml` (gitignored) or the environment; see `docs/deployment.md`.
 
 ```bash

@@ -81,22 +81,25 @@ public class LicenseService {
                 .setTermEnd(termEnd(now))
                 .setLastPaymentAt(stripeSubscriptionId != null ? now : null);
         return licenseRepository.save(license)
-                                .compose(saved -> issueKey(saved).map(key -> new NewLicense(saved, key)));
+                                .compose(saved -> issueKey(saved, saved.getTermEnd()).map(key -> new NewLicense(saved, key)));
     }
 
     /**
      * Starts the license's next term and issues its key. The current key keeps working until it expires.
      */
     public Future<IssuedKey> issueRenewalKey(License license) {
-        license.setTermStart(license.getTermEnd()).setTermEnd(termEnd(license.getTermEnd()));
-        return licenseRepository.update(license).compose(this::issueKey);
+        Instant nextTermStart = license.getTermEnd();
+        Instant nextTermEnd = termEnd(nextTermStart);
+        // signed before the term moves, so a signing failure leaves the license due for the next run
+        return issueKey(license, nextTermEnd)
+                .compose(key -> licenseRepository.update(license.setTermStart(nextTermStart).setTermEnd(nextTermEnd)).map(key));
     }
 
     /**
      * Issues another key for the license's current term.
      */
     public Future<IssuedKey> issueReplacementKey(License license) {
-        return issueKey(license);
+        return issueKey(license, license.getTermEnd());
     }
 
     /**
@@ -162,21 +165,21 @@ public class LicenseService {
      * Records a successful payment and returns the license to good standing.
      */
     public Future<License> recordPayment(License license, Instant paidAt) {
-        return licenseRepository.update(license.setStatus(LicenseStatus.ACTIVE).setLastPaymentAt(paidAt));
+        return transition(license.setLastPaymentAt(paidAt), LicenseStatus.ACTIVE);
     }
 
     /**
      * Marks a payment failed; no renewal key is issued until a payment succeeds.
      */
     public Future<License> markPastDue(License license) {
-        return licenseRepository.update(license.setStatus(LicenseStatus.PAST_DUE));
+        return transition(license, LicenseStatus.PAST_DUE);
     }
 
     /**
      * Marks the subscription ended; no renewal key is issued.
      */
     public Future<License> cancel(License license) {
-        return licenseRepository.update(license.setStatus(LicenseStatus.CANCELED));
+        return transition(license, LicenseStatus.CANCELED);
     }
 
     /**
@@ -184,10 +187,7 @@ public class LicenseService {
      * current billing period. A license staff revoked stays revoked.
      */
     public Future<License> syncSubscription(License license, Plan plan, LicenseStatus status, Instant currentPeriodEnd) {
-        if (license.getStatus() != LicenseStatus.REVOKED) {
-            license.setStatus(status);
-        }
-        return licenseRepository.update(license.setPlan(plan).setFeatures(plan.features()).setCurrentPeriodEnd(currentPeriodEnd));
+        return transition(license.setPlan(plan).setFeatures(plan.features()).setCurrentPeriodEnd(currentPeriodEnd), status);
     }
 
     /**
@@ -204,10 +204,17 @@ public class LicenseService {
         return start.atZone(ZoneOffset.UTC).plus(TERM).toInstant();
     }
 
-    private Future<IssuedKey> issueKey(License license) {
+    // a billing event never undoes a staff revocation
+    private Future<License> transition(License license, LicenseStatus status) {
+        if (license.getStatus() != LicenseStatus.REVOKED) {
+            license.setStatus(status);
+        }
+        return licenseRepository.update(license);
+    }
+
+    private Future<IssuedKey> issueKey(License license, Instant termEnd) {
         LicenseKeyClaims claims = new LicenseKeyClaims(license.getCustomerId(), UUID.randomUUID().toString(), Instant.now(),
-                                                       license.getTermEnd().plus(KEY_BUFFER), LicensePurpose.PRODUCTION,
-                                                       license.getFeatures());
+                                                       termEnd.plus(KEY_BUFFER), LicensePurpose.PRODUCTION, license.getFeatures());
         return sign(claims, license.getId());
     }
 

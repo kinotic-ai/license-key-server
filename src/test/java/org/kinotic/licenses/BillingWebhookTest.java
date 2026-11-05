@@ -82,6 +82,30 @@ class BillingWebhookTest extends ServerTest {
     }
 
     @Test
+    void aRevokedLicenseStaysRevokedWhateverStripeSays() throws Exception {
+        String subscriptionId = "sub_" + UUID.randomUUID();
+        License license = await(licenseService.createLicense(seedCustomer(), Plan.STARTUP, subscriptionId, "cs_" + UUID.randomUUID(),
+                                                             Instant.now().plus(Duration.ofDays(30)))).license();
+        await(licenseService.revoke(license));
+
+        assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
+        assertThat(await(licenseRepository.findById(license.getId())).getStatus()).isEqualTo(LicenseStatus.REVOKED);
+        Instant periodEnd = Instant.now().plus(Duration.ofDays(60)).truncatedTo(ChronoUnit.SECONDS);
+        assertThat(deliver(StripeEvents.event("customer.subscription.updated",
+                                              StripeEvents.subscription(subscriptionId, "active", Plan.STARTUP.lookupKey(), periodEnd))).statusCode()).isEqualTo(200);
+        assertThat(await(licenseRepository.findById(license.getId())).getStatus()).isEqualTo(LicenseStatus.REVOKED);
+    }
+
+    @Test
+    void anEventThatCannotBeHandledIsForgottenSoStripeCanRedeliverIt() throws Exception {
+        // a data object of a kind the library cannot read fails before any handler runs
+        JsonObject event = StripeEvents.event("invoice.paid", new JsonObject().put("id", "x").put("object", "no_such_object"));
+        assertThat(deliver(event).statusCode()).isEqualTo(500);
+        // the redelivery is handled again rather than acknowledged as already processed
+        assertThat(deliver(event).statusCode()).isEqualTo(500);
+    }
+
+    @Test
     void anEventForAnUnknownSubscriptionIsAcknowledgedAndIgnored() throws Exception {
         JsonObject event = StripeEvents.event("invoice.paid", StripeEvents.invoice("sub_unknown_" + UUID.randomUUID(), Instant.now()));
         assertThat(deliver(event).statusCode()).isEqualTo(200);

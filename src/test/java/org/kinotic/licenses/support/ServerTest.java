@@ -10,6 +10,7 @@ import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.condition.EnabledIf;
 import org.kinotic.licenses.api.model.ContactRole;
 import org.kinotic.licenses.api.model.Customer;
 import org.kinotic.licenses.api.model.CustomerContact;
@@ -31,6 +32,7 @@ import java.util.concurrent.TimeUnit;
  */
 @SpringBootTest
 @ActiveProfiles("test")
+@EnabledIf("org.kinotic.licenses.support.TestDatabase#available")
 public abstract class ServerTest {
 
     /** The gateway's port in the test profile. */

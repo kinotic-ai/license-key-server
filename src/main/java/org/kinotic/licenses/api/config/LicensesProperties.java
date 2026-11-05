@@ -37,6 +37,12 @@ public class LicensesProperties {
     private String signingKeyId;
 
     /**
+     * Signs keys with a key generated at startup when {@link #signingKeyId} is unset, for a developer's machine. No
+     * verifier trusts such a key, so a production server leaves this off and fails to start without a Key Vault key.
+     */
+    private boolean ephemeralSigningKey = false;
+
+    /**
      * The Postgres database.
      */
     private DatabaseProperties database = new DatabaseProperties();

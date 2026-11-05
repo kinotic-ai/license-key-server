@@ -33,11 +33,5 @@
     "typescript": "~5.8.3",
     "vite": "^8.2.1",
     "vue-tsc": "^2.2.12"
-  },
-  "pnpm": {
-    "allowBuilds": {
-      "@tailwindcss/oxide": true,
-      "esbuild": true
-    }
   }
 }
