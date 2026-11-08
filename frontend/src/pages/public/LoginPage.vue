@@ -25,6 +25,10 @@ onMounted(() => {
 })
 
 async function requestCode() {
+  // Enter in a field bypasses the button's loading state
+  if (loading.value) {
+    return
+  }
   if (!email.value.includes('@')) {
     displayError('Enter the email address of a contact of your account')
     return
@@ -42,6 +46,9 @@ async function requestCode() {
 }
 
 async function verify() {
+  if (loading.value) {
+    return
+  }
   if (!code.value.trim()) {
     displayError('Enter the code from the email')
     return

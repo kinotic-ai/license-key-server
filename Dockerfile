@@ -4,9 +4,8 @@
 FROM node:22-alpine AS frontend
 RUN corepack enable && corepack prepare pnpm@10 --activate
 WORKDIR /build/frontend
-COPY frontend/package.json frontend/pnpm-workspace.yaml frontend/pnpm-lock.yaml* ./
-# the lockfile is committed once @kinotic-ai/frontend-common is on npm; until then the install resolves fresh
-RUN if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install; fi
+COPY frontend/package.json frontend/pnpm-workspace.yaml frontend/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 COPY frontend/ ./
 RUN pnpm build
 

@@ -37,6 +37,10 @@ async function send() {
 }
 
 async function confirm() {
+  // Enter in the code field bypasses the button's disabled state
+  if (busy.value || !code.value.trim()) {
+    return
+  }
   busy.value = true
   try {
     const result = await verifySignInCode(props.email, code.value.trim())
