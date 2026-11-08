@@ -19,4 +19,7 @@ loadSite().then(site => {
         sessionState: SESSION_STATE,
         authPageBranding: { art: loginArt, darkBrandMark: loginBrandMark }
     }).mount('#app')
+}).catch(err => {
+    console.error('The site could not be loaded', err)
+    document.getElementById('app')!.textContent = 'This page could not be loaded. Reload it in a moment.'
 })
