@@ -1,22 +1,22 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import { useToast } from 'primevue/usetoast'
 import { PageHeader, showErrorToast } from '@kinotic-ai/frontend-common'
-import { ApiError, submitFreeRequest } from '@/api/rest'
+import { submitFreeRequest } from '@/api/rest'
+import EmailCodeStep from '@/components/EmailCodeStep.vue'
 import { SESSION_STATE } from '@/states/LicenseSessionState'
 import CertificationFields from '@/components/CertificationFields.vue'
 import TermsAcceptance from '@/components/TermsAcceptance.vue'
 
 /**
- * Requesting a free license: the organization, its contact, the figures it certifies, and the click-through. A
- * signed-in customer requests for its own account, so names no organization.
+ * Requesting a free license: the organization, its contact, the figures it certifies, the click-through, and the code
+ * that confirms the contact's address. A signed-in customer requests for its own account, so names no organization;
+ * an address that turns out to have an account requests for that account.
  */
-const route = useRoute()
-const router = useRouter()
 const toast = useToast()
+const confirming = ref(false)
 const signedIn = computed(() => SESSION_STATE.isAuthenticated())
 
 const organization = ref('')
@@ -37,6 +37,23 @@ async function submit() {
   if (!ready.value) {
     return
   }
+  if (!signedIn.value) {
+    confirming.value = true
+    return
+  }
+  await sendRequest()
+}
+
+async function onVerified(account: boolean) {
+  confirming.value = false
+  if (account) {
+    await SESSION_STATE.login()
+    toast.add({ severity: 'info', summary: 'Welcome back', detail: 'This address already has an account, so the request is made for it.', life: 8000 })
+  }
+  await sendRequest()
+}
+
+async function sendRequest() {
   submitting.value = true
   try {
     const certification = {
@@ -47,16 +64,10 @@ async function submit() {
     }
     await submitFreeRequest(signedIn.value
         ? certification
-        : { ...certification, organization: organization.value.trim(), contactName: contactName.value.trim(), contactEmail: contactEmail.value.trim() })
+        : { ...certification, organization: organization.value.trim(), contactName: contactName.value.trim() })
     submitted.value = true
   } catch (err) {
-    if (err instanceof ApiError && err.status === 409 && !signedIn.value) {
-      // the address has an account: sign in to it, then come back to request for it
-      toast.add({ severity: 'info', summary: 'Sign in to continue', detail: err.message, life: 10000 })
-      await router.push({ path: '/login', query: { referer: route.fullPath } })
-    } else {
-      showErrorToast(toast, 'The request could not be submitted', err)
-    }
+    showErrorToast(toast, 'The request could not be submitted', err)
   } finally {
     submitting.value = false
   }
@@ -95,7 +106,7 @@ async function submit() {
           </div>
           <div>
             <label for="contact-email" class="mb-2 block text-sm font-medium">Contact's email</label>
-            <InputText id="contact-email" v-model="contactEmail" class="w-full" type="email" autocomplete="email" />
+            <InputText id="contact-email" v-model="contactEmail" class="w-full" type="email" autocomplete="email" :disabled="confirming" />
           </div>
         </div>
       </section>
@@ -104,7 +115,8 @@ async function submit() {
         <CertificationFields v-model:annual-revenue="annualRevenue" v-model:capital-raised="capitalRaised" v-model:intended-use="intendedUse" />
       </section>
       <TermsAcceptance v-model="accepted" />
-      <div class="flex justify-end">
+      <EmailCodeStep v-if="confirming" :email="contactEmail.trim()" @verified="onVerified" @cancel="confirming = false" />
+      <div v-else class="flex justify-end">
         <Button type="submit" label="Submit request" :disabled="!ready" :loading="submitting" />
       </div>
     </form>

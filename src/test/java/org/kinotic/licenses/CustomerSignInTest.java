@@ -42,7 +42,8 @@ class CustomerSignInTest extends ServerTest {
         assertThat(wrongCode.statusCode()).isEqualTo(401);
 
         HttpResponse<Buffer> verified = post("/api/auth/code/verify", new JsonObject().put("email", email).put("code", code), null);
-        assertThat(verified.statusCode()).isEqualTo(204);
+        assertThat(verified.statusCode()).isEqualTo(200);
+        assertThat(verified.bodyAsJsonObject().getBoolean("account")).isTrue();
         String cookie = verified.cookies().getFirst();
         assertThat(cookie).startsWith("__Host-kinotic-licenses-session=");
 

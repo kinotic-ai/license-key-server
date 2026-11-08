@@ -75,7 +75,7 @@ class FreeLicenseTest extends ServerTest {
     @Test
     void aRequestIsApprovedAndLaterRenewedByReCertifying(CapturedOutput output) throws Exception {
         String email = "grace-" + UUID.randomUUID() + "@tiny.example";
-        HttpResponse<Buffer> created = post("/api/free-requests", requestBody(email).put("acceptTerms", true), null);
+        HttpResponse<Buffer> created = post("/api/free-requests", requestBody(email).put("acceptTerms", true), confirmEmail(output, email));
         assertThat(created.statusCode()).isEqualTo(201);
         String requestId = created.bodyAsJsonObject().getString("id");
 
@@ -136,7 +136,7 @@ class FreeLicenseTest extends ServerTest {
     @Test
     void aRequestIsRejectedAndTheContactTold(CapturedOutput output) throws Exception {
         String email = "rich-" + UUID.randomUUID() + "@big.example";
-        String requestId = post("/api/free-requests", requestBody(email).put("acceptTerms", true), null).bodyAsJsonObject().getString("id");
+        String requestId = post("/api/free-requests", requestBody(email).put("acceptTerms", true), confirmEmail(output, email)).bodyAsJsonObject().getString("id");
         FreeLicenseRequest rejected = asStaff(() -> staffRequests.reject(requestId));
         assertThat(rejected.getStatus()).isEqualTo(FreeLicenseRequestStatus.REJECTED);
         assertThat(await(licenseRepository.findFreeLicense(rejected.getCustomerId()))).isNull();
@@ -148,30 +148,46 @@ class FreeLicenseTest extends ServerTest {
     }
 
     @Test
-    void anAddressThatAlreadyHasAnAccountIsSentToSignIn() throws Exception {
+    void aSignUpNeedsAConfirmedAddressAndAnAddressWithAnAccountActsForIt(CapturedOutput output) throws Exception {
         String email = "taken-" + UUID.randomUUID() + "@tiny.example";
-        assertThat(post("/api/free-requests", requestBody(email).put("acceptTerms", true), null).statusCode()).isEqualTo(201);
+        // an unconfirmed sign-up names no address the server accepts, so it says nothing about any address
+        HttpResponse<Buffer> unconfirmed = post("/api/free-requests", requestBody(email).put("acceptTerms", true), null);
+        assertThat(unconfirmed.statusCode()).isEqualTo(401);
+        HttpResponse<Buffer> unconfirmedCheckout = post("/api/checkout", new JsonObject().put("plan", "STARTUP").put("legalName", "Other Co")
+                                                                                     .put("contactName", "Someone Else").put("acceptTerms", true), null);
+        assertThat(unconfirmedCheckout.statusCode()).isEqualTo(401);
+
+        HttpResponse<Buffer> signedUp = post("/api/free-requests", requestBody(email).put("acceptTerms", true), confirmEmail(output, email));
+        assertThat(signedUp.statusCode()).isEqualTo(201);
         CustomerContact original = await(contactRepository.findByEmail(email)).getFirst();
+        // the sign-up signed the page in to its new account under a fresh session id, so asking again is a request of
+        // that account
+        String cookie = signedUp.cookies().getFirst().split(";")[0];
+        assertThat(get("/api/auth/me", cookie).statusCode()).isEqualTo(204);
+        assertThat(post("/api/free-requests", requestBody(email).put("acceptTerms", true), cookie).statusCode()).isEqualTo(409);
 
-        HttpResponse<Buffer> again = post("/api/free-requests", requestBody(email.toUpperCase()).put("acceptTerms", true), null);
-        assertThat(again.statusCode()).isEqualTo(409);
-        assertThat(again.bodyAsJsonObject().getString("error")).contains("Sign in");
-
-        // a purchase is refused the same way, before Stripe is called
-        HttpResponse<Buffer> checkout = post("/api/checkout", new JsonObject().put("plan", "STARTUP").put("legalName", "Other Co")
-                                                                          .put("contactName", "Someone Else").put("contactEmail", email)
-                                                                          .put("acceptTerms", true), null);
-        assertThat(checkout.statusCode()).isEqualTo(409);
-
-        // the address still signs in to the account it belongs to
+        // confirming the address on another page signs that page in to the same account
+        String other = signIn(output, email.toUpperCase());
+        assertThat(post("/api/free-requests", requestBody(email).put("acceptTerms", true), other).statusCode()).isEqualTo(409);
         assertThat(await(contactRepository.findByEmail(email))).extracting(CustomerContact::getCustomerId)
                                                                .containsExactly(original.getCustomerId());
     }
 
     @Test
+    void aCodeRequestLooksTheSameWhetherOrNotTheAddressHasAnAccount(CapturedOutput output) throws Exception {
+        String known = "known-" + UUID.randomUUID() + "@tiny.example";
+        submitAnonymously(output, known);
+        HttpResponse<Buffer> forKnown = post("/api/auth/code/request", new JsonObject().put("email", known), null);
+        HttpResponse<Buffer> forUnknown = post("/api/auth/code/request", new JsonObject().put("email", "unknown-" + UUID.randomUUID() + "@tiny.example"), null);
+        assertThat(forKnown.statusCode()).isEqualTo(202);
+        assertThat(forUnknown.statusCode()).isEqualTo(202);
+        assertThat(forKnown.bodyAsString()).isEqualTo(forUnknown.bodyAsString());
+    }
+
+    @Test
     void aSignedInCustomerRequestsAndBuysForItsOwnAccount(CapturedOutput output) throws Exception {
         String email = "own-" + UUID.randomUUID() + "@tiny.example";
-        assertThat(post("/api/free-requests", requestBody(email).put("acceptTerms", true), null).statusCode()).isEqualTo(201);
+        assertThat(post("/api/free-requests", requestBody(email).put("acceptTerms", true), confirmEmail(output, email)).statusCode()).isEqualTo(201);
         String customerId = await(contactRepository.findByEmail(email)).getFirst().getCustomerId();
         FreeLicenseRequest first = await(requestRepository.findByCustomerId(customerId)).getFirst();
         asStaff(() -> staffRequests.reject(first.getId()));
@@ -195,9 +211,8 @@ class FreeLicenseTest extends ServerTest {
     }
 
     @Test
-    void aLapsedFreeLicenseRenewsFromToday() throws Exception {
-        String requestId = post("/api/free-requests", requestBody("lapsed-" + UUID.randomUUID() + "@tiny.example").put("acceptTerms", true), null)
-                .bodyAsJsonObject().getString("id");
+    void aLapsedFreeLicenseRenewsFromToday(CapturedOutput output) throws Exception {
+        String requestId = submitAnonymously(output, "lapsed-" + UUID.randomUUID() + "@tiny.example");
         FreeLicenseRequest approved = asStaff(() -> staffRequests.approve(requestId));
         License license = await(licenseRepository.findFreeLicense(approved.getCustomerId()));
         sql("UPDATE license SET term_end = now() - interval '90 days' WHERE id = $1", license.getId());
@@ -214,9 +229,8 @@ class FreeLicenseTest extends ServerTest {
     }
 
     @Test
-    void anApprovalOfALicenseWithoutAKeyIssuesItsFirstTerm() throws Exception {
-        String requestId = post("/api/free-requests", requestBody("keyless-" + UUID.randomUUID() + "@tiny.example").put("acceptTerms", true), null)
-                .bodyAsJsonObject().getString("id");
+    void anApprovalOfALicenseWithoutAKeyIssuesItsFirstTerm(CapturedOutput output) throws Exception {
+        String requestId = submitAnonymously(output, "keyless-" + UUID.randomUUID() + "@tiny.example");
         String customerId = await(requestRepository.findById(requestId)).getCustomerId();
         // what an earlier approval leaves when signing failed after the license was saved
         License keyless = await(licenseService.createAwaitingPayment(await(customerRepository.findById(customerId)), Plan.FREE, null, null, null));
@@ -232,9 +246,8 @@ class FreeLicenseTest extends ServerTest {
     }
 
     @Test
-    void anApprovalThatStoppedMidWayIsCompletedByApprovingAgain() throws Exception {
-        String requestId = post("/api/free-requests", requestBody("stalled-" + UUID.randomUUID() + "@tiny.example").put("acceptTerms", true), null)
-                .bodyAsJsonObject().getString("id");
+    void anApprovalThatStoppedMidWayIsCompletedByApprovingAgain(CapturedOutput output) throws Exception {
+        String requestId = submitAnonymously(output, "stalled-" + UUID.randomUUID() + "@tiny.example");
         // what a server that stopped after claiming the approval leaves, once the claim has expired
         sql("UPDATE free_license_request SET status = 'APPROVED', reviewed_by = 'staff@mindsignited.com', reviewed_at = now() - interval '10 minutes',"
                     + " claimed_at = now() - interval '10 minutes' WHERE id = $1", requestId);
@@ -251,9 +264,8 @@ class FreeLicenseTest extends ServerTest {
     }
 
     @Test
-    void anApprovalThatStoppedAfterIssuingItsKeyIssuesNoOther() throws Exception {
-        String requestId = post("/api/free-requests", requestBody("issued-" + UUID.randomUUID() + "@tiny.example").put("acceptTerms", true), null)
-                .bodyAsJsonObject().getString("id");
+    void anApprovalThatStoppedAfterIssuingItsKeyIssuesNoOther(CapturedOutput output) throws Exception {
+        String requestId = submitAnonymously(output, "issued-" + UUID.randomUUID() + "@tiny.example");
         String customerId = await(requestRepository.findById(requestId)).getCustomerId();
         sql("UPDATE free_license_request SET status = 'APPROVED', reviewed_by = 'staff@mindsignited.com', reviewed_at = now() - interval '10 minutes',"
                     + " claimed_at = now() - interval '10 minutes' WHERE id = $1", requestId);
@@ -264,28 +276,6 @@ class FreeLicenseTest extends ServerTest {
 
         assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
         assertThat(await(licenseRepository.findById(license.getId())).getTermEnd()).isEqualTo(license.getTermEnd());
-    }
-
-    @Test
-    void anonymousSignUpsAreLimitedPerClientAddress() throws Exception {
-        String client = "2001:db8::" + Long.toHexString(UUID.randomUUID().getMostSignificantBits() & 0xffffL) + ":1";
-        int accepted = 0;
-        int limited = 0;
-        for (int i = 0; i < 22; i++) {
-            HttpResponse<Buffer> response = await(ServerTest.client.post("/api/free-requests")
-                                                        .putHeader("Origin", PUBLIC_ORIGIN)
-                                                        .putHeader("Content-Type", "application/json")
-                                                        .putHeader("X-Forwarded-For", client)
-                                                        .sendBuffer(requestBody("burst-" + UUID.randomUUID() + "@tiny.example")
-                                                                            .put("acceptTerms", true).toBuffer()));
-            if (response.statusCode() == 201) {
-                accepted++;
-            } else if (response.statusCode() == 429) {
-                limited++;
-            }
-        }
-        assertThat(accepted).isEqualTo(20);
-        assertThat(limited).isEqualTo(2);
     }
 
     @Test
@@ -303,6 +293,13 @@ class FreeLicenseTest extends ServerTest {
         CustomerAccount account = asCustomer(first, customerAccount::getAccount);
         assertThat(account.getCustomer().getId()).isEqualTo(first.getCustomerId());
         assertThat(account.getLicenses()).isEmpty();
+    }
+
+    // a free request from a page that confirmed the address first, as the form makes one; answers with the request's id
+    private static String submitAnonymously(CapturedOutput output, String email) throws Exception {
+        HttpResponse<Buffer> created = post("/api/free-requests", requestBody(email).put("acceptTerms", true), confirmEmail(output, email));
+        assertThat(created.statusCode()).isEqualTo(201);
+        return created.bodyAsJsonObject().getString("id");
     }
 
     private static JsonObject requestBody(String email) {

@@ -18,6 +18,7 @@ import java.net.URI;
 final class RestSupport {
 
     private static final String JSON = "application/json";
+    private static final String VERIFIED_EMAIL_KEY = "verifiedEmail";
 
     private RestSupport() {}
 
@@ -96,6 +97,36 @@ final class RestSupport {
         ConnectedInfo connectedInfo = new ConnectedInfo();
         connectedInfo.setParticipant(participant);
         SessionBinding.bind(ctx, origin, connectedInfo);
+    }
+
+    /**
+     * Remembers, for the page at {@code origin}, an address its owner verified that has no account yet, as a fresh
+     * session id.
+     */
+    static void rememberVerifiedEmail(RoutingContext ctx, String origin, String email) {
+        ctx.session().regenerateId();
+        ctx.session().put(SessionBinding.pageKey(VERIFIED_EMAIL_KEY, origin), email);
+    }
+
+    /**
+     * The address the page that sent the request verified and that had no account, or {@code null} when it has none.
+     */
+    static String verifiedEmail(RoutingContext ctx) {
+        String ret = null;
+        // reading the session stores one, so a request without the cookie reads nothing
+        if (SessionBinding.sessionPresented(ctx)) {
+            ret = ctx.session().get(SessionBinding.pageKey(VERIFIED_EMAIL_KEY, SessionBinding.origin(ctx)));
+        }
+        return ret;
+    }
+
+    /**
+     * Forgets the page's verified address, once it has become an account.
+     */
+    static void forgetVerifiedEmail(RoutingContext ctx) {
+        if (SessionBinding.sessionPresented(ctx)) {
+            ctx.session().remove(SessionBinding.pageKey(VERIFIED_EMAIL_KEY, SessionBinding.origin(ctx)));
+        }
     }
 
     /**

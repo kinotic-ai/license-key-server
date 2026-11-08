@@ -33,7 +33,7 @@ async function requestCode() {
   try {
     await requestSignInCode(email.value.trim())
     codeRequested.value = true
-    toast.add({ severity: 'info', summary: 'Check your email', detail: 'If that address belongs to an account, a code is on its way.', life: 8000 })
+    toast.add({ severity: 'info', summary: 'Check your email', detail: 'A code is on its way to that address.', life: 8000 })
   } catch (err) {
     displayError(err instanceof Error ? err.message : 'The code could not be sent')
   } finally {
@@ -48,10 +48,15 @@ async function verify() {
   }
   loading.value = true
   try {
-    await verifySignInCode(email.value.trim(), code.value.trim())
-    // open the realtime connection, authenticated by the session cookie the server just set
-    await SESSION_STATE.login()
-    await router.push((route.query.referer as string | undefined) || '/account')
+    const result = await verifySignInCode(email.value.trim(), code.value.trim())
+    if (result.account) {
+      // open the realtime connection, authenticated by the session cookie the server just set
+      await SESSION_STATE.login()
+      await router.push((route.query.referer as string | undefined) || '/account')
+    } else {
+      toast.add({ severity: 'info', summary: 'No account yet', detail: 'This address has no Kinotic license account. Buy a plan or request a free license to create one.', life: 10000 })
+      await router.push('/')
+    }
   } catch (err) {
     displayError(err instanceof Error ? err.message : 'The code is not valid')
     code.value = ''

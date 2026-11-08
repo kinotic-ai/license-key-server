@@ -16,15 +16,18 @@ import org.kinotic.licenses.api.model.FreeLicenseRequest;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.security.LicenseParticipant;
 import org.kinotic.licenses.api.security.ParticipantType;
+import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
+import org.kinotic.licenses.api.model.Customer;
+import org.kinotic.core.api.exceptions.AuthenticationException;
+import org.kinotic.core.api.security.SessionBinding;
 import org.kinotic.licenses.api.model.SiteType;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.kinotic.licenses.internal.api.services.CustomerService;
 import org.kinotic.licenses.internal.api.services.FreeLicenseService;
 import org.kinotic.licenses.internal.api.services.LicenseService;
 import org.kinotic.licenses.internal.api.services.LicenseSigningKey;
-import org.kinotic.licenses.internal.api.services.RateLimitedException;
-import org.kinotic.licenses.internal.api.services.SlidingWindowRateLimiter;
+
 import org.kinotic.licenses.internal.api.services.StripeBillingService;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
@@ -46,9 +49,7 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
     /** How long after a license is created its success page may still show the key. */
     static final Duration KEY_SHOW_WINDOW = Duration.ofHours(1);
 
-    private static final int SIGN_UPS_PER_WINDOW = 20;
-    private static final Duration SIGN_UP_WINDOW = Duration.ofMinutes(15);
-    private static final String TOO_MANY_SIGN_UPS = "Too many sign-ups from this address; try again later";
+    private static final String VERIFY_FIRST = "Confirm your email address with the code we send it first";
 
     private final KinoticLicensesProperties properties;
     private final LicenseSigningKey signingKey;
@@ -57,13 +58,12 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
     private final FreeLicenseService freeLicenseService;
     private final LicenseRepository licenseRepository;
     private final CustomerRepository customerRepository;
+    private final CustomerContactRepository contactRepository;
     private final LicenseService licenseService;
     private final JsonMapper jsonMapper;
 
     // the Checkout Sessions whose key the success page has already been shown; this node is the whole cluster
     private final Set<String> shownKeys = ConcurrentHashMap.newKeySet();
-    // anonymous sign-ups per client address, since each one says whether its email already has an account
-    private final SlidingWindowRateLimiter signUpsPerAddress = new SlidingWindowRateLimiter(SIGN_UPS_PER_WINDOW, SIGN_UP_WINDOW);
 
     @Override
     public void mountRoutes(Router router) {
@@ -94,8 +94,9 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
 
     /**
      * Step three of the purchase: records the acceptance and answers with the Checkout Session URL to send the browser
-     * to. A signed-in customer buys for its own account, as its signed-in contact; anyone else names a new licensee
-     * and its billing contact, which become a new customer.
+     * to. A signed-in customer buys for its own account, as its signed-in contact. Anyone else first verifies the
+     * billing contact's address, which has no account, and names the new licensee; the page is then signed in to that
+     * account, so a retried purchase continues on it.
      */
     private void checkout(RoutingContext ctx) {
         JsonObject body = RestSupport.jsonBody(ctx);
@@ -112,9 +113,8 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
         } else {
             String legalName = RestSupport.requiredString(body, "legalName");
             String contactName = RestSupport.requiredString(body, "contactName");
-            String contactEmail = RestSupport.requiredString(body, "contactEmail");
-            url = withinSignUpLimit(ctx)
-                    .compose(v -> customerService.createCustomer(legalName, contactName, contactEmail))
+            String contactEmail = verifiedEmail(ctx);
+            url = signUp(ctx, legalName, contactName, contactEmail)
                     .compose(buyer -> billingService.startCheckout(buyer, contactName, contactEmail, plan));
         }
         url.onSuccess(started -> RestSupport.respondJson(ctx, 200, new JsonObject().put("url", started)))
@@ -148,8 +148,9 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
     }
 
     /**
-     * A free license request, with the acceptance. A signed-in customer requests for its own account; anyone else names
-     * a new organization and its contact.
+     * A free license request, with the acceptance. A signed-in customer requests for its own account. Anyone else first
+     * verifies the contact's address, which has no account, and names the new organization; the page is then signed in
+     * to that account.
      */
     private void freeRequest(RoutingContext ctx) {
         JsonObject body = RestSupport.jsonBody(ctx);
@@ -167,9 +168,9 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
         } else {
             String organization = RestSupport.requiredString(body, "organization");
             String contactName = RestSupport.requiredString(body, "contactName");
-            String contactEmail = RestSupport.requiredString(body, "contactEmail");
-            requested = withinSignUpLimit(ctx).compose(v -> freeLicenseService.request(organization, contactName, contactEmail,
-                                                                                       certification));
+            String contactEmail = verifiedEmail(ctx);
+            requested = signUp(ctx, organization, contactName, contactEmail)
+                    .compose(created -> freeLicenseService.requestForCustomer(created.getId(), certification));
         }
         requested.onSuccess(request -> RestSupport.respondJson(ctx, 201, new JsonObject().put("id", request.getId())))
                  .onFailure(t -> failSignUp(ctx, t));
@@ -181,10 +182,23 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
         return ret != null && ret.getType() == ParticipantType.CUSTOMER ? ret : null;
     }
 
-    private Future<Void> withinSignUpLimit(RoutingContext ctx) {
-        return signUpsPerAddress.tryAcquire(RestSupport.clientAddress(ctx), Instant.now())
-                ? Future.succeededFuture()
-                : Future.failedFuture(new RateLimitedException(TOO_MANY_SIGN_UPS));
+    // the address the page verified; a sign-up names no address of its own, so only a proven owner can create one
+    private static String verifiedEmail(RoutingContext ctx) {
+        String ret = RestSupport.verifiedEmail(ctx);
+        if (ret == null) {
+            throw new AuthenticationException(VERIFY_FIRST);
+        }
+        return ret;
+    }
+
+    // creates the customer for the verified address and signs the page in to it, in place of the verified address
+    private Future<Customer> signUp(RoutingContext ctx, String legalName, String contactName, String contactEmail) {
+        return customerService.createCustomer(legalName, contactName, contactEmail)
+                              .compose(customer -> contactRepository.findByEmail(contactEmail).map(contacts -> {
+                                  RestSupport.forgetVerifiedEmail(ctx);
+                                  RestSupport.establishSession(ctx, SessionBinding.origin(ctx), LicenseParticipant.ofContact(contacts.getFirst()));
+                                  return customer;
+                              }));
     }
 
     // an address that already has an account, a second subscription, or a second pending request is a conflict the
@@ -192,8 +206,8 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
     private static void failSignUp(RoutingContext ctx, Throwable t) {
         if (t instanceof AlreadyExistsException) {
             RestSupport.respondJson(ctx, 409, new JsonObject().put("error", t.getMessage()));
-        } else if (t instanceof RateLimitedException) {
-            RestSupport.respondJson(ctx, 429, new JsonObject().put("error", t.getMessage()));
+        } else if (t instanceof AuthenticationException) {
+            RestSupport.respondJson(ctx, 401, new JsonObject().put("error", t.getMessage()));
         } else {
             ctx.fail(t);
         }

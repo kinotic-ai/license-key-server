@@ -2,8 +2,9 @@ Your Kinotic sign-in code is:
 
 {{code}}
 
-Enter it to sign in to your Kinotic license account. It expires in 10 minutes and works once.
+Enter it on the Kinotic license site to confirm this address: it signs you in to your license account, or lets you
+create one. It expires in 10 minutes and works once.
 
-If you didn't ask to sign in, you can ignore this email.
+If you didn't ask for a code, you can ignore this email.
 
 — Minds Ignited, makers of Kinotic

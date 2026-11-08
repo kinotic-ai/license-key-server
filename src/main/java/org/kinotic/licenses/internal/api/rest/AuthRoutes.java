@@ -58,7 +58,7 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
         ctx.response().setStatusCode(204).end();
     }
 
-    /** Always {@code 202}: the response never says whether the address has an account. */
+    /** Always {@code 202}: every address is sent a code, so the response never says whether it has an account. */
     private void requestCode(RoutingContext ctx) {
         String email = RestSupport.requiredString(RestSupport.jsonBody(ctx), "email");
         signInCodeService.requestCode(email, RestSupport.clientAddress(ctx))
@@ -71,9 +71,14 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
         String email = RestSupport.requiredString(body, "email");
         String code = RestSupport.requiredString(body, "code");
         signInCodeService.verifyCode(email, code, RestSupport.clientAddress(ctx))
-                         .onSuccess(participant -> {
-                             RestSupport.establishSession(ctx, SessionBinding.origin(ctx), participant);
-                             ctx.response().setStatusCode(204).end();
+                         .onSuccess(verified -> {
+                             // only the address's owner reaches here, so the answer may say whether it has an account
+                             if (verified.participant() != null) {
+                                 RestSupport.establishSession(ctx, SessionBinding.origin(ctx), verified.participant());
+                             } else {
+                                 RestSupport.rememberVerifiedEmail(ctx, SessionBinding.origin(ctx), verified.email());
+                             }
+                             RestSupport.respondJson(ctx, 200, new JsonObject().put("account", verified.participant() != null));
                          })
                          .onFailure(t -> failSignIn(ctx, t));
     }

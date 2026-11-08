@@ -39,12 +39,14 @@ export function fetchPlans(): Promise<PlanInfo[]> {
     return getJson('/api/plans')
 }
 
-/** A purchase. A signed-in customer buys for its own account and names no licensee. */
+/**
+ * A purchase. A signed-in customer buys for its own account and names no licensee; anyone else names the licensee and
+ * contact for the address the page confirmed.
+ */
 export interface CheckoutRequest {
     plan: Plan
     legalName?: string
     contactName?: string
-    contactEmail?: string
     acceptTerms: boolean
 }
 
@@ -58,11 +60,13 @@ export function fetchCheckoutKey(sessionId: string): Promise<CheckoutKey> {
     return getJson(`/api/checkout/${encodeURIComponent(sessionId)}/key`)
 }
 
-/** A free license request. A signed-in customer requests for its own account and names no organization. */
+/**
+ * A free license request. A signed-in customer requests for its own account and names no organization; anyone else
+ * names the organization and contact for the address the page confirmed.
+ */
 export interface FreeRequest extends FreeLicenseCertification {
     organization?: string
     contactName?: string
-    contactEmail?: string
     acceptTerms: boolean
 }
 
@@ -71,12 +75,16 @@ export async function submitFreeRequest(request: FreeRequest): Promise<string> {
     return result!.id
 }
 
-/** Asks for a sign-in code; the server answers the same way whether or not the address has an account. */
+/** Asks for a code; every address is sent one, so the answer says nothing about whether it has an account. */
 export async function requestSignInCode(email: string): Promise<void> {
     await postJson('/api/auth/code/request', { email }, 'The code could not be sent')
 }
 
-/** Signs in with the emailed code; on success the server has set the session cookie. */
-export async function verifySignInCode(email: string, code: string): Promise<void> {
-    await postJson('/api/auth/code/verify', { email, code }, 'The code is not valid')
+/**
+ * Confirms the address with the emailed code. When it belongs to an account the page is now signed in to it;
+ * otherwise the page may sign up with it.
+ */
+export async function verifySignInCode(email: string, code: string): Promise<{ account: boolean }> {
+    const result = await postJson<{ account: boolean }>('/api/auth/code/verify', { email, code }, 'The code is not valid')
+    return result!
 }

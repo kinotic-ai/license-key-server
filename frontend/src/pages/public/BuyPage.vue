@@ -1,23 +1,25 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import { useToast } from 'primevue/usetoast'
 import { PageHeader, showErrorToast } from '@kinotic-ai/frontend-common'
 import type { Plan, PlanInfo } from '@/api/model'
-import { ApiError, fetchPlans, startCheckout } from '@/api/rest'
+import { fetchPlans, startCheckout } from '@/api/rest'
+import EmailCodeStep from '@/components/EmailCodeStep.vue'
 import { SESSION_STATE } from '@/states/LicenseSessionState'
 import TermsAcceptance from '@/components/TermsAcceptance.vue'
 import { formatMoney } from '@/util/format'
 
 /**
- * Buying a plan: the legal name and billing contact, the click-through acceptance, then Stripe Checkout, where the
- * payment details are entered. A signed-in customer buys for its own account, so names no licensee.
+ * Buying a plan: the legal name and billing contact, the click-through acceptance, the code that confirms the billing
+ * contact's address, then Stripe Checkout, where the payment details are entered. A signed-in customer buys for its own
+ * account, so names no licensee; an address that turns out to have an account buys for that account.
  */
 const route = useRoute()
-const router = useRouter()
 const toast = useToast()
+const confirming = ref(false)
 const signedIn = computed(() => SESSION_STATE.isAuthenticated())
 
 const plan = ref<PlanInfo | null>(null)
@@ -43,28 +45,36 @@ async function submit() {
   if (!plan.value || !ready.value) {
     return
   }
+  if (!signedIn.value) {
+    confirming.value = true
+    return
+  }
+  await checkout()
+}
+
+async function onVerified(account: boolean) {
+  confirming.value = false
+  if (account) {
+    await SESSION_STATE.login()
+    toast.add({ severity: 'info', summary: 'Welcome back', detail: 'This address already has an account, so the plan is bought for it.', life: 8000 })
+  }
+  await checkout()
+}
+
+async function checkout() {
+  if (!plan.value) {
+    return
+  }
   submitting.value = true
   try {
     const url = await startCheckout(signedIn.value
         ? { plan: plan.value.id, acceptTerms: accepted.value }
-        : {
-            plan: plan.value.id,
-            legalName: legalName.value.trim(),
-            contactName: contactName.value.trim(),
-            contactEmail: contactEmail.value.trim(),
-            acceptTerms: accepted.value
-          })
+        : { plan: plan.value.id, legalName: legalName.value.trim(), contactName: contactName.value.trim(), acceptTerms: accepted.value })
     // payment details are entered on Stripe's page, never here
     window.location.assign(url)
   } catch (err) {
     submitting.value = false
-    if (err instanceof ApiError && err.status === 409 && !signedIn.value) {
-      // the address has an account: sign in to it, then come back to buy for it
-      toast.add({ severity: 'info', summary: 'Sign in to continue', detail: err.message, life: 10000 })
-      await router.push({ path: '/login', query: { referer: route.fullPath } })
-    } else {
-      showErrorToast(toast, 'The purchase could not be started', err)
-    }
+    showErrorToast(toast, 'The purchase could not be started', err)
   }
 }
 </script>
@@ -97,13 +107,14 @@ async function submit() {
           </div>
           <div>
             <label for="contact-email" class="mb-2 block text-sm font-medium">Billing contact's email</label>
-            <InputText id="contact-email" v-model="contactEmail" class="w-full" type="email" autocomplete="email" />
-            <p class="app-subtle-text mt-1 text-xs">The keys, receipts and sign-in codes go here.</p>
+            <InputText id="contact-email" v-model="contactEmail" class="w-full" type="email" autocomplete="email" :disabled="confirming" />
+            <p class="app-subtle-text mt-1 text-xs">The keys, receipts and sign-in codes go here; we send it a code to confirm it.</p>
           </div>
         </div>
       </section>
       <TermsAcceptance v-model="accepted" />
-      <div class="flex justify-end">
+      <EmailCodeStep v-if="confirming" :email="contactEmail.trim()" @verified="onVerified" @cancel="confirming = false" />
+      <div v-else class="flex justify-end">
         <Button type="submit" label="Continue to payment" icon="pi pi-arrow-right" icon-pos="right" :disabled="!ready" :loading="submitting" />
       </div>
     </form>

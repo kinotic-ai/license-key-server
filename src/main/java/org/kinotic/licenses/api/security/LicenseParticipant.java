@@ -7,6 +7,7 @@ import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.ToString;
 import org.kinotic.core.api.security.Participant;
+import org.kinotic.licenses.api.model.CustomerContact;
 
 import java.util.List;
 import java.util.Map;
@@ -31,6 +32,21 @@ public class LicenseParticipant implements Participant {
     private final String name;
     private final Map<String, String> metadata;
     private final List<String> roles;
+
+    /**
+     * The participant a customer contact signs in as.
+     */
+    public static LicenseParticipant ofContact(CustomerContact contact) {
+        return LicenseParticipant.builder()
+                                 .id(contact.getId())
+                                 .type(ParticipantType.CUSTOMER)
+                                 .customerId(contact.getCustomerId())
+                                 .email(contact.getEmail())
+                                 .name(contact.getName())
+                                 .metadata(Map.of())
+                                 .roles(List.of())
+                                 .build();
+    }
 
     @Builder
     @JsonCreator

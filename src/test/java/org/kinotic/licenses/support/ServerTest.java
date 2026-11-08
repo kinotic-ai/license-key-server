@@ -108,10 +108,22 @@ public abstract class ServerTest {
     }
 
     /**
-     * Signs the address in with the code the server emails it, which the test profile logs, and returns the session
-     * cookie.
+     * Signs the address, which has an account, in with the code the server emails it, and returns the session cookie.
      */
     protected static String signIn(CapturedOutput output, String email) throws Exception {
+        return enterCode(output, email, true);
+    }
+
+    /**
+     * Confirms the address, which has no account, with the code the server emails it, and returns the session cookie
+     * that lets the page sign up with it.
+     */
+    protected static String confirmEmail(CapturedOutput output, String email) throws Exception {
+        return enterCode(output, email, false);
+    }
+
+    // the code is read from the log, where the test profile writes every email
+    private static String enterCode(CapturedOutput output, String email, boolean account) throws Exception {
         int before = codesIn(output).size();
         assertThat(post("/api/auth/code/request", new JsonObject().put("email", email), null).statusCode()).isEqualTo(202);
         String code = null;
@@ -125,7 +137,8 @@ public abstract class ServerTest {
         }
         assertThat(code).as("the sign-in code was logged").isNotNull();
         HttpResponse<Buffer> verified = post("/api/auth/code/verify", new JsonObject().put("email", email).put("code", code), null);
-        assertThat(verified.statusCode()).isEqualTo(204);
+        assertThat(verified.statusCode()).isEqualTo(200);
+        assertThat(verified.bodyAsJsonObject().getBoolean("account")).isEqualTo(account);
         return verified.cookies().getFirst().split(";")[0];
     }
 

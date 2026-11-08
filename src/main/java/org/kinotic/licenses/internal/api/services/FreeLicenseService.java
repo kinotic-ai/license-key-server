@@ -33,23 +33,12 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class FreeLicenseService {
 
-    private final CustomerService customerService;
     private final CustomerRepository customerRepository;
     private final CustomerContactRepository contactRepository;
     private final FreeLicenseRequestRepository requestRepository;
     private final LicenseRepository licenseRepository;
     private final LicenseService licenseService;
     private final EmailService emailService;
-
-    /**
-     * Records a new organization's request, creating the customer, its contact and its acceptance of the terms.
-     */
-    public Future<FreeLicenseRequest> request(String organization, String contactName, String contactEmail,
-                                              FreeLicenseCertification certification) {
-        validate(certification);
-        return customerService.createCustomer(organization, contactName, contactEmail)
-                              .compose(customer -> saveRequest(customer.getId(), certification));
-    }
 
     /**
      * Records an existing free licensee's re-certification for its next term.
