@@ -117,6 +117,12 @@ public class FreeLicenseService {
                                                                                                 }
                                                                                                 return sent;
                                                                                             }))
+                                                      // the decision stands once recorded; a notice that fails is logged, as an
+                                                      // approval's email is
+                                                      .recover(t -> {
+                                                          log.error("The free license request {} was rejected but its contacts could not be told", requestId, t);
+                                                          return Future.succeededFuture();
+                                                      })
                                                       .map(request))
                 .onSuccess(request -> log.info("{} rejected the free license request {}", reviewedBy, requestId));
     }
