@@ -90,8 +90,8 @@ public class LicenseService {
     /**
      * Issues the first key of a license that has none, its term starting now.
      *
-     * @return the license and its key, or a failure with {@link IllegalStateException} when the license is revoked or
-     *         its term changed meanwhile
+     * @return the license and its key, or a failure with {@link IllegalStateException} when the license is revoked, or
+     *         changed since the caller read it
      */
     public Future<NewLicense> issueFirstKey(License license) {
         return issueForTerm(license, Instant.now());
@@ -101,8 +101,8 @@ public class LicenseService {
      * Starts the license's next term and issues its key. The next term starts when the current one ends, or now when
      * that is already past. The current key keeps working until it expires.
      *
-     * @return the license and its key, or a failure with {@link IllegalStateException} when the license is revoked or
-     *         its term changed meanwhile
+     * @return the license and its key, or a failure with {@link IllegalStateException} when the license is revoked, or
+     *         changed since the caller read it
      */
     public Future<NewLicense> issueRenewalKey(License license) {
         Instant now = Instant.now();
@@ -111,6 +111,8 @@ public class LicenseService {
 
     /**
      * Issues another key for the license's current term.
+     *
+     * @return the key, or a failure with {@link IllegalStateException} when the license is revoked
      */
     public Future<IssuedKey> issueReplacementKey(License license) {
         return issueKey(license, license.getTermEnd());
@@ -176,14 +178,14 @@ public class LicenseService {
     }
 
     /**
-     * Records a successful payment and returns the license to good standing, unless it is revoked.
+     * Records a successful payment and returns the license to good standing, unless it is revoked or canceled.
      */
     public Future<License> recordPayment(License license, Instant paidAt) {
         return licenseRepository.recordPayment(license.getId(), paidAt);
     }
 
     /**
-     * Marks a payment failed, unless the license is revoked; no renewal key is issued until a payment succeeds.
+     * Marks a payment failed, unless the license is revoked or canceled; no renewal key is issued until a payment succeeds.
      */
     public Future<License> markPastDue(License license) {
         return licenseRepository.updateStatus(license.getId(), LicenseStatus.PAST_DUE);
@@ -198,7 +200,8 @@ public class LicenseService {
 
     /**
      * Writes what Stripe reports about the subscription: its plan, whether it is in good standing, the end of the
-     * current billing period, and when it ends if the customer cancelled it. A license staff revoked stays revoked.
+     * current billing period, and when it ends if the customer cancelled it. A license staff revoked stays revoked, and
+     * one whose subscription ended stays canceled.
      */
     public Future<License> syncSubscription(License license, Plan plan, LicenseStatus status, Instant currentPeriodEnd,
                                             Instant cancelsAt) {
@@ -242,11 +245,11 @@ public class LicenseService {
         return keyIssuer.issue(claims)
                         .compose(key -> {
                             IssuedKey issued = issuedKey(claims, key, license.getId());
-                            return licenseRepository.startTerm(license.getId(), license.getTermEnd(), termStart, termEnd, issued)
+                            return licenseRepository.startTerm(license, termStart, termEnd, issued)
                                                     .map(moved -> {
                                                         if (moved == null) {
                                                             throw new IllegalStateException("The license " + license.getId()
-                                                                    + " is revoked, or its term changed while its key was issued");
+                                                                    + " is revoked, or changed while its key was issued");
                                                         }
                                                         logIssued(issued);
                                                         return new NewLicense(moved, issued);
@@ -268,7 +271,13 @@ public class LicenseService {
     }
 
     private Future<IssuedKey> append(LicenseKeyClaims claims, String key, String licenseId) {
-        return issuedKeyRepository.append(issuedKey(claims, key, licenseId)).onSuccess(LicenseService::logIssued);
+        return issuedKeyRepository.append(issuedKey(claims, key, licenseId)).map(issued -> {
+            if (issued == null) {
+                throw new IllegalStateException("The license " + licenseId + " is revoked");
+            }
+            logIssued(issued);
+            return issued;
+        });
     }
 
     private static IssuedKey issuedKey(LicenseKeyClaims claims, String key, String licenseId) {

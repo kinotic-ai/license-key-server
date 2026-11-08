@@ -13,13 +13,15 @@ import org.kinotic.licenses.api.model.Plan;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 
 /**
  * Stores licenses. Every change writes only the columns it is about, in one statement, so changes made at the same
- * time by different callers never overwrite each other, and a revoked license stays revoked whatever else changes.
+ * time by different callers never overwrite each other, and a revoked license, or one whose subscription ended, stays so
+ * whatever Stripe reports later.
  */
 @Repository
 @RequiredArgsConstructor
@@ -27,8 +29,9 @@ public class LicenseRepository {
 
     private static final String COLUMNS = "id, customer_id, plan, status, features, stripe_subscription_id, checkout_session_id,"
             + " current_period_end, cancels_at, term_start, term_end, last_payment_at, created_at";
-    // the status a billing change sets, unless staff revoked the license
-    private static final String STATUS_UNLESS_REVOKED = "status = CASE WHEN status = 'REVOKED' THEN status ELSE %s END";
+    // the status a billing change sets, unless staff revoked the license or its subscription ended; Stripe never
+    // reopens a canceled subscription, so a later write is an event delivered out of order
+    private static final String STATUS_UNLESS_ENDED = "status = CASE WHEN status IN ('REVOKED', 'CANCELED') THEN status ELSE %s END";
 
     private final Pool pool;
 
@@ -54,54 +57,57 @@ public class LicenseRepository {
     }
 
     /**
-     * Sets the status, unless the license is revoked.
+     * Sets the status, unless the license is revoked or canceled.
      *
      * @return the license as stored, or {@code null} when none has the id
      */
     public Future<License> updateStatus(String id, LicenseStatus status) {
-        return updateOne(STATUS_UNLESS_REVOKED.formatted("$2"), id, PgValues.name(status));
+        return updateOne(STATUS_UNLESS_ENDED.formatted("$2"), id, PgValues.name(status));
     }
 
     /**
-     * Records a payment and returns the license to good standing, unless it is revoked.
+     * Records a payment and returns the license to good standing, unless it is revoked or canceled.
      *
      * @return the license as stored, or {@code null} when none has the id
      */
     public Future<License> recordPayment(String id, Instant paidAt) {
-        return updateOne("last_payment_at = $2, " + STATUS_UNLESS_REVOKED.formatted("'ACTIVE'"), id, PgValues.timestamp(paidAt));
+        return updateOne("last_payment_at = $2, " + STATUS_UNLESS_ENDED.formatted("'ACTIVE'"), id, PgValues.timestamp(paidAt));
     }
 
     /**
      * Writes what Stripe reports about the subscription: its plan and features, the end of the billing period, when it
-     * is set to end, and its status, unless the license is revoked.
+     * is set to end, and its status, unless the license is revoked or canceled.
      *
      * @return the license as stored, or {@code null} when none has the id
      */
     public Future<License> syncSubscription(String id, Plan plan, LicenseStatus status, Instant currentPeriodEnd, Instant cancelsAt) {
-        return updateOne("plan = $2, features = $3, current_period_end = $4, cancels_at = $5, " + STATUS_UNLESS_REVOKED.formatted("$6"),
+        return updateOne("plan = $2, features = $3, current_period_end = $4, cancels_at = $5, " + STATUS_UNLESS_ENDED.formatted("$6"),
                          id, PgValues.name(plan), featureNames(plan.features()), PgValues.timestamp(currentPeriodEnd),
                          PgValues.timestamp(cancelsAt), PgValues.name(status));
     }
 
     /**
-     * Moves the license to a new term and stores that term's key, provided the license is not revoked and its term
-     * still ends at {@code expectedTermEnd}, so two callers moving the same term leave it moved once. The term moves
-     * only together with its key.
+     * Moves the license to a new term and stores that term's key, provided the license is not revoked and is as it was
+     * read: the same term end, status, plan and scheduled cancellation. So two callers moving the same term leave it
+     * moved once, and a key is stored only for the standing it was signed for. The term moves only together with its key.
      *
-     * @param key the new term's key, which belongs to the license
-     * @return the license as stored, or {@code null} when it is revoked, or its term was moved since it was read
+     * @param read the license as the caller read it
+     * @param key  the new term's key, which belongs to the license
+     * @return the license as stored, or {@code null} when it is revoked, or changed since it was read
      */
-    public Future<License> startTerm(String id, Instant expectedTermEnd, Instant termStart, Instant termEnd, IssuedKey key) {
+    public Future<License> startTerm(License read, Instant termStart, Instant termEnd, IssuedKey key) {
         // one statement, so a failed key insert also leaves the term where it was
         return pool.preparedQuery("WITH moved AS (UPDATE license SET term_start = $3, term_end = $4"
-                                          + " WHERE id = $1 AND term_end = $2 AND status <> 'REVOKED' RETURNING " + COLUMNS + "),"
+                                          + " WHERE id = $1 AND term_end = $2 AND status <> 'REVOKED' AND status = $10 AND plan = $11"
+                                          + " AND cancels_at IS NOT DISTINCT FROM $12 RETURNING " + COLUMNS + "),"
                                           + " stored AS (INSERT INTO issued_key (jti, license_id, purpose, key, issued_at, expires_at)"
                                           + " SELECT $5, id, $6, $7, $8, $9 FROM moved)"
                                           + " SELECT " + COLUMNS + " FROM moved")
-                   .execute(Tuple.from(List.of(id, PgValues.timestamp(expectedTermEnd), PgValues.timestamp(termStart),
-                                               PgValues.timestamp(termEnd), key.getJti(), PgValues.name(key.getPurpose()),
-                                               key.getKey(), PgValues.timestamp(key.getIssuedAt()),
-                                               PgValues.timestamp(key.getExpiresAt()))))
+                   .execute(Tuple.from(Arrays.asList(read.getId(), PgValues.timestamp(read.getTermEnd()), PgValues.timestamp(termStart),
+                                                     PgValues.timestamp(termEnd), key.getJti(), PgValues.name(key.getPurpose()),
+                                                     key.getKey(), PgValues.timestamp(key.getIssuedAt()),
+                                                     PgValues.timestamp(key.getExpiresAt()), PgValues.name(read.getStatus()),
+                                                     PgValues.name(read.getPlan()), PgValues.timestamp(read.getCancelsAt()))))
                    .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
     }
 

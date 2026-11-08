@@ -101,6 +101,22 @@ class BillingWebhookTest extends ServerTest {
     }
 
     @Test
+    void aCanceledLicenseStaysCanceledWhateverStripeSaysLater() throws Exception {
+        String subscriptionId = "sub_" + UUID.randomUUID();
+        License license = await(licenseService.createLicense(seedCustomer(), Plan.STARTUP, subscriptionId, "cs_" + UUID.randomUUID(),
+                                                             Instant.now().plus(Duration.ofDays(30)))).license();
+        Instant periodEnd = Instant.now().plus(Duration.ofDays(30)).truncatedTo(ChronoUnit.SECONDS);
+        assertThat(deliver(StripeEvents.event("customer.subscription.deleted",
+                                              StripeEvents.subscription(subscriptionId, "canceled", Plan.STARTUP.lookupKey(), periodEnd))).statusCode()).isEqualTo(200);
+
+        // events created before the cancellation, delivered after it
+        assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
+        assertThat(deliver(StripeEvents.event("customer.subscription.updated",
+                                              StripeEvents.subscription(subscriptionId, "active", Plan.STARTUP.lookupKey(), periodEnd))).statusCode()).isEqualTo(200);
+        assertThat(await(licenseRepository.findById(license.getId())).getStatus()).isEqualTo(LicenseStatus.CANCELED);
+    }
+
+    @Test
     void anEventThatCannotBeHandledIsForgottenSoStripeCanRedeliverIt() throws Exception {
         // a data object of a kind the library cannot read fails before any handler runs
         JsonObject event = StripeEvents.event("invoice.paid", new JsonObject().put("id", "x").put("object", "no_such_object"));
@@ -241,6 +257,26 @@ class BillingWebhookTest extends ServerTest {
         License stored = await(licenseRepository.findById(license.getId()));
         assertThat(stored.getStatus()).isEqualTo(LicenseStatus.REVOKED);
         assertThat(stored.getTermEnd()).isEqualTo(license.getTermEnd());
+        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
+    }
+
+    @Test
+    void aRenewalOfALicenseThatChangedWhileItsKeyWasSignedIsNotStored() throws Exception {
+        License license = await(licenseService.createLicense(seedCustomer(), Plan.STARTUP, "sub_" + UUID.randomUUID(), "cs_" + UUID.randomUUID(),
+                                                             Instant.now().plus(Duration.ofDays(30)))).license();
+        // the renewal read the license before a payment failed
+        await(licenseService.markPastDue(license));
+        assertThatThrownBy(() -> await(licenseService.issueRenewalKey(license))).hasCauseInstanceOf(IllegalStateException.class);
+        assertThat(await(licenseRepository.findById(license.getId())).getTermEnd()).isEqualTo(license.getTermEnd());
+        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
+    }
+
+    @Test
+    void aRevokedLicenseIsIssuedNoReplacementKey() throws Exception {
+        License license = await(licenseService.createLicense(seedCustomer(), Plan.STARTUP, "sub_" + UUID.randomUUID(), "cs_" + UUID.randomUUID(),
+                                                             Instant.now().plus(Duration.ofDays(30)))).license();
+        await(licenseService.revoke(license));
+        assertThatThrownBy(() -> await(licenseService.issueReplacementKey(license))).hasCauseInstanceOf(IllegalStateException.class);
         assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
     }
 

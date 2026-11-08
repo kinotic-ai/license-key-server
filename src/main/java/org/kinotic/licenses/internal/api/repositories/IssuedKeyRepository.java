@@ -22,9 +22,17 @@ public class IssuedKeyRepository {
 
     private final Pool pool;
 
+    /**
+     * Stores a key, unless it belongs to a license that is revoked.
+     *
+     * @return the key as stored, or {@code null} when its license is revoked
+     */
     public Future<IssuedKey> append(IssuedKey key) {
+        // the revocation check and the insert are one statement, so a revocation committed first always wins
         return pool.preparedQuery("INSERT INTO issued_key (jti, license_id, purpose, key, issued_at, expires_at)"
-                                          + " VALUES ($1, $2, $3, $4, $5, $6) RETURNING " + COLUMNS)
+                                          + " SELECT $1, $2, $3, $4, $5, $6"
+                                          + " WHERE NOT EXISTS (SELECT 1 FROM license WHERE id = $2 AND status = 'REVOKED')"
+                                          + " RETURNING " + COLUMNS)
                    .execute(Tuple.of(key.getJti(), key.getLicenseId(), PgValues.name(key.getPurpose()), key.getKey(),
                                      PgValues.timestamp(key.getIssuedAt()), PgValues.timestamp(key.getExpiresAt())))
                    .map(rows -> PgValues.first(rows, IssuedKeyRepository::toKey));
