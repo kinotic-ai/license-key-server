@@ -11,6 +11,12 @@ import io.vertx.ext.web.client.WebClientOptions;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.condition.EnabledIf;
+import io.vertx.sqlclient.Pool;
+import io.vertx.sqlclient.Tuple;
+import org.springframework.boot.test.system.CapturedOutput;
+import java.util.List;
+import java.util.regex.Pattern;
+import static org.assertj.core.api.Assertions.assertThat;
 import org.kinotic.licenses.api.model.ContactRole;
 import org.kinotic.licenses.api.model.Customer;
 import org.kinotic.licenses.api.model.CustomerContact;
@@ -43,6 +49,10 @@ public abstract class ServerTest {
     private static Vertx clientVertx;
     protected static WebClient client;
 
+    private static final Pattern CODE_IN_LOG = Pattern.compile("Your Kinotic sign-in code is:\\s+(\\d{8})");
+
+    @Autowired
+    protected Pool pool;
     @Autowired
     protected CustomerRepository customerRepository;
     @Autowired
@@ -89,6 +99,37 @@ public abstract class ServerTest {
             request.putHeader("Cookie", cookie);
         }
         return await(request.send());
+    }
+
+    /** Runs a statement against the suite's database, for arranging state no public interface sets, such as a past date. */
+    protected void sql(String statement, Object... values) throws Exception {
+        await(pool.preparedQuery(statement).execute(Tuple.from(values)));
+    }
+
+    /**
+     * Signs the address in with the code the server emails it, which the test profile logs, and returns the session
+     * cookie.
+     */
+    protected static String signIn(CapturedOutput output, String email) throws Exception {
+        int before = codesIn(output).size();
+        assertThat(post("/api/auth/code/request", new JsonObject().put("email", email), null).statusCode()).isEqualTo(202);
+        String code = null;
+        for (int i = 0; i < 100 && code == null; i++) {
+            List<String> codes = codesIn(output);
+            if (codes.size() > before) {
+                code = codes.getLast();
+            } else {
+                Thread.sleep(100);
+            }
+        }
+        assertThat(code).as("the sign-in code was logged").isNotNull();
+        HttpResponse<Buffer> verified = post("/api/auth/code/verify", new JsonObject().put("email", email).put("code", code), null);
+        assertThat(verified.statusCode()).isEqualTo(204);
+        return verified.cookies().getFirst().split(";")[0];
+    }
+
+    private static List<String> codesIn(CapturedOutput output) {
+        return CODE_IN_LOG.matcher(output.getAll()).results().map(m -> m.group(1)).toList();
     }
 
     /** A customer with one billing contact whose email is unique to the test. */

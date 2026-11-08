@@ -3,10 +3,17 @@ import type { CheckoutKey, FreeLicenseCertification, Plan, PlanInfo, SiteInfo } 
 
 /** The REST routes anyone may call, and the customer sign-in routes. */
 
+/** A refused request, with the HTTP status the server answered. */
+export class ApiError extends Error {
+    constructor(message: string, readonly status: number) {
+        super(message)
+    }
+}
+
 async function getJson<T>(path: string): Promise<T> {
     const res = await fetch(apiUrl(path), { credentials: 'include' })
     if (!res.ok) {
-        throw new Error(await readAuthError(res, `${path} failed with ${res.status}`))
+        throw new ApiError(await readAuthError(res, `${path} failed with ${res.status}`), res.status)
     }
     return res.json()
 }
@@ -19,7 +26,7 @@ async function postJson<T>(path: string, body: unknown, fallback: string): Promi
         body: JSON.stringify(body)
     })
     if (!res.ok) {
-        throw new Error(await readAuthError(res, fallback))
+        throw new ApiError(await readAuthError(res, fallback), res.status)
     }
     return res.status === 204 || res.status === 202 ? null : res.json()
 }
@@ -32,11 +39,12 @@ export function fetchPlans(): Promise<PlanInfo[]> {
     return getJson('/api/plans')
 }
 
+/** A purchase. A signed-in customer buys for its own account and names no licensee. */
 export interface CheckoutRequest {
     plan: Plan
-    legalName: string
-    contactName: string
-    contactEmail: string
+    legalName?: string
+    contactName?: string
+    contactEmail?: string
     acceptTerms: boolean
 }
 
@@ -50,10 +58,11 @@ export function fetchCheckoutKey(sessionId: string): Promise<CheckoutKey> {
     return getJson(`/api/checkout/${encodeURIComponent(sessionId)}/key`)
 }
 
+/** A free license request. A signed-in customer requests for its own account and names no organization. */
 export interface FreeRequest extends FreeLicenseCertification {
-    organization: string
-    contactName: string
-    contactEmail: string
+    organization?: string
+    contactName?: string
+    contactEmail?: string
     acceptTerms: boolean
 }
 

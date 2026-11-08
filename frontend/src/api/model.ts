@@ -52,6 +52,8 @@ export interface License {
     stripeSubscriptionId: string | null
     checkoutSessionId: string | null
     currentPeriodEnd: string | null
+    /** When the subscription ends because the customer cancelled it; null while it renews. */
+    cancelsAt: string | null
     termStart: string
     termEnd: string
     lastPaymentAt: string | null

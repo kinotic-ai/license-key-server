@@ -1,5 +1,6 @@
 package org.kinotic.licenses.internal.api.rest;
 
+import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
@@ -11,7 +12,11 @@ import org.kinotic.licenses.api.config.KinoticLicensesProperties;
 import org.kinotic.licenses.api.model.AgreementTerms;
 import org.kinotic.licenses.api.model.CheckoutKeyStatus;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
+import org.kinotic.licenses.api.model.FreeLicenseRequest;
 import org.kinotic.licenses.api.model.Plan;
+import org.kinotic.licenses.api.security.LicenseParticipant;
+import org.kinotic.licenses.api.security.ParticipantType;
+import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.kinotic.licenses.api.model.SiteType;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.kinotic.licenses.internal.api.services.CustomerService;
@@ -45,6 +50,7 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
     private final CustomerService customerService;
     private final FreeLicenseService freeLicenseService;
     private final LicenseRepository licenseRepository;
+    private final CustomerRepository customerRepository;
     private final LicenseService licenseService;
     private final JsonMapper jsonMapper;
 
@@ -79,20 +85,30 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
     }
 
     /**
-     * Step three of the purchase: creates the customer and its Stripe customer, records the acceptance and answers with
-     * the Checkout Session URL to send the browser to.
+     * Step three of the purchase: records the acceptance and answers with the Checkout Session URL to send the browser
+     * to. A signed-in customer buys for its own account, as its signed-in contact; anyone else names a new licensee
+     * and its billing contact, which become a new customer.
      */
     private void checkout(RoutingContext ctx) {
         JsonObject body = RestSupport.jsonBody(ctx);
         Plan plan = plan(body);
         Validate.isTrue(plan != Plan.FREE, "The free plan is requested at /free, not bought");
         requireAcceptance(body);
-        String contactName = RestSupport.requiredString(body, "contactName");
-        String contactEmail = RestSupport.requiredString(body, "contactEmail");
-        customerService.createCustomer(RestSupport.requiredString(body, "legalName"), contactName, contactEmail)
-                       .compose(customer -> billingService.startCheckout(customer, contactName, contactEmail, plan))
-                       .onSuccess(url -> RestSupport.respondJson(ctx, 200, new JsonObject().put("url", url)))
-                       .onFailure(t -> failSignUp(ctx, t));
+        LicenseParticipant customer = signedInCustomer(ctx);
+        Future<String> url;
+        if (customer != null) {
+            url = customerRepository.findById(customer.getCustomerId())
+                                    .compose(buyer -> billingService.startCheckout(buyer, customer.getName(), customer.getEmail(), plan))
+                                    .compose(started -> customerService.recordAcceptance(customer.getCustomerId(), customer.getName(),
+                                                                                         customer.getEmail()).map(started));
+        } else {
+            String contactName = RestSupport.requiredString(body, "contactName");
+            String contactEmail = RestSupport.requiredString(body, "contactEmail");
+            url = customerService.createCustomer(RestSupport.requiredString(body, "legalName"), contactName, contactEmail)
+                                 .compose(buyer -> billingService.startCheckout(buyer, contactName, contactEmail, plan));
+        }
+        url.onSuccess(started -> RestSupport.respondJson(ctx, 200, new JsonObject().put("url", started)))
+           .onFailure(t -> failSignUp(ctx, t));
     }
 
     /**
@@ -103,11 +119,14 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
         String sessionId = ctx.pathParam("sessionId");
         licenseRepository.findByCheckoutSessionId(sessionId)
                          .compose(license -> license == null
-                                 ? io.vertx.core.Future.succeededFuture(new JsonObject().put("status", CheckoutKeyStatus.PENDING.name()))
+                                 ? Future.succeededFuture(new JsonObject().put("status", CheckoutKeyStatus.PENDING.name()))
                                  : licenseService.keysOf(license.getId()).map(keys -> {
-                                     JsonObject ret = new JsonObject().put("status", CheckoutKeyStatus.SHOWN.name());
+                                     // a license with no key yet is one whose payment is still clearing
+                                     JsonObject ret = new JsonObject().put("status", keys.isEmpty()
+                                             ? CheckoutKeyStatus.PENDING.name()
+                                             : CheckoutKeyStatus.SHOWN.name());
                                      boolean withinWindow = license.getCreatedAt().plus(KEY_SHOW_WINDOW).isAfter(Instant.now());
-                                     if (withinWindow && !keys.isEmpty() && shownKeys.add(sessionId)) {
+                                     if (!keys.isEmpty() && withinWindow && shownKeys.add(sessionId)) {
                                          ret.put("status", CheckoutKeyStatus.READY.name())
                                             .put("key", keys.getLast().getKey())
                                             .put("expiresAt", keys.getLast().getExpiresAt().toString());
@@ -118,6 +137,10 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
                          .onFailure(ctx::fail);
     }
 
+    /**
+     * A free license request, with the acceptance. A signed-in customer requests for its own account; anyone else names
+     * a new organization and its contact.
+     */
     private void freeRequest(RoutingContext ctx) {
         JsonObject body = RestSupport.jsonBody(ctx);
         requireAcceptance(body);
@@ -125,15 +148,30 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
                 .setAnnualRevenue(amount(body, "annualRevenue"))
                 .setCapitalRaised(amount(body, "capitalRaised"))
                 .setIntendedUse(RestSupport.requiredString(body, "intendedUse"));
-        freeLicenseService.request(RestSupport.requiredString(body, "organization"),
-                                   RestSupport.requiredString(body, "contactName"),
-                                   RestSupport.requiredString(body, "contactEmail"),
-                                   certification)
-                          .onSuccess(request -> RestSupport.respondJson(ctx, 201, new JsonObject().put("id", request.getId())))
-                          .onFailure(t -> failSignUp(ctx, t));
+        LicenseParticipant customer = signedInCustomer(ctx);
+        Future<FreeLicenseRequest> requested;
+        if (customer != null) {
+            requested = freeLicenseService.requestForCustomer(customer.getCustomerId(), certification)
+                                          .compose(request -> customerService.recordAcceptance(customer.getCustomerId(), customer.getName(),
+                                                                                               customer.getEmail()).map(request));
+        } else {
+            requested = freeLicenseService.request(RestSupport.requiredString(body, "organization"),
+                                                   RestSupport.requiredString(body, "contactName"),
+                                                   RestSupport.requiredString(body, "contactEmail"),
+                                                   certification);
+        }
+        requested.onSuccess(request -> RestSupport.respondJson(ctx, 201, new JsonObject().put("id", request.getId())))
+                 .onFailure(t -> failSignUp(ctx, t));
     }
 
-    // an address that already has an account is a conflict the form explains, not a server error
+    // the customer contact signed in on the page that sent the request; a staff session buys nothing
+    private static LicenseParticipant signedInCustomer(RoutingContext ctx) {
+        LicenseParticipant ret = RestSupport.signedIn(ctx);
+        return ret != null && ret.getType() == ParticipantType.CUSTOMER ? ret : null;
+    }
+
+    // an address that already has an account, a second subscription, or a second pending request is a conflict the
+    // form explains, not a server error
     private static void failSignUp(RoutingContext ctx, Throwable t) {
         if (t instanceof AlreadyExistsException) {
             RestSupport.respondJson(ctx, 409, new JsonObject().put("error", t.getMessage()));

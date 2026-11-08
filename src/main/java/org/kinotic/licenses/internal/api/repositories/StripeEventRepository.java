@@ -7,30 +7,47 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /**
- * The ids of the Stripe events already processed, so a redelivered event is handled once.
+ * The Stripe events this server has handled or is handling, so a redelivered event is handled once.
  */
 @Repository
 @RequiredArgsConstructor
 public class StripeEventRepository {
 
+    /** How long a delivery may hold an event before another delivery may take it over. */
+    private static final String CLAIM_LIFETIME = "5 minutes";
+
     private final Pool pool;
 
     /**
-     * Records the event as processed.
+     * Claims the event for the calling delivery: a new event, or one whose earlier claim expired without it being
+     * processed, as when the server stopped while handling it.
      *
-     * @return {@code true} when the event was new, {@code false} when it had already been recorded
+     * @return {@code true} when the caller holds the claim and should handle the event, {@code false} when the event
+     *         was processed already or another delivery is handling it
      */
-    public Future<Boolean> recordIfNew(String eventId, String type) {
-        return pool.preparedQuery("INSERT INTO stripe_event (id, type) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING")
+    public Future<Boolean> claim(String eventId, String type) {
+        return pool.preparedQuery("INSERT INTO stripe_event (id, type) VALUES ($1, $2)"
+                                          + " ON CONFLICT (id) DO UPDATE SET claimed_at = now()"
+                                          + " WHERE stripe_event.processed_at IS NULL"
+                                          + " AND stripe_event.claimed_at < now() - interval '" + CLAIM_LIFETIME + "'")
                    .execute(Tuple.of(eventId, type))
                    .map(rows -> rows.rowCount() == 1);
     }
 
     /**
-     * Forgets the event, so a delivery whose handling failed is handled again when Stripe redelivers it.
+     * Marks a claimed event processed, so every later delivery of it is acknowledged without being handled.
      */
-    public Future<Void> forget(String eventId) {
-        return pool.preparedQuery("DELETE FROM stripe_event WHERE id = $1")
+    public Future<Void> markProcessed(String eventId) {
+        return pool.preparedQuery("UPDATE stripe_event SET processed_at = now() WHERE id = $1")
+                   .execute(Tuple.of(eventId))
+                   .mapEmpty();
+    }
+
+    /**
+     * Releases a claim whose handling failed, so Stripe's redelivery handles the event afresh.
+     */
+    public Future<Void> release(String eventId) {
+        return pool.preparedQuery("DELETE FROM stripe_event WHERE id = $1 AND processed_at IS NULL")
                    .execute(Tuple.of(eventId))
                    .mapEmpty();
     }

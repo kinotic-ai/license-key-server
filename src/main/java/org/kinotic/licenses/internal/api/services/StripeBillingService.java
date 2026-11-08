@@ -18,6 +18,7 @@ import com.stripe.param.checkout.SessionCreateParams;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import lombok.RequiredArgsConstructor;
+import org.kinotic.core.api.exceptions.AlreadyExistsException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
@@ -62,6 +63,8 @@ public class StripeBillingService {
     private static final String PLAN_METADATA = "kinoticPlan";
     private static final String SUBSCRIPTION_MODE = "subscription";
     private static final BigDecimal MINOR_UNITS = BigDecimal.valueOf(100);
+    private static final String UNPAID = "unpaid";
+    private static final String ALREADY_SUBSCRIBED = "This account already has a subscription. Change its plan from your account.";
 
     private final KinoticLicensesProperties properties;
     private final CustomerRepository customerRepository;
@@ -87,12 +90,19 @@ public class StripeBillingService {
      * @param contactName  the billing contact's name, shown on the Stripe customer
      * @param contactEmail the billing contact's email, which Stripe sends receipts to
      * @param plan         the paid plan
-     * @return the Checkout Session URL to send the browser to
+     * @return the Checkout Session URL to send the browser to, or a failure with {@link AlreadyExistsException} when
+     *         the customer already holds a paid subscription, which it changes in the Customer Portal instead
      */
     public Future<String> startCheckout(Customer customer, String contactName, String contactEmail, Plan plan) {
         Validate.isTrue(plan != Plan.FREE, "The free plan is requested, not bought");
         String publicBaseUrl = properties.getLicenses().getPublicBaseUrl();
-        return catalog().compose(plans -> {
+        return licenseRepository.findByCustomerId(customer.getId()).compose(licenses -> {
+            boolean subscribed = licenses.stream().anyMatch(license -> license.getPlan() != Plan.FREE
+                    && (license.getStatus() == LicenseStatus.ACTIVE || license.getStatus() == LicenseStatus.PAST_DUE));
+            return subscribed
+                    ? Future.failedFuture(new AlreadyExistsException(ALREADY_SUBSCRIBED))
+                    : catalog();
+        }).compose(plans -> {
             String priceId = plans.priceIds().get(plan);
             Validate.validState(priceId != null, "Stripe has no active Price with the lookup key %s", plan.lookupKey());
             return ensureStripeCustomer(customer, contactName, contactEmail).compose(stripeCustomerId -> blocking(() -> {
@@ -158,7 +168,7 @@ public class StripeBillingService {
             ret = licenseRepository.findByCheckoutSessionId(session.getId()).compose(existing -> {
                 Future<Void> created;
                 if (existing != null) {
-                    created = finishFulfillment(existing);
+                    created = finishFulfillment(existing, isPaid(session));
                 } else {
                     created = customerRepository.findById(session.getClientReferenceId())
                                                 .compose(customer -> createLicenseFor(customer, session));
@@ -177,29 +187,55 @@ public class StripeBillingService {
                     SubscriptionItem item = subscription.getItems().getData().getFirst();
                     Plan plan = Plan.fromLookupKey(item.getPrice().getLookupKey());
                     Instant periodEnd = Instant.ofEpochSecond(item.getCurrentPeriodEnd());
-                    LicenseStatus status = statusOf(subscription.getStatus());
-                    return licenseService.createLicense(customer, plan, subscription.getId(), session.getId(), periodEnd)
-                                         // the subscription may already have moved on by the time this event is handled
-                                         .compose(created -> status == LicenseStatus.ACTIVE
-                                                 ? Future.succeededFuture(created)
-                                                 : licenseService.syncSubscription(created.license(), plan, status, periodEnd).map(created));
+                    Future<Void> ret;
+                    if (isPaid(session)) {
+                        // the subscription may already have moved on by the time this event is handled
+                        ret = licenseService.createLicense(customer, plan, subscription.getId(), session.getId(), periodEnd)
+                                            .compose(created -> licenseService.syncSubscription(created.license(), plan,
+                                                                                                statusOf(subscription.getStatus()),
+                                                                                                periodEnd, cancelsAt(subscription, periodEnd))
+                                                                              .compose(synced -> licenseService.emailNewKey(synced, created.key())));
+                    } else {
+                        // a payment that clears later, as a bank debit does, gets its key from invoice.paid
+                        ret = licenseService.createAwaitingPayment(customer, plan, subscription.getId(), session.getId(), periodEnd)
+                                            .mapEmpty();
+                    }
+                    return ret;
                 })
-                .compose(created -> licenseService.emailNewKey(created.license(), created.key()))
                 .onSuccess(v -> log.info("The Checkout Session {} bought a license for customer {}", session.getId(), customer.getId()));
     }
 
-    // issues the key a failed first attempt never got to, or emails again the one it issued but never sent
-    private Future<Void> finishFulfillment(License license) {
-        return licenseService.keysOf(license.getId()).compose(keys -> keys.isEmpty()
-                ? licenseService.issueReplacementKey(license).compose(key -> licenseService.emailNewKey(license, key))
-                : licenseService.resendLatestKey(license));
+    // issues the key a failed first attempt never got to, or emails again the one it issued but never sent; a payment
+    // that has not cleared waits for invoice.paid
+    private Future<Void> finishFulfillment(License license, boolean paid) {
+        return licenseService.keysOf(license.getId()).compose(keys -> {
+            Future<Void> ret;
+            if (!keys.isEmpty()) {
+                ret = licenseService.resendLatestKey(license);
+            } else if (paid) {
+                ret = licenseService.issueFirstKey(license).compose(issued -> licenseService.emailNewKey(issued.license(), issued.key()));
+            } else {
+                ret = Future.succeededFuture();
+            }
+            return ret;
+        });
     }
 
     private Future<Void> invoicePaid(Invoice invoice) {
         Instant paidAt = invoice.getStatusTransitions() != null && invoice.getStatusTransitions().getPaidAt() != null
                 ? Instant.ofEpochSecond(invoice.getStatusTransitions().getPaidAt())
                 : Instant.now();
-        return withLicenseOf(subscriptionOf(invoice), license -> licenseService.recordPayment(license, paidAt).mapEmpty());
+        return withLicenseOf(subscriptionOf(invoice), license -> licenseService.recordPayment(license, paidAt)
+                .compose(paid -> paid.getStatus() == LicenseStatus.ACTIVE
+                        ? issueFirstKeyIfNone(paid)
+                        : Future.succeededFuture()));
+    }
+
+    // the first payment of a checkout paid by bank debit clears here, and so does the license's first key
+    private Future<Void> issueFirstKeyIfNone(License license) {
+        return licenseService.keysOf(license.getId()).compose(keys -> keys.isEmpty()
+                ? licenseService.issueFirstKey(license).compose(issued -> licenseService.emailNewKey(issued.license(), issued.key()))
+                : Future.succeededFuture());
     }
 
     private Future<Void> invoicePaymentFailed(Invoice invoice) {
@@ -217,7 +253,8 @@ public class StripeBillingService {
             SubscriptionItem item = subscription.getItems().getData().getFirst();
             Plan plan = item.getPrice().getLookupKey() != null ? Plan.fromLookupKey(item.getPrice().getLookupKey()) : license.getPlan();
             Instant periodEnd = item.getCurrentPeriodEnd() != null ? Instant.ofEpochSecond(item.getCurrentPeriodEnd()) : license.getCurrentPeriodEnd();
-            return licenseService.syncSubscription(license, plan, statusOf(subscription.getStatus()), periodEnd).mapEmpty();
+            return licenseService.syncSubscription(license, plan, statusOf(subscription.getStatus()), periodEnd,
+                                                   cancelsAt(subscription, periodEnd)).mapEmpty();
         });
     }
 
@@ -241,6 +278,22 @@ public class StripeBillingService {
                 }
                 return applied;
             });
+        }
+        return ret;
+    }
+
+    // Checkout reports a payment still clearing as unpaid; a card payment, or a plan with nothing to pay yet, is not
+    private static boolean isPaid(Session session) {
+        return !UNPAID.equals(session.getPaymentStatus());
+    }
+
+    // when the customer has cancelled, the subscription ends at cancel_at, or at the end of the period
+    private static Instant cancelsAt(Subscription subscription, Instant periodEnd) {
+        Instant ret = null;
+        if (subscription.getCancelAt() != null) {
+            ret = Instant.ofEpochSecond(subscription.getCancelAt());
+        } else if (Boolean.TRUE.equals(subscription.getCancelAtPeriodEnd())) {
+            ret = periodEnd;
         }
         return ret;
     }

@@ -39,6 +39,8 @@ CREATE TABLE license (
     -- the Checkout Session that bought it, which the success page shows the first key for
     checkout_session_id    TEXT UNIQUE,
     current_period_end     TIMESTAMPTZ,
+    -- when the subscription is set to end, as the customer scheduled it in the Customer Portal
+    cancels_at             TIMESTAMPTZ,
     term_start             TIMESTAMPTZ NOT NULL,
     term_end               TIMESTAMPTZ NOT NULL,
     last_payment_at        TIMESTAMPTZ,
@@ -70,10 +72,20 @@ CREATE TABLE issued_key (
 );
 CREATE INDEX issued_key_license_idx ON issued_key (license_id, issued_at);
 
+-- An event is claimed while a delivery handles it and processed once that succeeds. A claim left by a delivery that
+-- died mid-way expires, so Stripe's redelivery handles the event again.
 CREATE TABLE stripe_event (
     id           TEXT PRIMARY KEY,
     type         TEXT        NOT NULL,
-    processed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    claimed_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    processed_at TIMESTAMPTZ
+);
+
+-- Renewal keys issued whose email has not gone out yet; the renewal job sends them on its next run.
+CREATE TABLE unsent_renewal_email (
+    jti        TEXT PRIMARY KEY REFERENCES issued_key (jti),
+    license_id TEXT        NOT NULL REFERENCES license (id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE sign_in_code (

@@ -4,7 +4,9 @@ One container serves two hostnames on one port (58503): the public site, `licens
 dashboard on a host restricted by network to Minds Ignited, as the Kinotic system console is. The reverse proxy in
 front of the container terminates TLS for both names and forwards every path, WebSockets included (the STOMP API is
 `/api/v1`), to port 58503 with the `Host` header unchanged: the server decides which site a request belongs to from
-that header. The proxy sets `X-Forwarded-For`, which the sign-in rate limits key on.
+that header. Exactly one proxy stands in front of the server, and it appends the client's address to
+`X-Forwarded-For`: the sign-in rate limits key on that last entry, since the client writes whatever it likes to
+the left of it. A second proxy in the chain would make every client look like the first proxy.
 
 ## Infrastructure
 
@@ -27,9 +29,14 @@ that header. The proxy sets `X-Forwarded-For`, which the sign-in rate limits key
 - **Stripe webhook**: an endpoint at `https://licenses.kinotic.ai/api/stripe/webhook` delivering
   `checkout.session.completed`, `invoice.paid`, `invoice.payment_failed`, `customer.subscription.updated` and
   `customer.subscription.deleted`, pinned to the API version of the `stripe-java` release in `gradle.properties`.
-  Its signing secret is `KINOTIC_LICENSES_STRIPE_WEBHOOKSECRET`.
+  Its signing secret is `KINOTIC_LICENSES_STRIPE_WEBHOOKSECRET`. A card payment gets its key from
+  `checkout.session.completed`; a bank debit through Link completes Checkout unpaid, and its key is issued and
+  emailed when `invoice.paid` reports the payment cleared. A subscription the customer cancels in the Customer
+  Portal keeps its key until it expires and is not renewed.
 - **Staff OIDC**: a web application in Minds Ignited's Google Workspace (or Entra tenant) with the redirect URI
-  `https://<staff host>/api/auth/staff/callback`, scopes `openid email profile`.
+  `https://<staff host>/api/auth/staff/callback`, scopes `openid email profile`. With Entra, add `email` as an
+  optional ID token claim: Entra sends no `email_verified`, so the server takes the tenant's own address for
+  verified, and accepts only accounts on `KINOTIC_LICENSES_STAFFOIDC_ALLOWEDEMAILDOMAIN`.
 
 ## Configuration
 

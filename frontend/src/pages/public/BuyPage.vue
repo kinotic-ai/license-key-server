@@ -1,21 +1,24 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import { useToast } from 'primevue/usetoast'
 import { PageHeader, showErrorToast } from '@kinotic-ai/frontend-common'
 import type { Plan, PlanInfo } from '@/api/model'
-import { fetchPlans, startCheckout } from '@/api/rest'
+import { ApiError, fetchPlans, startCheckout } from '@/api/rest'
+import { SESSION_STATE } from '@/states/LicenseSessionState'
 import TermsAcceptance from '@/components/TermsAcceptance.vue'
 import { formatMoney } from '@/util/format'
 
 /**
  * Buying a plan: the legal name and billing contact, the click-through acceptance, then Stripe Checkout, where the
- * payment details are entered.
+ * payment details are entered. A signed-in customer buys for its own account, so names no licensee.
  */
 const route = useRoute()
+const router = useRouter()
 const toast = useToast()
+const signedIn = computed(() => SESSION_STATE.isAuthenticated())
 
 const plan = ref<PlanInfo | null>(null)
 const legalName = ref('')
@@ -25,7 +28,8 @@ const accepted = ref(false)
 const submitting = ref(false)
 
 const planId = computed(() => String(route.query.plan ?? '').toUpperCase() as Plan)
-const ready = computed(() => legalName.value.trim() && contactName.value.trim() && contactEmail.value.includes('@') && accepted.value)
+const ready = computed(() => accepted.value
+    && (signedIn.value || (legalName.value.trim() && contactName.value.trim() && contactEmail.value.includes('@'))))
 
 onMounted(async () => {
   try {
@@ -41,18 +45,26 @@ async function submit() {
   }
   submitting.value = true
   try {
-    const url = await startCheckout({
-      plan: plan.value.id,
-      legalName: legalName.value.trim(),
-      contactName: contactName.value.trim(),
-      contactEmail: contactEmail.value.trim(),
-      acceptTerms: accepted.value
-    })
+    const url = await startCheckout(signedIn.value
+        ? { plan: plan.value.id, acceptTerms: accepted.value }
+        : {
+            plan: plan.value.id,
+            legalName: legalName.value.trim(),
+            contactName: contactName.value.trim(),
+            contactEmail: contactEmail.value.trim(),
+            acceptTerms: accepted.value
+          })
     // payment details are entered on Stripe's page, never here
     window.location.assign(url)
   } catch (err) {
-    showErrorToast(toast, 'The purchase could not be started', err)
     submitting.value = false
+    if (err instanceof ApiError && err.status === 409 && !signedIn.value) {
+      // the address has an account: sign in to it, then come back to buy for it
+      toast.add({ severity: 'info', summary: 'Sign in to continue', detail: err.message, life: 10000 })
+      await router.push({ path: '/login', query: { referer: route.fullPath } })
+    } else {
+      showErrorToast(toast, 'The purchase could not be started', err)
+    }
   }
 }
 </script>
@@ -65,7 +77,14 @@ async function submit() {
       Pick a plan from the <RouterLink to="/" class="underline">plans page</RouterLink>.
     </div>
     <form v-else class="flex flex-col gap-5" @submit.prevent="submit">
-      <section class="app-card-surface flex flex-col gap-5 rounded-xl border p-5">
+      <section v-if="signedIn" class="app-card-surface rounded-xl border p-5 text-sm">
+        <h2 class="app-heading-text font-medium">The licensee</h2>
+        <p class="app-muted-text mt-2">
+          Your account, with {{ SESSION_STATE.participant?.name }} &lt;{{ SESSION_STATE.participant?.email }}&gt; as the
+          contact accepting the terms.
+        </p>
+      </section>
+      <section v-else class="app-card-surface flex flex-col gap-5 rounded-xl border p-5">
         <h2 class="app-heading-text font-medium">The licensee</h2>
         <div>
           <label for="legal-name" class="mb-2 block text-sm font-medium">Organization's legal name</label>

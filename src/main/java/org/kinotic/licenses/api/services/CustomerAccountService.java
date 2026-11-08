@@ -38,6 +38,7 @@ public interface CustomerAccountService {
      * @param certification the figures the customer certifies
      * @return the pending request
      * @throws IllegalStateException when the customer has no free license
+     * @throws org.kinotic.core.api.exceptions.AlreadyExistsException when a request of the customer's is already pending
      */
     Future<FreeLicenseRequest> requestFreeRenewal(FreeLicenseCertification certification);
 }

@@ -4,6 +4,7 @@ import io.vertx.core.Future;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.Validate;
+import org.kinotic.core.api.exceptions.AlreadyExistsException;
 import org.kinotic.licenses.api.model.Customer;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.FreeLicenseRequest;
@@ -54,13 +55,29 @@ public class FreeLicenseService {
      * Records an existing free licensee's re-certification for its next term.
      *
      * @throws IllegalStateException when the customer has no free license
+     * @throws AlreadyExistsException when a request of the customer's is already pending
      */
     public Future<FreeLicenseRequest> requestRenewal(String customerId, FreeLicenseCertification certification) {
         validate(certification);
         return licenseRepository.findFreeLicense(customerId).compose(license -> {
             Validate.validState(license != null, "The customer %s has no free license to renew", customerId);
-            return saveRequest(customerId, certification);
+            return requestForCustomer(customerId, certification);
         });
+    }
+
+    /**
+     * Records a free license request for an existing customer, as a signed-in customer makes one: a first request, or a
+     * renewal when the customer holds a free license already.
+     *
+     * @return the request, or a failure with {@link AlreadyExistsException} when a request of the customer's is
+     *         already pending
+     */
+    public Future<FreeLicenseRequest> requestForCustomer(String customerId, FreeLicenseCertification certification) {
+        validate(certification);
+        return requestRepository.findByCustomerId(customerId).compose(requests -> requests.stream().anyMatch(
+                request -> request.getStatus() == FreeLicenseRequestStatus.PENDING)
+                ? Future.failedFuture(new AlreadyExistsException("A free license request of this account is already being reviewed"))
+                : saveRequest(customerId, certification));
     }
 
     public Future<List<FreeLicenseRequest>> findPending() {
@@ -80,7 +97,7 @@ public class FreeLicenseService {
         // issued, whereas a failed email leaves it approved and the key is resent from the customer page.
         return decide(requestId, FreeLicenseRequestStatus.APPROVED, reviewedBy)
                 .compose(request -> licenseRepository.findFreeLicense(request.getCustomerId())
-                                                     .compose(existing -> existing != null ? renew(existing) : create(request))
+                                                     .compose(existing -> existing != null ? issueFor(existing) : create(request))
                                                      .recover(t -> reopen(request).compose(v -> Future.failedFuture(t)))
                                                      .compose(issued -> email(issued).map(request)))
                 .onSuccess(request -> log.info("{} approved the free license request {}", reviewedBy, requestId));
@@ -109,8 +126,12 @@ public class FreeLicenseService {
                                  .compose(customer -> licenseService.createLicense(customer, Plan.FREE, null, null, null));
     }
 
-    private Future<NewLicense> renew(License license) {
-        return licenseService.issueRenewalKey(license).map(key -> new NewLicense(license, key));
+    // a license whose first key was never issued, as when signing failed on an earlier approval, gets that first key
+    // with its term starting now; one that has a key is renewed
+    private Future<NewLicense> issueFor(License license) {
+        return licenseService.keysOf(license.getId()).compose(keys -> keys.isEmpty()
+                ? licenseService.issueFirstKey(license)
+                : licenseService.issueRenewalKey(license));
     }
 
     private Future<Void> email(NewLicense issued) {

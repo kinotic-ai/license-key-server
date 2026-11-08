@@ -25,6 +25,7 @@ import org.kinotic.licenses.api.services.StaffFreeLicenseRequestService;
 import org.kinotic.licenses.internal.api.repositories.AgreementAcceptanceRepository;
 import org.kinotic.licenses.internal.api.repositories.FreeLicenseRequestRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
+import org.kinotic.licenses.internal.api.services.FreeLicenseService;
 import org.kinotic.licenses.internal.api.services.LicenseService;
 import org.kinotic.licenses.support.ServerTest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,6 +33,9 @@ import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -65,6 +69,8 @@ class FreeLicenseTest extends ServerTest {
     private AgreementAcceptanceRepository acceptanceRepository;
     @Autowired
     private LicenseService licenseService;
+    @Autowired
+    private FreeLicenseService freeLicenseService;
 
     @Test
     void aRequestIsApprovedAndLaterRenewedByReCertifying(CapturedOutput output) throws Exception {
@@ -160,6 +166,69 @@ class FreeLicenseTest extends ServerTest {
         // the address still signs in to the account it belongs to
         assertThat(await(contactRepository.findByEmail(email))).extracting(CustomerContact::getCustomerId)
                                                                .containsExactly(original.getCustomerId());
+    }
+
+    @Test
+    void aSignedInCustomerRequestsAndBuysForItsOwnAccount(CapturedOutput output) throws Exception {
+        String email = "own-" + UUID.randomUUID() + "@tiny.example";
+        assertThat(post("/api/free-requests", requestBody(email).put("acceptTerms", true), null).statusCode()).isEqualTo(201);
+        String customerId = await(contactRepository.findByEmail(email)).getFirst().getCustomerId();
+        FreeLicenseRequest first = await(requestRepository.findByCustomerId(customerId)).getFirst();
+        asStaff(() -> staffRequests.reject(first.getId()));
+
+        String cookie = signIn(output, email);
+        JsonObject certification = new JsonObject().put("annualRevenue", 100000).put("capitalRaised", 0)
+                                                   .put("intendedUse", "Asking again").put("acceptTerms", true);
+        HttpResponse<Buffer> again = post("/api/free-requests", certification, cookie);
+        assertThat(again.statusCode()).isEqualTo(201);
+        assertThat(await(requestRepository.findById(again.bodyAsJsonObject().getString("id"))).getCustomerId()).isEqualTo(customerId);
+        assertThat(await(acceptanceRepository.findByCustomerId(customerId))).hasSize(2);
+        // one request at a time
+        assertThat(post("/api/free-requests", certification, cookie).statusCode()).isEqualTo(409);
+
+        // a customer holding a paid subscription changes it in the Customer Portal rather than buying a second
+        await(licenseService.createLicense(await(customerRepository.findById(customerId)), Plan.STARTUP, "sub_" + UUID.randomUUID(),
+                                           "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30))));
+        HttpResponse<Buffer> checkout = post("/api/checkout", new JsonObject().put("plan", "BUSINESS").put("acceptTerms", true), cookie);
+        assertThat(checkout.statusCode()).isEqualTo(409);
+        assertThat(checkout.bodyAsJsonObject().getString("error")).contains("already has a subscription");
+    }
+
+    @Test
+    void aLapsedFreeLicenseRenewsFromToday() throws Exception {
+        String requestId = post("/api/free-requests", requestBody("lapsed-" + UUID.randomUUID() + "@tiny.example").put("acceptTerms", true), null)
+                .bodyAsJsonObject().getString("id");
+        FreeLicenseRequest approved = asStaff(() -> staffRequests.approve(requestId));
+        License license = await(licenseRepository.findFreeLicense(approved.getCustomerId()));
+        sql("UPDATE license SET term_end = now() - interval '90 days' WHERE id = $1", license.getId());
+
+        FreeLicenseRequest renewal = await(freeLicenseService.requestRenewal(approved.getCustomerId(),
+                new FreeLicenseCertification().setAnnualRevenue(BigDecimal.ONE).setCapitalRaised(BigDecimal.ZERO).setIntendedUse("Still small")));
+        Instant before = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        asStaff(() -> staffRequests.approve(renewal.getId()));
+
+        License renewed = await(licenseRepository.findById(license.getId()));
+        assertThat(renewed.getTermStart()).isAfterOrEqualTo(before);
+        assertThat(await(licenseService.keysOf(license.getId())).getFirst().getExpiresAt())
+                .isEqualTo(renewed.getTermEnd().plus(LicenseService.KEY_BUFFER));
+    }
+
+    @Test
+    void anApprovalOfALicenseWithoutAKeyIssuesItsFirstTerm() throws Exception {
+        String requestId = post("/api/free-requests", requestBody("keyless-" + UUID.randomUUID() + "@tiny.example").put("acceptTerms", true), null)
+                .bodyAsJsonObject().getString("id");
+        String customerId = await(requestRepository.findById(requestId)).getCustomerId();
+        // what an earlier approval leaves when signing failed after the license was saved
+        License keyless = await(licenseService.createAwaitingPayment(await(customerRepository.findById(customerId)), Plan.FREE, null, null, null));
+        sql("UPDATE license SET status = 'ACTIVE' WHERE id = $1", keyless.getId());
+
+        Instant before = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        asStaff(() -> staffRequests.approve(requestId));
+
+        License issued = await(licenseRepository.findById(keyless.getId()));
+        assertThat(issued.getTermStart()).isAfterOrEqualTo(before);
+        assertThat(issued.getTermEnd()).isBefore(Instant.now().plus(Duration.ofDays(370)));
+        assertThat(await(licenseService.keysOf(keyless.getId()))).hasSize(1);
     }
 
     @Test

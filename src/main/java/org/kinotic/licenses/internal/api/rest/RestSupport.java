@@ -54,14 +54,16 @@ final class RestSupport {
     }
 
     /**
-     * The address of the client: the first address of {@code X-Forwarded-For}, which the reverse proxy in front of
-     * the server sets, else the connection's.
+     * The address of the client: the last address of {@code X-Forwarded-For}, which the one reverse proxy in front of
+     * the server appends, else the connection's.
      */
     static String clientAddress(RoutingContext ctx) {
         String forwarded = ctx.request().getHeader("X-Forwarded-For");
         String ret;
         if (forwarded != null && !forwarded.isBlank()) {
-            ret = forwarded.split(",")[0].trim();
+            // the client writes any entries it likes to the left; only the one the proxy appended can be trusted
+            String[] addresses = forwarded.split(",");
+            ret = addresses[addresses.length - 1].trim();
         } else {
             ret = ctx.request().remoteAddress() != null ? ctx.request().remoteAddress().hostAddress() : "unknown";
         }

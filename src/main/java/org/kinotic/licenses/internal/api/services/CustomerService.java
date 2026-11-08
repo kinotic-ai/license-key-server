@@ -49,12 +49,6 @@ public class CustomerService {
                 .setName(contactName.trim())
                 .setEmail(contactEmail.trim())
                 .setRole(ContactRole.BILLING);
-        AgreementAcceptance acceptance = new AgreementAcceptance()
-                .setId(UUID.randomUUID().toString())
-                .setCustomerId(customer.getId())
-                .setTermsVersion(AgreementTerms.VERSION)
-                .setAcceptedByName(contact.getName())
-                .setAcceptedByEmail(contact.getEmail());
         // checked before anything is written, so a refused sign-up leaves no customer behind; the unique index on the
         // contact's email refuses the one that loses a race past this check
         return contactRepository.findByEmail(contact.getEmail())
@@ -62,7 +56,20 @@ public class CustomerService {
                                         ? customerRepository.save(customer)
                                         : Future.failedFuture(new AlreadyExistsException(CustomerContactRepository.EMAIL_TAKEN)))
                                  .compose(saved -> contactRepository.save(contact))
-                                 .compose(savedContact -> acceptanceRepository.save(acceptance))
+                                 .compose(savedContact -> recordAcceptance(customer.getId(), savedContact.getName(), savedContact.getEmail()))
                                  .compose(savedAcceptance -> customerRepository.findById(customer.getId()));
+    }
+
+    /**
+     * Records that a contact of the customer accepted the current terms, as before every purchase and free license
+     * request.
+     */
+    public Future<AgreementAcceptance> recordAcceptance(String customerId, String acceptedByName, String acceptedByEmail) {
+        return acceptanceRepository.save(new AgreementAcceptance()
+                                                 .setId(UUID.randomUUID().toString())
+                                                 .setCustomerId(customerId)
+                                                 .setTermsVersion(AgreementTerms.VERSION)
+                                                 .setAcceptedByName(acceptedByName)
+                                                 .setAcceptedByEmail(acceptedByEmail));
     }
 }

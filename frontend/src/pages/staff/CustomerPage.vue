@@ -112,6 +112,7 @@ function resend(entry: LicenseWithKeys) {
             <div><dt class="app-muted-text">Term</dt><dd class="app-heading-text mt-1">{{ formatDate(entry.license.termStart) }} – {{ formatDate(entry.license.termEnd) }}</dd></div>
             <div><dt class="app-muted-text">Last payment</dt><dd class="mt-1"><TimePill :date="entry.license.lastPaymentAt" /></dd></div>
             <div><dt class="app-muted-text">Stripe subscription</dt><dd class="mt-1 font-mono text-xs">{{ entry.license.stripeSubscriptionId ?? '—' }}</dd></div>
+            <div v-if="entry.license.cancelsAt"><dt class="app-muted-text">Cancels</dt><dd class="app-heading-text mt-1">{{ formatDate(entry.license.cancelsAt) }}</dd></div>
           </dl>
         </div>
         <KeyBlock v-for="(key, index) in entry.keys" :key="key.jti" :issued-key="key" :collapsed="index > 0" />

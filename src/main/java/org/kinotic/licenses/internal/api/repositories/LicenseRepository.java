@@ -17,14 +17,17 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Stores licenses.
+ * Stores licenses. Every change writes only the columns it is about, in one statement, so changes made at the same
+ * time by different callers never overwrite each other, and a revoked license stays revoked whatever else changes.
  */
 @Repository
 @RequiredArgsConstructor
 public class LicenseRepository {
 
     private static final String COLUMNS = "id, customer_id, plan, status, features, stripe_subscription_id, checkout_session_id,"
-            + " current_period_end, term_start, term_end, last_payment_at, created_at";
+            + " current_period_end, cancels_at, term_start, term_end, last_payment_at, created_at";
+    // the status a billing change sets, unless staff revoked the license
+    private static final String STATUS_UNLESS_REVOKED = "status = CASE WHEN status = 'REVOKED' THEN status ELSE %s END";
 
     private final Pool pool;
 
@@ -41,15 +44,54 @@ public class LicenseRepository {
     }
 
     /**
-     * Writes the mutable state of a license: its plan, status, features, billing period, term and last payment.
+     * Revokes the license.
+     *
+     * @return the license, or {@code null} when none has the id
      */
-    public Future<License> update(License license) {
-        return pool.preparedQuery("UPDATE license SET plan = $2, status = $3, features = $4, current_period_end = $5,"
-                                          + " term_start = $6, term_end = $7, last_payment_at = $8 WHERE id = $1 RETURNING " + COLUMNS)
-                   .execute(Tuple.of(license.getId(), PgValues.name(license.getPlan()), PgValues.name(license.getStatus()),
-                                     featureNames(license.getFeatures()), PgValues.timestamp(license.getCurrentPeriodEnd()),
-                                     PgValues.timestamp(license.getTermStart()), PgValues.timestamp(license.getTermEnd()),
-                                     PgValues.timestamp(license.getLastPaymentAt())))
+    public Future<License> revoke(String id) {
+        return updateOne("status = 'REVOKED'", id);
+    }
+
+    /**
+     * Sets the status, unless the license is revoked.
+     *
+     * @return the license as stored, or {@code null} when none has the id
+     */
+    public Future<License> updateStatus(String id, LicenseStatus status) {
+        return updateOne(STATUS_UNLESS_REVOKED.formatted("$2"), id, PgValues.name(status));
+    }
+
+    /**
+     * Records a payment and returns the license to good standing, unless it is revoked.
+     *
+     * @return the license as stored, or {@code null} when none has the id
+     */
+    public Future<License> recordPayment(String id, Instant paidAt) {
+        return updateOne("last_payment_at = $2, " + STATUS_UNLESS_REVOKED.formatted("'ACTIVE'"), id, PgValues.timestamp(paidAt));
+    }
+
+    /**
+     * Writes what Stripe reports about the subscription: its plan and features, the end of the billing period, when it
+     * is set to end, and its status, unless the license is revoked.
+     *
+     * @return the license as stored, or {@code null} when none has the id
+     */
+    public Future<License> syncSubscription(String id, Plan plan, LicenseStatus status, Instant currentPeriodEnd, Instant cancelsAt) {
+        return updateOne("plan = $2, features = $3, current_period_end = $4, cancels_at = $5, " + STATUS_UNLESS_REVOKED.formatted("$6"),
+                         id, PgValues.name(plan), featureNames(plan.features()), PgValues.timestamp(currentPeriodEnd),
+                         PgValues.timestamp(cancelsAt), PgValues.name(status));
+    }
+
+    /**
+     * Moves the license to a new term, provided it is not revoked and its term still ends at {@code expectedTermEnd},
+     * so two callers moving the same term leave it moved once.
+     *
+     * @return the license as stored, or {@code null} when it is revoked, or its term was moved since it was read
+     */
+    public Future<License> moveTerm(String id, Instant expectedTermEnd, Instant termStart, Instant termEnd) {
+        return pool.preparedQuery("UPDATE license SET term_start = $3, term_end = $4"
+                                          + " WHERE id = $1 AND term_end = $2 AND status <> 'REVOKED' RETURNING " + COLUMNS)
+                   .execute(Tuple.of(id, PgValues.timestamp(expectedTermEnd), PgValues.timestamp(termStart), PgValues.timestamp(termEnd)))
                    .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
     }
 
@@ -81,13 +123,24 @@ public class LicenseRepository {
     }
 
     /**
-     * The paid licenses in good standing whose term ends before {@code termEndsBefore}, which are due a renewal key.
-     * A free license renews only through a re-certification staff approve.
+     * The paid licenses in good standing whose subscription renews and whose term ends before {@code termEndsBefore},
+     * which are due a renewal key. A free license renews only through a re-certification staff approve.
      */
     public Future<List<License>> findPaidRenewalsDue(Instant termEndsBefore) {
-        return pool.preparedQuery("SELECT " + COLUMNS + " FROM license WHERE status = $1 AND plan <> $2 AND term_end < $3 ORDER BY term_end")
+        return pool.preparedQuery("SELECT " + COLUMNS + " FROM license WHERE status = $1 AND plan <> $2 AND cancels_at IS NULL"
+                                          + " AND term_end < $3 ORDER BY term_end")
                    .execute(Tuple.of(LicenseStatus.ACTIVE.name(), Plan.FREE.name(), PgValues.timestamp(termEndsBefore)))
                    .map(rows -> PgValues.map(rows, LicenseRepository::toLicense));
+    }
+
+    private Future<License> updateOne(String assignments, String id, Object... values) {
+        Tuple tuple = Tuple.of(id);
+        for (Object value : values) {
+            tuple.addValue(value);
+        }
+        return pool.preparedQuery("UPDATE license SET " + assignments + " WHERE id = $1 RETURNING " + COLUMNS)
+                   .execute(tuple)
+                   .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
     }
 
     private Future<License> findOne(String where, String value) {
@@ -114,6 +167,7 @@ public class LicenseRepository {
                 .setStripeSubscriptionId(row.getString("stripe_subscription_id"))
                 .setCheckoutSessionId(row.getString("checkout_session_id"))
                 .setCurrentPeriodEnd(PgValues.instant(row, "current_period_end"))
+                .setCancelsAt(PgValues.instant(row, "cancels_at"))
                 .setTermStart(PgValues.instant(row, "term_start"))
                 .setTermEnd(PgValues.instant(row, "term_end"))
                 .setLastPaymentAt(PgValues.instant(row, "last_payment_at"))

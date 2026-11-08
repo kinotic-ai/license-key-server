@@ -26,6 +26,8 @@ const intendedUse = ref('')
 const submitting = ref(false)
 
 const freeLicense = computed(() => account.value?.licenses.find(l => l.license.plan === 'FREE') ?? null)
+const subscribed = computed(() => account.value?.licenses.some(l => l.license.plan !== 'FREE'
+    && (l.license.status === 'ACTIVE' || l.license.status === 'PAST_DUE')) ?? false)
 const pendingRenewal = computed(() => account.value?.freeLicenseRequests.some(r => r.status === 'PENDING') ?? false)
 const certificationReady = computed(() => annualRevenue.value !== null && capitalRaised.value !== null && intendedUse.value.trim())
 
@@ -79,6 +81,7 @@ async function submitRecertification() {
                 :loading="openingPortal" @click="openPortal" />
         <Button v-if="freeLicense && !pendingRenewal" label="Re-certify for renewal" icon="pi pi-refresh" severity="secondary" outlined
                 @click="recertifyVisible = true" />
+        <RouterLink v-if="account && !subscribed" to="/"><Button label="Buy a plan" icon="pi pi-shopping-cart" /></RouterLink>
       </template>
     </PageHeader>
 
@@ -107,9 +110,14 @@ async function submitRecertification() {
               <dt class="app-muted-text">License term</dt>
               <dd class="app-heading-text mt-1">{{ formatDate(entry.license.termStart) }} – {{ formatDate(entry.license.termEnd) }}</dd>
             </div>
+            <div v-if="entry.license.cancelsAt">
+              <dt class="app-muted-text">Subscription</dt>
+              <dd class="app-heading-text mt-1">Cancelled; ends {{ formatDate(entry.license.cancelsAt) }}</dd>
+            </div>
             <div v-if="entry.license.status === 'PAST_DUE'">
               <dt class="app-muted-text">Payment</dt>
-              <dd class="mt-1 text-orange-600 dark:text-orange-400">A payment failed; update your payment details to keep receiving keys.</dd>
+              <dd v-if="entry.keys.length" class="mt-1 text-orange-600 dark:text-orange-400">A payment failed; update your payment details to keep receiving keys.</dd>
+              <dd v-else class="app-heading-text mt-1">Waiting for your payment to clear; your key is emailed the moment it does.</dd>
             </div>
           </dl>
         </div>

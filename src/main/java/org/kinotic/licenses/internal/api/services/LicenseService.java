@@ -55,8 +55,8 @@ public class LicenseService {
     private final EmailService emailService;
 
     /**
-     * Creates a license whose term starts now and issues its first key. The caller emails the key, with the message
-     * that fits how the license came about.
+     * Creates a paid or free license whose term starts now and issues its first key. The caller emails the key, with
+     * the message that fits how the license came about.
      *
      * @param customer             the licensee
      * @param plan                 the plan
@@ -67,32 +67,45 @@ public class LicenseService {
      */
     public Future<NewLicense> createLicense(Customer customer, Plan plan, String stripeSubscriptionId, String checkoutSessionId,
                                             Instant currentPeriodEnd) {
-        Instant now = Instant.now();
-        License license = new License()
-                .setId(UUID.randomUUID().toString())
-                .setCustomerId(customer.getId())
-                .setPlan(plan)
+        License license = newLicense(customer, plan, stripeSubscriptionId, checkoutSessionId, currentPeriodEnd)
                 .setStatus(LicenseStatus.ACTIVE)
-                .setFeatures(plan.features())
-                .setStripeSubscriptionId(stripeSubscriptionId)
-                .setCheckoutSessionId(checkoutSessionId)
-                .setCurrentPeriodEnd(currentPeriodEnd)
-                .setTermStart(now)
-                .setTermEnd(termEnd(now))
-                .setLastPaymentAt(stripeSubscriptionId != null ? now : null);
+                .setLastPaymentAt(stripeSubscriptionId != null ? Instant.now() : null);
         return licenseRepository.save(license)
                                 .compose(saved -> issueKey(saved, saved.getTermEnd()).map(key -> new NewLicense(saved, key)));
     }
 
     /**
-     * Starts the license's next term and issues its key. The current key keeps working until it expires.
+     * Creates a paid license whose first payment has not cleared, as with a bank debit. It holds no key and is
+     * {@link LicenseStatus#PAST_DUE} until {@link #issueFirstKey(License)} is called once the payment succeeds.
+     *
+     * @return the license
      */
-    public Future<IssuedKey> issueRenewalKey(License license) {
-        Instant nextTermStart = license.getTermEnd();
-        Instant nextTermEnd = termEnd(nextTermStart);
-        // signed before the term moves, so a signing failure leaves the license due for the next run
-        return issueKey(license, nextTermEnd)
-                .compose(key -> licenseRepository.update(license.setTermStart(nextTermStart).setTermEnd(nextTermEnd)).map(key));
+    public Future<License> createAwaitingPayment(Customer customer, Plan plan, String stripeSubscriptionId, String checkoutSessionId,
+                                                 Instant currentPeriodEnd) {
+        return licenseRepository.save(newLicense(customer, plan, stripeSubscriptionId, checkoutSessionId, currentPeriodEnd)
+                                              .setStatus(LicenseStatus.PAST_DUE));
+    }
+
+    /**
+     * Issues the first key of a license that has none, its term starting now.
+     *
+     * @return the license and its key, or a failure with {@link IllegalStateException} when the license is revoked or
+     *         its term changed meanwhile
+     */
+    public Future<NewLicense> issueFirstKey(License license) {
+        return issueForTerm(license, Instant.now());
+    }
+
+    /**
+     * Starts the license's next term and issues its key. The next term starts when the current one ends, or now when
+     * that is already past. The current key keeps working until it expires.
+     *
+     * @return the license and its key, or a failure with {@link IllegalStateException} when the license is revoked or
+     *         its term changed meanwhile
+     */
+    public Future<NewLicense> issueRenewalKey(License license) {
+        Instant now = Instant.now();
+        return issueForTerm(license, license.getTermEnd().isAfter(now) ? license.getTermEnd() : now);
     }
 
     /**
@@ -158,36 +171,37 @@ public class LicenseService {
      * Revokes the license: no further key is issued for it.
      */
     public Future<License> revoke(License license) {
-        return licenseRepository.update(license.setStatus(LicenseStatus.REVOKED));
+        return licenseRepository.revoke(license.getId());
     }
 
     /**
-     * Records a successful payment and returns the license to good standing.
+     * Records a successful payment and returns the license to good standing, unless it is revoked.
      */
     public Future<License> recordPayment(License license, Instant paidAt) {
-        return transition(license.setLastPaymentAt(paidAt), LicenseStatus.ACTIVE);
+        return licenseRepository.recordPayment(license.getId(), paidAt);
     }
 
     /**
-     * Marks a payment failed; no renewal key is issued until a payment succeeds.
+     * Marks a payment failed, unless the license is revoked; no renewal key is issued until a payment succeeds.
      */
     public Future<License> markPastDue(License license) {
-        return transition(license, LicenseStatus.PAST_DUE);
+        return licenseRepository.updateStatus(license.getId(), LicenseStatus.PAST_DUE);
     }
 
     /**
-     * Marks the subscription ended; no renewal key is issued.
+     * Marks the subscription ended, unless the license is revoked; no renewal key is issued.
      */
     public Future<License> cancel(License license) {
-        return transition(license, LicenseStatus.CANCELED);
+        return licenseRepository.updateStatus(license.getId(), LicenseStatus.CANCELED);
     }
 
     /**
-     * Writes what Stripe reports about the subscription: its plan, whether it is in good standing, and the end of the
-     * current billing period. A license staff revoked stays revoked.
+     * Writes what Stripe reports about the subscription: its plan, whether it is in good standing, the end of the
+     * current billing period, and when it ends if the customer cancelled it. A license staff revoked stays revoked.
      */
-    public Future<License> syncSubscription(License license, Plan plan, LicenseStatus status, Instant currentPeriodEnd) {
-        return transition(license.setPlan(plan).setFeatures(plan.features()).setCurrentPeriodEnd(currentPeriodEnd), status);
+    public Future<License> syncSubscription(License license, Plan plan, LicenseStatus status, Instant currentPeriodEnd,
+                                            Instant cancelsAt) {
+        return licenseRepository.syncSubscription(license.getId(), plan, status, currentPeriodEnd, cancelsAt);
     }
 
     /**
@@ -204,30 +218,60 @@ public class LicenseService {
         return start.atZone(ZoneOffset.UTC).plus(TERM).toInstant();
     }
 
-    // a billing event never undoes a staff revocation
-    private Future<License> transition(License license, LicenseStatus status) {
-        if (license.getStatus() != LicenseStatus.REVOKED) {
-            license.setStatus(status);
-        }
-        return licenseRepository.update(license);
+    private static License newLicense(Customer customer, Plan plan, String stripeSubscriptionId, String checkoutSessionId,
+                                      Instant currentPeriodEnd) {
+        Instant now = Instant.now();
+        return new License()
+                .setId(UUID.randomUUID().toString())
+                .setCustomerId(customer.getId())
+                .setPlan(plan)
+                .setFeatures(plan.features())
+                .setStripeSubscriptionId(stripeSubscriptionId)
+                .setCheckoutSessionId(checkoutSessionId)
+                .setCurrentPeriodEnd(currentPeriodEnd)
+                .setTermStart(now)
+                .setTermEnd(termEnd(now));
+    }
+
+    // Signed first, so a signing failure leaves the term where it was for the next attempt. The term then moves only if
+    // nobody revoked the license or moved its term meanwhile, and the key is logged only once it has.
+    private Future<NewLicense> issueForTerm(License license, Instant termStart) {
+        Instant termEnd = termEnd(termStart);
+        LicenseKeyClaims claims = claims(license, termEnd);
+        return keyIssuer.issue(claims)
+                        .compose(key -> licenseRepository.moveTerm(license.getId(), license.getTermEnd(), termStart, termEnd)
+                                                         .compose(moved -> {
+                                                             if (moved == null) {
+                                                                 throw new IllegalStateException("The license " + license.getId()
+                                                                         + " is revoked, or its term changed while its key was issued");
+                                                             }
+                                                             return append(claims, key, moved.getId()).map(issued -> new NewLicense(moved, issued));
+                                                         }));
     }
 
     private Future<IssuedKey> issueKey(License license, Instant termEnd) {
-        LicenseKeyClaims claims = new LicenseKeyClaims(license.getCustomerId(), UUID.randomUUID().toString(), Instant.now(),
-                                                       termEnd.plus(KEY_BUFFER), LicensePurpose.PRODUCTION, license.getFeatures());
-        return sign(claims, license.getId());
+        return sign(claims(license, termEnd), license.getId());
+    }
+
+    private static LicenseKeyClaims claims(License license, Instant termEnd) {
+        return new LicenseKeyClaims(license.getCustomerId(), UUID.randomUUID().toString(), Instant.now(),
+                                    termEnd.plus(KEY_BUFFER), LicensePurpose.PRODUCTION, license.getFeatures());
     }
 
     private Future<IssuedKey> sign(LicenseKeyClaims claims, String licenseId) {
-        return keyIssuer.issue(claims)
-                        .compose(key -> issuedKeyRepository.append(new IssuedKey()
-                                                                           .setJti(claims.keyId())
-                                                                           .setLicenseId(licenseId)
-                                                                           .setPurpose(claims.purpose())
-                                                                           .setKey(key)
-                                                                           .setIssuedAt(claims.issuedAt())
-                                                                           .setExpiresAt(claims.expiresAt())))
-                        .onSuccess(key -> log.info("Issued key {} for {}", key.getJti(), licenseId != null ? "license " + licenseId : claims.subject()));
+        return keyIssuer.issue(claims).compose(key -> append(claims, key, licenseId));
+    }
+
+    private Future<IssuedKey> append(LicenseKeyClaims claims, String key, String licenseId) {
+        return issuedKeyRepository.append(new IssuedKey()
+                                                  .setJti(claims.keyId())
+                                                  .setLicenseId(licenseId)
+                                                  .setPurpose(claims.purpose())
+                                                  .setKey(key)
+                                                  .setIssuedAt(claims.issuedAt())
+                                                  .setExpiresAt(claims.expiresAt()))
+                                  .onSuccess(issued -> log.info("Issued key {} for {}", issued.getJti(),
+                                                                licenseId != null ? "license " + licenseId : claims.subject()));
     }
 
     // every contact of the licensee gets the email; a failure to send fails the caller, which retries or reports it

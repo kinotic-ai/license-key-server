@@ -26,6 +26,7 @@ import org.kinotic.licenses.api.security.ParticipantType;
 import org.kinotic.licenses.internal.api.model.OidcFlowState;
 import org.springframework.stereotype.Component;
 
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -48,6 +49,7 @@ public class StaffOidcService {
     public static final String CALLBACK_PATH = "/api/auth/staff/callback";
 
     private static final String FLOW_SESSION_KEY = "staffOidcFlow";
+    private static final String ENTRA_HOST = "login.microsoftonline.com";
     private static final List<String> SCOPES = List.of("openid", "email", "profile");
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -122,7 +124,7 @@ public class StaffOidcService {
         Future<LicenseParticipant> ret;
         if (!flow.nonce().equals(claims.getString("nonce"))) {
             ret = Future.failedFuture(new AuthenticationException("The id token's nonce does not match the sign-in"));
-        } else if (!Boolean.TRUE.equals(claims.getValue("email_verified")) && !"true".equals(claims.getString("email_verified"))) {
+        } else if (!emailVerified(claims, oidc.getIssuer())) {
             ret = Future.failedFuture(new AuthenticationException("The provider has not verified the account's email"));
         } else if (domain == null || !domain.equalsIgnoreCase(oidc.getAllowedEmailDomain())) {
             log.warn("A staff sign-in from outside {} was refused", oidc.getAllowedEmailDomain());
@@ -136,6 +138,19 @@ public class StaffOidcService {
                                                            .metadata(Map.of())
                                                            .roles(List.of())
                                                            .build());
+        }
+        return ret;
+    }
+
+    // Google states email_verified. Entra never sends it: a tenant's administrator issues its accounts' addresses, and the
+    // allowed email domain check that follows confines staff to Minds Ignited's own tenant.
+    private static boolean emailVerified(JsonObject claims, String issuer) {
+        Object verified = claims.getValue("email_verified");
+        boolean ret;
+        if (verified != null) {
+            ret = Boolean.TRUE.equals(verified) || "true".equals(verified);
+        } else {
+            ret = ENTRA_HOST.equalsIgnoreCase(URI.create(issuer).getHost());
         }
         return ret;
     }

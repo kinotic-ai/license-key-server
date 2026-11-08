@@ -62,6 +62,28 @@ class CustomerSignInTest extends ServerTest {
     }
 
     @Test
+    void theAddressLimitKeysOnTheAddressTheProxyAppended() throws Exception {
+        String proxied = "203.0.113." + (1 + new java.util.Random().nextInt(250));
+        int accepted = 0;
+        int limited = 0;
+        for (int i = 0; i < 35; i++) {
+            // a client that writes a different address of its own to the left each time is still one client
+            HttpResponse<Buffer> response = await(client.post("/api/auth/code/request")
+                                                        .putHeader("Origin", PUBLIC_ORIGIN)
+                                                        .putHeader("Content-Type", "application/json")
+                                                        .putHeader("X-Forwarded-For", "198.51.100." + i + ", " + proxied)
+                                                        .sendBuffer(new JsonObject().put("email", "nobody-" + UUID.randomUUID() + "@example.com").toBuffer()));
+            if (response.statusCode() == 202) {
+                accepted++;
+            } else if (response.statusCode() == 429) {
+                limited++;
+            }
+        }
+        assertThat(accepted).isEqualTo(30);
+        assertThat(limited).isEqualTo(5);
+    }
+
+    @Test
     void aRequestForAnUnknownAddressLooksLikeAnyOther() throws Exception {
         HttpResponse<Buffer> requested = post("/api/auth/code/request",
                                               new JsonObject().put("email", "nobody-" + UUID.randomUUID() + "@example.com"), null);

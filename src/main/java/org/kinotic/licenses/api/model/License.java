@@ -26,6 +26,8 @@ public class License {
     private String checkoutSessionId;
     /** The end of the current monthly billing period, as Stripe reports it. */
     private Instant currentPeriodEnd;
+    /** When the subscription ends because the customer cancelled it; {@code null} while it renews. */
+    private Instant cancelsAt;
     private Instant termStart;
     private Instant termEnd;
     private Instant lastPaymentAt;

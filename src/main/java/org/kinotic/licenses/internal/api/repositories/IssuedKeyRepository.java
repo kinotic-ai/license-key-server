@@ -39,6 +39,12 @@ public class IssuedKeyRepository {
                    .map(rows -> PgValues.map(rows, IssuedKeyRepository::toKey));
     }
 
+    public Future<IssuedKey> findByJti(String jti) {
+        return pool.preparedQuery("SELECT " + COLUMNS + " FROM issued_key WHERE jti = $1")
+                   .execute(Tuple.of(jti))
+                   .map(rows -> PgValues.first(rows, IssuedKeyRepository::toKey));
+    }
+
     public Future<IssuedKey> findLatestByLicenseId(String licenseId) {
         return pool.preparedQuery("SELECT " + COLUMNS + " FROM issued_key WHERE license_id = $1 ORDER BY issued_at DESC LIMIT 1")
                    .execute(Tuple.of(licenseId))
