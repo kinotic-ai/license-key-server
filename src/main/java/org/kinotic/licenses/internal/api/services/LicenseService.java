@@ -240,14 +240,18 @@ public class LicenseService {
         Instant termEnd = termEnd(termStart);
         LicenseKeyClaims claims = claims(license, termEnd);
         return keyIssuer.issue(claims)
-                        .compose(key -> licenseRepository.moveTerm(license.getId(), license.getTermEnd(), termStart, termEnd)
-                                                         .compose(moved -> {
-                                                             if (moved == null) {
-                                                                 throw new IllegalStateException("The license " + license.getId()
-                                                                         + " is revoked, or its term changed while its key was issued");
-                                                             }
-                                                             return append(claims, key, moved.getId()).map(issued -> new NewLicense(moved, issued));
-                                                         }));
+                        .compose(key -> {
+                            IssuedKey issued = issuedKey(claims, key, license.getId());
+                            return licenseRepository.startTerm(license.getId(), license.getTermEnd(), termStart, termEnd, issued)
+                                                    .map(moved -> {
+                                                        if (moved == null) {
+                                                            throw new IllegalStateException("The license " + license.getId()
+                                                                    + " is revoked, or its term changed while its key was issued");
+                                                        }
+                                                        logIssued(issued);
+                                                        return new NewLicense(moved, issued);
+                                                    });
+                        });
     }
 
     private Future<IssuedKey> issueKey(License license, Instant termEnd) {
@@ -264,15 +268,21 @@ public class LicenseService {
     }
 
     private Future<IssuedKey> append(LicenseKeyClaims claims, String key, String licenseId) {
-        return issuedKeyRepository.append(new IssuedKey()
-                                                  .setJti(claims.keyId())
-                                                  .setLicenseId(licenseId)
-                                                  .setPurpose(claims.purpose())
-                                                  .setKey(key)
-                                                  .setIssuedAt(claims.issuedAt())
-                                                  .setExpiresAt(claims.expiresAt()))
-                                  .onSuccess(issued -> log.info("Issued key {} for {}", issued.getJti(),
-                                                                licenseId != null ? "license " + licenseId : claims.subject()));
+        return issuedKeyRepository.append(issuedKey(claims, key, licenseId)).onSuccess(LicenseService::logIssued);
+    }
+
+    private static IssuedKey issuedKey(LicenseKeyClaims claims, String key, String licenseId) {
+        return new IssuedKey()
+                .setJti(claims.keyId())
+                .setLicenseId(licenseId)
+                .setPurpose(claims.purpose())
+                .setKey(key)
+                .setIssuedAt(claims.issuedAt())
+                .setExpiresAt(claims.expiresAt());
+    }
+
+    private static void logIssued(IssuedKey issued) {
+        log.info("Issued key {} for {}", issued.getJti(), issued.getLicenseId() != null ? "license " + issued.getLicenseId() : TRIAL_SUBJECT);
     }
 
     // every contact of the licensee gets the email; a failure to send fails the caller, which retries or reports it

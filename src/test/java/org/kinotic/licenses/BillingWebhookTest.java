@@ -12,6 +12,7 @@ import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.kinotic.licenses.internal.api.rest.StripeWebhookRoutes;
+import org.kinotic.licenses.internal.api.model.NewLicense;
 import org.kinotic.licenses.internal.api.services.KeyRenewalJob;
 import org.kinotic.licenses.internal.api.services.LicenseService;
 import org.kinotic.licenses.support.ServerTest;
@@ -241,6 +242,29 @@ class BillingWebhookTest extends ServerTest {
         assertThat(stored.getStatus()).isEqualTo(LicenseStatus.REVOKED);
         assertThat(stored.getTermEnd()).isEqualTo(license.getTermEnd());
         assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
+    }
+
+    @Test
+    void aRenewalWhoseKeyIsNotStoredLeavesTheTermToRenewAgain() throws Exception {
+        License license = await(licenseService.createLicense(seedCustomer(), Plan.STARTUP, "sub_" + UUID.randomUUID(), "cs_" + UUID.randomUUID(),
+                                                             Instant.now().plus(Duration.ofDays(30)))).license();
+        // the database refuses this license's next key, as it would on a failure between moving the term and storing it
+        String trigger = "refuse_key_" + license.getId().replace("-", "");
+        sql("CREATE FUNCTION " + trigger + "() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN"
+            + " IF NEW.license_id = '" + license.getId() + "' THEN RAISE EXCEPTION 'key refused'; END IF; RETURN NEW; END $$");
+        sql("CREATE TRIGGER " + trigger + " BEFORE INSERT ON issued_key FOR EACH ROW EXECUTE FUNCTION " + trigger + "()");
+        try {
+            assertThatThrownBy(() -> await(licenseService.issueRenewalKey(license))).hasMessageContaining("key refused");
+        } finally {
+            sql("DROP TRIGGER " + trigger + " ON issued_key");
+            sql("DROP FUNCTION " + trigger + "()");
+        }
+        assertThat(await(licenseRepository.findById(license.getId())).getTermEnd()).isEqualTo(license.getTermEnd());
+        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
+
+        NewLicense renewed = await(licenseService.issueRenewalKey(license));
+        assertThat(renewed.license().getTermStart()).isEqualTo(license.getTermEnd());
+        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(2);
     }
 
     @Test

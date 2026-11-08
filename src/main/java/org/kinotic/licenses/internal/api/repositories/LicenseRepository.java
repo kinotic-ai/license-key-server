@@ -6,6 +6,7 @@ import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import lombok.RequiredArgsConstructor;
 import org.kinotic.licenses.api.model.Feature;
+import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
@@ -83,15 +84,24 @@ public class LicenseRepository {
     }
 
     /**
-     * Moves the license to a new term, provided it is not revoked and its term still ends at {@code expectedTermEnd},
-     * so two callers moving the same term leave it moved once.
+     * Moves the license to a new term and stores that term's key, provided the license is not revoked and its term
+     * still ends at {@code expectedTermEnd}, so two callers moving the same term leave it moved once. The term moves
+     * only together with its key.
      *
+     * @param key the new term's key, which belongs to the license
      * @return the license as stored, or {@code null} when it is revoked, or its term was moved since it was read
      */
-    public Future<License> moveTerm(String id, Instant expectedTermEnd, Instant termStart, Instant termEnd) {
-        return pool.preparedQuery("UPDATE license SET term_start = $3, term_end = $4"
-                                          + " WHERE id = $1 AND term_end = $2 AND status <> 'REVOKED' RETURNING " + COLUMNS)
-                   .execute(Tuple.of(id, PgValues.timestamp(expectedTermEnd), PgValues.timestamp(termStart), PgValues.timestamp(termEnd)))
+    public Future<License> startTerm(String id, Instant expectedTermEnd, Instant termStart, Instant termEnd, IssuedKey key) {
+        // one statement, so a failed key insert also leaves the term where it was
+        return pool.preparedQuery("WITH moved AS (UPDATE license SET term_start = $3, term_end = $4"
+                                          + " WHERE id = $1 AND term_end = $2 AND status <> 'REVOKED' RETURNING " + COLUMNS + "),"
+                                          + " stored AS (INSERT INTO issued_key (jti, license_id, purpose, key, issued_at, expires_at)"
+                                          + " SELECT $5, id, $6, $7, $8, $9 FROM moved)"
+                                          + " SELECT " + COLUMNS + " FROM moved")
+                   .execute(Tuple.from(List.of(id, PgValues.timestamp(expectedTermEnd), PgValues.timestamp(termStart),
+                                               PgValues.timestamp(termEnd), key.getJti(), PgValues.name(key.getPurpose()),
+                                               key.getKey(), PgValues.timestamp(key.getIssuedAt()),
+                                               PgValues.timestamp(key.getExpiresAt()))))
                    .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
     }
 
