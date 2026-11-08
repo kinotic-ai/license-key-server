@@ -23,6 +23,8 @@ import org.kinotic.licenses.internal.api.services.CustomerService;
 import org.kinotic.licenses.internal.api.services.FreeLicenseService;
 import org.kinotic.licenses.internal.api.services.LicenseService;
 import org.kinotic.licenses.internal.api.services.LicenseSigningKey;
+import org.kinotic.licenses.internal.api.services.RateLimitedException;
+import org.kinotic.licenses.internal.api.services.SlidingWindowRateLimiter;
 import org.kinotic.licenses.internal.api.services.StripeBillingService;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
@@ -44,6 +46,10 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
     /** How long after a license is created its success page may still show the key. */
     static final Duration KEY_SHOW_WINDOW = Duration.ofHours(1);
 
+    private static final int SIGN_UPS_PER_WINDOW = 20;
+    private static final Duration SIGN_UP_WINDOW = Duration.ofMinutes(15);
+    private static final String TOO_MANY_SIGN_UPS = "Too many sign-ups from this address; try again later";
+
     private final KinoticLicensesProperties properties;
     private final LicenseSigningKey signingKey;
     private final StripeBillingService billingService;
@@ -56,6 +62,8 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
 
     // the Checkout Sessions whose key the success page has already been shown; this node is the whole cluster
     private final Set<String> shownKeys = ConcurrentHashMap.newKeySet();
+    // anonymous sign-ups per client address, since each one says whether its email already has an account
+    private final SlidingWindowRateLimiter signUpsPerAddress = new SlidingWindowRateLimiter(SIGN_UPS_PER_WINDOW, SIGN_UP_WINDOW);
 
     @Override
     public void mountRoutes(Router router) {
@@ -102,10 +110,12 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
                                     .compose(started -> customerService.recordAcceptance(customer.getCustomerId(), customer.getName(),
                                                                                          customer.getEmail()).map(started));
         } else {
+            String legalName = RestSupport.requiredString(body, "legalName");
             String contactName = RestSupport.requiredString(body, "contactName");
             String contactEmail = RestSupport.requiredString(body, "contactEmail");
-            url = customerService.createCustomer(RestSupport.requiredString(body, "legalName"), contactName, contactEmail)
-                                 .compose(buyer -> billingService.startCheckout(buyer, contactName, contactEmail, plan));
+            url = withinSignUpLimit(ctx)
+                    .compose(v -> customerService.createCustomer(legalName, contactName, contactEmail))
+                    .compose(buyer -> billingService.startCheckout(buyer, contactName, contactEmail, plan));
         }
         url.onSuccess(started -> RestSupport.respondJson(ctx, 200, new JsonObject().put("url", started)))
            .onFailure(t -> failSignUp(ctx, t));
@@ -128,8 +138,8 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
                                      boolean withinWindow = license.getCreatedAt().plus(KEY_SHOW_WINDOW).isAfter(Instant.now());
                                      if (!keys.isEmpty() && withinWindow && shownKeys.add(sessionId)) {
                                          ret.put("status", CheckoutKeyStatus.READY.name())
-                                            .put("key", keys.getLast().getKey())
-                                            .put("expiresAt", keys.getLast().getExpiresAt().toString());
+                                            .put("key", keys.getFirst().getKey())
+                                            .put("expiresAt", keys.getFirst().getExpiresAt().toString());
                                      }
                                      return ret;
                                  }))
@@ -155,10 +165,11 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
                                           .compose(request -> customerService.recordAcceptance(customer.getCustomerId(), customer.getName(),
                                                                                                customer.getEmail()).map(request));
         } else {
-            requested = freeLicenseService.request(RestSupport.requiredString(body, "organization"),
-                                                   RestSupport.requiredString(body, "contactName"),
-                                                   RestSupport.requiredString(body, "contactEmail"),
-                                                   certification);
+            String organization = RestSupport.requiredString(body, "organization");
+            String contactName = RestSupport.requiredString(body, "contactName");
+            String contactEmail = RestSupport.requiredString(body, "contactEmail");
+            requested = withinSignUpLimit(ctx).compose(v -> freeLicenseService.request(organization, contactName, contactEmail,
+                                                                                       certification));
         }
         requested.onSuccess(request -> RestSupport.respondJson(ctx, 201, new JsonObject().put("id", request.getId())))
                  .onFailure(t -> failSignUp(ctx, t));
@@ -170,11 +181,19 @@ public class PublicRoutes implements SuppliesGatewayRoutes {
         return ret != null && ret.getType() == ParticipantType.CUSTOMER ? ret : null;
     }
 
+    private Future<Void> withinSignUpLimit(RoutingContext ctx) {
+        return signUpsPerAddress.tryAcquire(RestSupport.clientAddress(ctx), Instant.now())
+                ? Future.succeededFuture()
+                : Future.failedFuture(new RateLimitedException(TOO_MANY_SIGN_UPS));
+    }
+
     // an address that already has an account, a second subscription, or a second pending request is a conflict the
     // form explains, not a server error
     private static void failSignUp(RoutingContext ctx, Throwable t) {
         if (t instanceof AlreadyExistsException) {
             RestSupport.respondJson(ctx, 409, new JsonObject().put("error", t.getMessage()));
+        } else if (t instanceof RateLimitedException) {
+            RestSupport.respondJson(ctx, 429, new JsonObject().put("error", t.getMessage()));
         } else {
             ctx.fail(t);
         }

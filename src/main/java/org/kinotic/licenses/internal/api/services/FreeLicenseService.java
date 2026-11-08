@@ -55,7 +55,8 @@ public class FreeLicenseService {
      * Records an existing free licensee's re-certification for its next term.
      *
      * @throws IllegalStateException when the customer has no free license
-     * @throws AlreadyExistsException when a request of the customer's is already pending
+     * @throws AlreadyExistsException when another request of the customer's is open: pending, or approved with its key
+     *                                still being issued
      */
     public Future<FreeLicenseRequest> requestRenewal(String customerId, FreeLicenseCertification certification) {
         validate(certification);
@@ -69,37 +70,43 @@ public class FreeLicenseService {
      * Records a free license request for an existing customer, as a signed-in customer makes one: a first request, or a
      * renewal when the customer holds a free license already.
      *
-     * @return the request, or a failure with {@link AlreadyExistsException} when a request of the customer's is
-     *         already pending
+     * @return the request, or a failure with {@link AlreadyExistsException} when another request of the customer's is
+     *         open: pending, or approved with its key still being issued
      */
     public Future<FreeLicenseRequest> requestForCustomer(String customerId, FreeLicenseCertification certification) {
         validate(certification);
-        return requestRepository.findByCustomerId(customerId).compose(requests -> requests.stream().anyMatch(
-                request -> request.getStatus() == FreeLicenseRequestStatus.PENDING)
-                ? Future.failedFuture(new AlreadyExistsException("A free license request of this account is already being reviewed"))
-                : saveRequest(customerId, certification));
-    }
-
-    public Future<List<FreeLicenseRequest>> findPending() {
-        return requestRepository.findByStatus(FreeLicenseRequestStatus.PENDING);
+        return saveRequest(customerId, certification);
     }
 
     /**
-     * Approves a pending request: creates the free license, or renews the one the customer has, issues the key and
-     * emails it.
+     * The requests awaiting a decision, oldest first, including approvals that stopped before their key was issued.
+     */
+    public Future<List<FreeLicenseRequest>> findPending() {
+        return requestRepository.findAwaitingDecision();
+    }
+
+    /**
+     * Approves a pending request: creates the free license, or issues the next term's key of the one the customer has,
+     * and emails the key. Approving a request whose approval stopped before its key was issued completes it.
      *
      * @param requestId  the request
      * @param reviewedBy the staff member approving
      */
     public Future<FreeLicenseRequest> approve(String requestId, String reviewedBy) {
-        // The decision is recorded first, so a second decision on the request finds nothing to decide. Issuing then
-        // either creates the license or starts its next term; a failure there reopens the request, since nothing was
-        // issued, whereas a failed email leaves it approved and the key is resent from the customer page.
-        return decide(requestId, FreeLicenseRequestStatus.APPROVED, reviewedBy)
-                .compose(request -> licenseRepository.findFreeLicense(request.getCustomerId())
-                                                     .compose(existing -> existing != null ? issueFor(existing) : create(request))
-                                                     .recover(t -> reopen(request).compose(v -> Future.failedFuture(t)))
-                                                     .compose(issued -> email(issued).map(request)))
+        // The approval is claimed first, so a second decision on the request finds nothing to decide. A failure while
+        // issuing reopens it, since nothing was issued; a server that stopped mid-way leaves a claim that expires, and
+        // approving again then finds the key that approval issued, or issues it. A failed email leaves the approval
+        // complete, and the key is resent from the customer page.
+        return requestRepository.claimApproval(requestId, reviewedBy)
+                .map(request -> {
+                    Validate.validState(request != null, "The free license request %s has already been decided, or is being approved", requestId);
+                    return request;
+                })
+                .compose(request -> issueFor(request)
+                        .recover(t -> requestRepository.reopen(request.getId()).compose(v -> Future.failedFuture(t)))
+                        .compose(issued -> requestRepository.markIssued(request.getId(), issued.key().getJti())
+                                                            .compose(v -> email(issued))
+                                                            .map(request)))
                 .onSuccess(request -> log.info("{} approved the free license request {}", reviewedBy, requestId));
     }
 
@@ -107,7 +114,11 @@ public class FreeLicenseService {
      * Rejects a pending request and tells the customer's contacts.
      */
     public Future<FreeLicenseRequest> reject(String requestId, String reviewedBy) {
-        return decide(requestId, FreeLicenseRequestStatus.REJECTED, reviewedBy)
+        return requestRepository.reject(requestId, reviewedBy)
+                .map(request -> {
+                    Validate.validState(request != null, "The free license request %s is not pending", requestId);
+                    return request;
+                })
                 .compose(request -> customerRepository.findById(request.getCustomerId())
                                                       .compose(customer -> contactRepository.findByCustomerId(customer.getId())
                                                                                             .compose(contacts -> {
@@ -121,17 +132,31 @@ public class FreeLicenseService {
                 .onSuccess(request -> log.info("{} rejected the free license request {}", reviewedBy, requestId));
     }
 
-    private Future<NewLicense> create(FreeLicenseRequest request) {
-        return customerRepository.findById(request.getCustomerId())
-                                 .compose(customer -> licenseService.createLicense(customer, Plan.FREE, null, null, null));
-    }
-
-    // a license whose first key was never issued, as when signing failed on an earlier approval, gets that first key
-    // with its term starting now; one that has a key is renewed
-    private Future<NewLicense> issueFor(License license) {
-        return licenseService.keysOf(license.getId()).compose(keys -> keys.isEmpty()
-                ? licenseService.issueFirstKey(license)
-                : licenseService.issueRenewalKey(license));
+    // The key this approval owes: none issued since it was approved means one is issued now, creating the license for a
+    // first request. A license whose first key was never issued, as when signing failed on an earlier approval, gets
+    // that first key with its term starting now; one that has a key is renewed.
+    private Future<NewLicense> issueFor(FreeLicenseRequest request) {
+        return licenseRepository.findFreeLicense(request.getCustomerId()).compose(license -> {
+            Future<NewLicense> ret;
+            if (license == null) {
+                ret = customerRepository.findById(request.getCustomerId())
+                                        .compose(customer -> licenseService.createLicense(customer, Plan.FREE, null, null, null));
+            } else {
+                ret = licenseService.keysOf(license.getId()).compose(keys -> {
+                    Future<NewLicense> issued;
+                    // keys come newest first, so the first one says whether this approval already issued its key
+                    if (!keys.isEmpty() && !keys.getFirst().getIssuedAt().isBefore(request.getReviewedAt())) {
+                        issued = Future.succeededFuture(new NewLicense(license, keys.getFirst()));
+                    } else if (keys.isEmpty()) {
+                        issued = licenseService.issueFirstKey(license);
+                    } else {
+                        issued = licenseService.issueRenewalKey(license);
+                    }
+                    return issued;
+                });
+            }
+            return ret;
+        });
     }
 
     private Future<Void> email(NewLicense issued) {
@@ -143,19 +168,7 @@ public class FreeLicenseService {
                              });
     }
 
-    private Future<FreeLicenseRequest> decide(String requestId, FreeLicenseRequestStatus decision, String reviewedBy) {
-        return requestRepository.findById(requestId).compose(request -> {
-            Validate.isTrue(request != null, "No free license request has the id %s", requestId);
-            return requestRepository.review(requestId, decision, reviewedBy, Instant.now());
-        }).map(reviewed -> {
-            Validate.validState(reviewed != null, "The free license request %s has already been decided", requestId);
-            return reviewed;
-        });
-    }
 
-    private Future<Void> reopen(FreeLicenseRequest request) {
-        return requestRepository.reopen(request.getId());
-    }
 
     private Future<FreeLicenseRequest> saveRequest(String customerId, FreeLicenseCertification certification) {
         return requestRepository.save(new FreeLicenseRequest()

@@ -39,6 +39,9 @@ public class IssuedKeyRepository {
                    .map(rows -> PgValues.map(rows, IssuedKeyRepository::toKey));
     }
 
+    /**
+     * The key with the id, or {@code null} when none has it.
+     */
     public Future<IssuedKey> findByJti(String jti) {
         return pool.preparedQuery("SELECT " + COLUMNS + " FROM issued_key WHERE jti = $1")
                    .execute(Tuple.of(jti))

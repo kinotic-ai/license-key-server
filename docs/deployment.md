@@ -5,8 +5,8 @@ dashboard on a host restricted by network to Minds Ignited, as the Kinotic syste
 front of the container terminates TLS for both names and forwards every path, WebSockets included (the STOMP API is
 `/api/v1`), to port 58503 with the `Host` header unchanged: the server decides which site a request belongs to from
 that header. Exactly one proxy stands in front of the server, and it appends the client's address to
-`X-Forwarded-For`: the sign-in rate limits key on that last entry, since the client writes whatever it likes to
-the left of it. A second proxy in the chain would make every client look like the first proxy.
+`X-Forwarded-For`: the sign-in and anonymous sign-up rate limits key on that last entry, since the client writes
+whatever it likes to the left of it. A second proxy in the chain would make every client look like the first proxy.
 
 ## Infrastructure
 
@@ -19,7 +19,8 @@ the left of it. A second proxy in the chain would make every client look like th
   ```
   Grant the container's identity (a managed identity, or the workload identity `DefaultAzureCredential` resolves)
   the `Key Vault Crypto User` role, which allows `sign` and `get` and nothing else. Key Vault offers P-256, P-384,
-  P-521 and P-256K; it has no Ed25519, which is why the format is ES256.
+  P-521 and P-256K; it has no Ed25519, which is why the format is ES256. In a Premium vault or a Managed HSM, an
+  HSM-protected key (`--kty EC-HSM`) works the same way and keeps the private key in the HSM.
 - **Azure Communication Services** email with a verified sender on the kinotic.ai domain. The same identity needs the
   `Contributor` role on the Communication Services resource to send.
 - **Stripe**: a Price per paid plan with the lookup keys `kinotic-startup`, `kinotic-business` and

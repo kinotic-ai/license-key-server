@@ -26,6 +26,7 @@ import java.time.ZoneOffset;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.BiFunction;
 
 /**
  * The lifecycle of a license and the keys issued for it. A license runs in twelve-month terms; each term's key lives
@@ -275,22 +276,18 @@ public class LicenseService {
     }
 
     // every contact of the licensee gets the email; a failure to send fails the caller, which retries or reports it
-    private Future<Void> emailContacts(License license, EmailSend send) {
+    private Future<Void> emailContacts(License license, BiFunction<CustomerContact, String, Future<Void>> send) {
         return customerRepository.findById(license.getCustomerId())
                                  .compose(customer -> contactRepository.findByCustomerId(customer.getId())
                                                                        .compose(contacts -> sendAll(contacts, customer, send)));
     }
 
-    private static Future<Void> sendAll(List<CustomerContact> contacts, Customer customer, EmailSend send) {
+    private static Future<Void> sendAll(List<CustomerContact> contacts, Customer customer,
+                                        BiFunction<CustomerContact, String, Future<Void>> send) {
         Future<Void> ret = Future.succeededFuture();
         for (CustomerContact contact : contacts) {
             ret = ret.compose(v -> send.apply(contact, customer.getLegalName()));
         }
         return ret;
-    }
-
-    @FunctionalInterface
-    private interface EmailSend {
-        Future<Void> apply(CustomerContact contact, String organization);
     }
 }

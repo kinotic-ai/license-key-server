@@ -133,6 +133,8 @@ tasks.named('bootRun') {
 
 test {
     useJUnitPlatform()
+    // whether the suite has a database decides whether it runs or skips, so a run with one never reuses a skipped run
+    inputs.property('licensesTestDatabaseConfigured', System.getenv('LICENSES_TEST_DATABASE_URL') != null)
     jvmArgs(igniteJvmArgs)
     systemProperty 'junit.jupiter.execution.timeout.default', '120 s'
     systemProperty 'junit.jupiter.execution.timeout.thread.mode.default', 'SEPARATE_THREAD'

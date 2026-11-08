@@ -55,7 +55,11 @@ public class CustomerService {
                                 .compose(existing -> existing.isEmpty()
                                         ? customerRepository.save(customer)
                                         : Future.failedFuture(new AlreadyExistsException(CustomerContactRepository.EMAIL_TAKEN)))
-                                 .compose(saved -> contactRepository.save(contact))
+                                 .compose(saved -> contactRepository.save(contact)
+                                                                    // a sign-up that lost a race past the check above leaves no customer behind
+                                                                    .recover(t -> t instanceof AlreadyExistsException
+                                                                            ? customerRepository.delete(customer.getId()).compose(v -> Future.failedFuture(t))
+                                                                            : Future.failedFuture(t)))
                                  .compose(savedContact -> recordAcceptance(customer.getId(), savedContact.getName(), savedContact.getEmail()))
                                  .compose(savedAcceptance -> customerRepository.findById(customer.getId()));
     }

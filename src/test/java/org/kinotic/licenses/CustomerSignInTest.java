@@ -16,8 +16,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -28,7 +26,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ExtendWith(OutputCaptureExtension.class)
 class CustomerSignInTest extends ServerTest {
 
-    private static final Pattern CODE_IN_LOG = Pattern.compile("Your Kinotic sign-in code is:\\s+(\\d{8})");
     @Autowired
     private SignInCodeRepository codeRepository;
 
@@ -63,7 +60,8 @@ class CustomerSignInTest extends ServerTest {
 
     @Test
     void theAddressLimitKeysOnTheAddressTheProxyAppended() throws Exception {
-        String proxied = "203.0.113." + (1 + new java.util.Random().nextInt(250));
+        // an address unique to this run, so no earlier request shares its limiter bucket
+        String proxied = "2001:db8::" + Long.toHexString(System.nanoTime() & 0xffffL) + ":" + Long.toHexString(UUID.randomUUID().getMostSignificantBits() & 0xffffL);
         int accepted = 0;
         int limited = 0;
         for (int i = 0; i < 35; i++) {
@@ -111,7 +109,7 @@ class CustomerSignInTest extends ServerTest {
     private static String awaitCode(CapturedOutput output) throws InterruptedException {
         String ret = null;
         for (int i = 0; i < 100 && ret == null; i++) {
-            List<String> codes = CODE_IN_LOG.matcher(output.getAll()).results().map(m -> m.group(1)).toList();
+            List<String> codes = codesIn(output);
             if (!codes.isEmpty()) {
                 ret = codes.getLast();
             } else {

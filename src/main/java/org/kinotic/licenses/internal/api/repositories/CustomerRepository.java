@@ -54,6 +54,15 @@ public class CustomerRepository {
                    .map(rows -> PgValues.first(rows, CustomerRepository::toCustomer));
     }
 
+    /**
+     * Removes a customer that nothing refers to yet, as a sign-up refused after the customer was stored leaves.
+     */
+    public Future<Void> delete(String id) {
+        return pool.preparedQuery("DELETE FROM customer WHERE id = $1")
+                   .execute(Tuple.of(id))
+                   .mapEmpty();
+    }
+
     public Future<Void> updateStripeCustomerId(String id, String stripeCustomerId) {
         return pool.preparedQuery("UPDATE customer SET stripe_customer_id = $2 WHERE id = $1")
                    .execute(Tuple.of(id, stripeCustomerId))

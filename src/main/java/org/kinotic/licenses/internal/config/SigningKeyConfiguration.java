@@ -63,7 +63,9 @@ public class SigningKeyConfiguration {
         // read once at startup, which also proves the vault, the key and the credential before the first sign
         KeyVaultKey key = cryptography.getKey().block();
         JsonWebKey jwk = key.getKey();
-        if (jwk.getKeyType() != KeyType.EC || !KeyCurveName.P_256.equals(jwk.getCurveName())) {
+        // a key in a Premium vault or a Managed HSM is EC-HSM; either signs the same ES256
+        boolean ellipticCurve = KeyType.EC.equals(jwk.getKeyType()) || KeyType.EC_HSM.equals(jwk.getKeyType());
+        if (!ellipticCurve || !KeyCurveName.P_256.equals(jwk.getCurveName())) {
             throw new IllegalStateException("The signing key " + keyId + " must be an EC P-256 key; it is "
                                                     + jwk.getKeyType() + " " + jwk.getCurveName());
         }

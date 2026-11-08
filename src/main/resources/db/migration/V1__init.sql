@@ -57,9 +57,16 @@ CREATE TABLE free_license_request (
     status          TEXT        NOT NULL,
     reviewed_by     TEXT,
     reviewed_at     TIMESTAMPTZ,
+    -- when an approval last started issuing; an approval that stopped before recording its key is resumed after a while
+    claimed_at      TIMESTAMPTZ,
+    -- the key the approval issued, which completes it
+    issued_key_jti  TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX free_license_request_status_idx ON free_license_request (status, created_at);
+-- a customer has at most one open request: pending, or approved with its key not yet issued
+CREATE UNIQUE INDEX free_license_request_open_idx ON free_license_request (customer_id)
+    WHERE status = 'PENDING' OR (status = 'APPROVED' AND issued_key_jti IS NULL);
 
 -- Every key ever issued, appended to and never updated. The trial key belongs to no license.
 CREATE TABLE issued_key (

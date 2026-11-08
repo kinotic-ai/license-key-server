@@ -232,6 +232,63 @@ class FreeLicenseTest extends ServerTest {
     }
 
     @Test
+    void anApprovalThatStoppedMidWayIsCompletedByApprovingAgain() throws Exception {
+        String requestId = post("/api/free-requests", requestBody("stalled-" + UUID.randomUUID() + "@tiny.example").put("acceptTerms", true), null)
+                .bodyAsJsonObject().getString("id");
+        // what a server that stopped after claiming the approval leaves, once the claim has expired
+        sql("UPDATE free_license_request SET status = 'APPROVED', reviewed_by = 'staff@mindsignited.com', reviewed_at = now() - interval '10 minutes',"
+                    + " claimed_at = now() - interval '10 minutes' WHERE id = $1", requestId);
+        assertThat(await(staffRequests.findPending())).extracting(FreeLicenseRequest::getId).contains(requestId);
+
+        asStaff(() -> staffRequests.approve(requestId));
+
+        FreeLicenseRequest completed = await(requestRepository.findById(requestId));
+        License license = await(licenseRepository.findFreeLicense(completed.getCustomerId()));
+        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
+        assertThat(await(staffRequests.findPending())).extracting(FreeLicenseRequest::getId).doesNotContain(requestId);
+        // the approval is complete, so it is decided for good
+        assertThatThrownBy(() -> asStaff(() -> staffRequests.approve(requestId))).hasCauseInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void anApprovalThatStoppedAfterIssuingItsKeyIssuesNoOther() throws Exception {
+        String requestId = post("/api/free-requests", requestBody("issued-" + UUID.randomUUID() + "@tiny.example").put("acceptTerms", true), null)
+                .bodyAsJsonObject().getString("id");
+        String customerId = await(requestRepository.findById(requestId)).getCustomerId();
+        sql("UPDATE free_license_request SET status = 'APPROVED', reviewed_by = 'staff@mindsignited.com', reviewed_at = now() - interval '10 minutes',"
+                    + " claimed_at = now() - interval '10 minutes' WHERE id = $1", requestId);
+        // the stopped approval got as far as issuing the key, after it was approved
+        License license = await(licenseService.createLicense(await(customerRepository.findById(customerId)), Plan.FREE, null, null, null)).license();
+
+        asStaff(() -> staffRequests.approve(requestId));
+
+        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
+        assertThat(await(licenseRepository.findById(license.getId())).getTermEnd()).isEqualTo(license.getTermEnd());
+    }
+
+    @Test
+    void anonymousSignUpsAreLimitedPerClientAddress() throws Exception {
+        String client = "2001:db8::" + Long.toHexString(UUID.randomUUID().getMostSignificantBits() & 0xffffL) + ":1";
+        int accepted = 0;
+        int limited = 0;
+        for (int i = 0; i < 22; i++) {
+            HttpResponse<Buffer> response = await(ServerTest.client.post("/api/free-requests")
+                                                        .putHeader("Origin", PUBLIC_ORIGIN)
+                                                        .putHeader("Content-Type", "application/json")
+                                                        .putHeader("X-Forwarded-For", client)
+                                                        .sendBuffer(requestBody("burst-" + UUID.randomUUID() + "@tiny.example")
+                                                                            .put("acceptTerms", true).toBuffer()));
+            if (response.statusCode() == 201) {
+                accepted++;
+            } else if (response.statusCode() == 429) {
+                limited++;
+            }
+        }
+        assertThat(accepted).isEqualTo(20);
+        assertThat(limited).isEqualTo(2);
+    }
+
+    @Test
     void nothingIsRecordedWithoutTheAcceptance() throws Exception {
         HttpResponse<Buffer> response = post("/api/free-requests", requestBody("nobody-" + UUID.randomUUID() + "@x.example"), null);
         assertThat(response.statusCode()).isEqualTo(400);

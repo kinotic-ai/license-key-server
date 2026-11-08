@@ -10,7 +10,7 @@ import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.api.extension.ExtendWith;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.Tuple;
 import org.springframework.boot.test.system.CapturedOutput;
@@ -38,7 +38,8 @@ import java.util.concurrent.TimeUnit;
  */
 @SpringBootTest
 @ActiveProfiles("test")
-@EnabledIf("org.kinotic.licenses.support.TestDatabase#available")
+// an extension, unlike @EnabledIf, is inherited, so every server test class is disabled without a database
+@ExtendWith(DatabaseAvailableCondition.class)
 public abstract class ServerTest {
 
     /** The gateway's port in the test profile. */
@@ -128,7 +129,8 @@ public abstract class ServerTest {
         return verified.cookies().getFirst().split(";")[0];
     }
 
-    private static List<String> codesIn(CapturedOutput output) {
+    /** The sign-in codes the test profile has logged so far, oldest first. */
+    protected static List<String> codesIn(CapturedOutput output) {
         return CODE_IN_LOG.matcher(output.getAll()).results().map(m -> m.group(1)).toList();
     }
 
