@@ -70,7 +70,7 @@ import java.util.function.Supplier;
  * details. Prices live on Stripe Prices named by {@link PriceLookupKey}: a price list is the set of Prices with one
  * version, and the current price list is the highest version with an active Price for every paid plan and billing
  * period. Stripe's webhook events drive the license: a completed Checkout creates it, or moves the customer's free
- * license onto the subscription, and issues its first key once the first invoice is paid, and every event about the
+ * license or trial onto the subscription, and issues its first key once the first invoice is paid, and every event about the
  * subscription brings the license's plan, billing period, status and scheduled cancellation to what Stripe has now.
  */
 @Slf4j
@@ -83,7 +83,7 @@ public class StripeBillingService {
     private static final String CANCEL_PATH = "/buy?plan=%s&billing=%s";
     private static final String ACCOUNT_PATH = "/account";
     private static final String CUSTOMER_ID_METADATA = "kinoticCustomerId";
-    // the free license a purchase moves onto the subscription it buys
+    // the free license or trial a purchase moves onto the subscription it buys
     private static final String LICENSE_ID_METADATA = "kinoticLicenseId";
     // the design partner application a discounted purchase was approved on
     private static final String APPLICATION_ID_METADATA = "kinoticDesignPartnerApplicationId";
@@ -114,12 +114,12 @@ public class StripeBillingService {
     private volatile boolean couponReady;
 
     /**
-     * The prices the customer buys at: those of the price list its active free license keeps, or of the current price
+     * The prices the customer buys at: those of the price list its active free license or trial keeps, or of the current price
      * list. Read from Stripe and cached for a few minutes.
      */
     public Future<List<PlanPrice>> findPrices(Customer customer) {
-        return freeLicenseOf(customer).compose(free -> catalog().map(prices -> {
-            int priceList = priceListFor(free, prices);
+        return licenseRepository.findMovable(customer.getId()).compose(moving -> catalog().map(prices -> {
+            int priceList = priceListFor(moving, prices);
             List<PlanPrice> ret = new ArrayList<>();
             prices.prices().forEach((key, price) -> {
                 if (key.priceList() == priceList) {
@@ -185,17 +185,17 @@ public class StripeBillingService {
                     && (license.getStatus() == LicenseStatus.ACTIVE || license.getStatus() == LicenseStatus.PAST_DUE));
             return subscribed
                     ? Future.<License>failedFuture(new AlreadyExistsException(ALREADY_SUBSCRIBED))
-                    : freeLicenseOf(customer);
-        }).compose(free -> catalog().compose(prices -> {
-            PriceLookupKey key = new PriceLookupKey(priceListFor(free, prices), plan, period);
+                    : licenseRepository.findMovable(customer.getId());
+        }).compose(moving -> catalog().compose(prices -> {
+            PriceLookupKey key = new PriceLookupKey(priceListFor(moving, prices), plan, period);
             Price price = prices.prices().get(key);
             Validate.validState(price != null, "Stripe has no active Price with the lookup key %s", key.lookupKey());
             Future<String> coupon = application != null ? designPartnerCoupon() : Future.succeededFuture();
             return coupon.compose(couponId -> ensureStripeCustomer(customer, buyer).compose(stripeCustomerId -> blocking(() -> {
                 Map<String, String> metadata = new HashMap<>();
                 metadata.put(CUSTOMER_ID_METADATA, customer.getId());
-                if (free != null) {
-                    metadata.put(LICENSE_ID_METADATA, free.getId());
+                if (moving != null) {
+                    metadata.put(LICENSE_ID_METADATA, moving.getId());
                 }
                 String cancelPath;
                 if (application != null) {
@@ -414,7 +414,7 @@ public class StripeBillingService {
                         if (existing != null) {
                             fulfilled = sync(existing, subscription).compose(synced -> finishFulfillment(synced, isPaid(subscription)));
                         } else if (session.getMetadata() != null && session.getMetadata().get(LICENSE_ID_METADATA) != null) {
-                            fulfilled = moveFreeLicense(session.getMetadata().get(LICENSE_ID_METADATA), session, subscription);
+                            fulfilled = moveLicense(session.getMetadata().get(LICENSE_ID_METADATA), session, subscription);
                         } else {
                             fulfilled = customerRepository.findById(session.getClientReferenceId())
                                                           .compose(customer -> createLicenseFor(customer, session, subscription));
@@ -462,19 +462,21 @@ public class StripeBillingService {
         return ret.onSuccess(v -> log.info("The Checkout Session {} bought a license for customer {}", session.getId(), customer.getId()));
     }
 
-    // The free license the purchase was started from moves onto the subscription, keeping its price list and terms. One
-    // that is no longer an active free license by now, as when staff revoked it, leaves the purchase a license of its own.
-    private Future<Void> moveFreeLicense(String licenseId, Session session, Subscription subscription) {
+    // The free license or trial the purchase was started from moves onto the subscription, keeping its price list and
+    // terms. One that is neither by now, as when staff revoked it or the trial expired, leaves the purchase a license of
+    // its own.
+    private Future<Void> moveLicense(String licenseId, Session session, Subscription subscription) {
         SubscriptionItem item = subscription.getItems().getData().getFirst();
         PriceLookupKey price = PriceLookupKey.parse(item.getPrice().getLookupKey());
         Validate.validState(price != null, "The subscription %s bills the Price %s, which is no paid plan's", subscription.getId(),
                             item.getPrice().getId());
+        Instant now = Instant.now();
         return licenseRepository.attachSubscription(licenseId, price.plan(), price.period(), subscription.getId(), session.getId(),
-                                                    Instant.ofEpochSecond(item.getCurrentPeriodEnd()))
+                                                    Instant.ofEpochSecond(item.getCurrentPeriodEnd()), now, LicenseService.termEnd(now))
                                 .compose(moved -> {
                                     Future<Void> ret;
                                     if (moved != null) {
-                                        log.info("The Checkout Session {} moved the free license {} onto a paid plan", session.getId(), licenseId);
+                                        log.info("The Checkout Session {} moved the license {} onto a paid plan", session.getId(), licenseId);
                                         ret = sync(moved, subscription).mapEmpty();
                                     } else {
                                         ret = customerRepository.findById(session.getClientReferenceId())
@@ -737,25 +739,17 @@ public class StripeBillingService {
         return SubscriptionScheduleUpdateParams.Phase.Item.builder().setPrice(priceId).setQuantity(1L).build();
     }
 
-    // the customer's active free license, which a purchase moves onto the subscription; null when it holds none
-    private Future<License> freeLicenseOf(Customer customer) {
-        return licenseRepository.findFreeLicense(customer.getId())
-                                .map(free -> free != null && free.getStatus() == LicenseStatus.ACTIVE ? free : null);
-    }
-
-    // the price list a purchase buys at: the one the free license keeps, else the current one
-    private static int priceListFor(License free, PriceCatalog prices) {
-        int ret = free != null ? free.getPriceList() : prices.currentPriceList();
+    // the price list a purchase buys at: the one the free license or trial it moves keeps, else the current one
+    private static int priceListFor(License moving, PriceCatalog prices) {
+        int ret = moving != null ? moving.getPriceList() : prices.currentPriceList();
         Validate.validState(ret > 0, "Stripe has no price list with an active Price for every paid plan and billing period");
         return ret;
     }
 
     private static void validate(CheckoutRequest request) {
         Validate.isTrue(request != null, "The purchase is required");
-        Validate.isTrue(request.getPlan() != null && request.getPlan() != Plan.FREE, "A paid plan is required; the free plan is requested, not bought");
+        Plan.requirePaidMatching(request.getPlan(), request.getFigures());
         Validate.isTrue(request.getBillingPeriod() != null, "The billing period is required");
-        Plan matching = Plan.matching(request.getFigures());
-        Validate.isTrue(matching == request.getPlan(), "Your company's figures fit the %s plan, not %s", matching, request.getPlan());
     }
 
     private V1Services stripe() {

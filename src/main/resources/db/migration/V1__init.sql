@@ -36,7 +36,7 @@ CREATE TABLE license (
     customer_id            TEXT        NOT NULL REFERENCES customer (id),
     plan                   TEXT        NOT NULL,
     status                 TEXT        NOT NULL,
-    -- MONTHLY or ANNUAL for a paid plan, NULL for a free license
+    -- MONTHLY or ANNUAL for a paid plan, NULL for a free license or a trial
     billing_period         TEXT,
     -- the price list and terms in effect when the license started, which it keeps while it stays active
     price_list             INTEGER     NOT NULL,
@@ -61,6 +61,8 @@ CREATE TABLE license (
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX license_customer_idx ON license (customer_id);
+-- one trial at a time per customer, so two trials started together leave one
+CREATE UNIQUE INDEX license_one_trial_idx ON license (customer_id) WHERE status = 'TRIAL';
 
 -- The figures a customer confirms once a year for its license's anniversary; capital_raised only where it decides
 -- between Free and Small. plan is the plan the figures set, license_plan the plan the license was on, and applies_at

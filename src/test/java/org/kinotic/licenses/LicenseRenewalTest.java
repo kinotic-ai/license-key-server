@@ -135,6 +135,14 @@ class LicenseRenewalTest extends ServerTest {
         assertThatThrownBy(() -> renew(renewal(connect(newest)))).hasMessageContaining("past due");
     }
 
+    @Test
+    void aTrialRenewsToTheKeyCoveringIt() throws Exception {
+        License trial = await(licenseService.createTrial(seedCustomer(), Plan.MEDIUM, StripeStandIn.CURRENT_PRICE_LIST)).license();
+        String key = newestKey(trial);
+
+        assertThat(renew(renewal(connect(key)))).isEqualTo(key);
+    }
+
     private KinoticConnection connect(String key) throws Exception {
         ConnectOptions options = new ConnectOptions().setServerUrl("ws://localhost:" + PORT)
                                                      .setAuthHeaders(Map.of("license-key", key));

@@ -42,12 +42,24 @@ whatever it likes to the left of it. A second proxy in the chain would make ever
 ## Keys
 
 A key expires seven days after the date its license is paid through: the end of the Stripe billing period for a paid
-plan, the end of the license year for Free. Every `invoice.paid` that extends the paid-through date issues and emails
+plan, the end of the license year for Free. A trial's key expires when the trial ends. Every `invoice.paid` that extends the paid-through date issues and emails
 the key covering the new date, once however often Stripe delivers it; an email that fails is sent by the daily key
-email job. A license that is past due, lapsed, cancelled or revoked is issued no key, and the key it holds works until
+email job. A license that is past due, lapsed, cancelled, expired or revoked is issued no key, and the key it holds works until
 it expires (Kinotic keeps its features on for 14 days more). The same daily job warns, once per key, the contacts of a
-license whose newest key expires within 14 days with no newer one coming by itself: one past due, one set to end, or
-a free license, whose next year staff approve.
+license whose newest key expires within 14 days with no newer one coming by itself: one past due, one set to end, a
+trial, or a free license, whose next year staff approve.
+
+## Trials
+
+A customer that has never held a paid license or a trial, and holds no active free license, may start a trial of the
+paid plan its figures set from `/buy`, with no payment details and no Stripe call beyond reading the current price
+list. The trial is a license in status `TRIAL` on that plan and the current price list, running three months
+(`term_end`); its one key is emailed at once and expires when the trial ends. A customer holds one trial: the start
+checks the customer's licenses, and the partial unique index `license_one_trial_idx` refuses a second trial started at
+the same moment. Buying a plan before the trial ends moves the trial onto the subscription, as it moves a free license:
+it keeps its price list and terms, and its first license year starts at the purchase. An hourly job marks a trial
+whose term has ended `EXPIRED` and emails its contacts; buying afterwards starts a new license on the current price
+list.
 - **Staff OIDC**: a web application in Minds Ignited's Google Workspace (or Entra tenant) with the redirect URI
   `https://<staff host>/api/auth/staff/callback`, scopes `openid email profile`. With Entra, add `email` as an
   optional ID token claim: Entra sends no `email_verified`, so the server takes the tenant's own address for
@@ -68,7 +80,7 @@ Free has no Price. The **current price list** is the highest version that has an
 license starts on it, and the server reads it again every ten minutes. A license records its price list and the
 terms version in effect when it starts, and keeps both for as long as it stays active (never cancelled, with every
 failed payment settled within 30 days): its plan moves are priced on its own list. A customer holding an active free
-license buys at the free license's price list, and the free license moves onto the subscription. A customer whose
+license or a trial buys at that license's price list, and the license moves onto the subscription. A customer whose
 license lapsed or was cancelled buys on the current list.
 
 To change prices, create a **new** price list: six new Prices with the next version in their lookup keys. Never edit,
@@ -134,9 +146,10 @@ of the customer through Azure Communication Services:
 |---|---|
 | `sign-in-code` | a sign-in or sign-up code is requested |
 | `new-key`, `renewal-key` | a license's first key, and each key a payment extends it with |
+| `trial-started`, `trial-expired` | a trial starts, with its key, and once it ends without its plan bought |
 | `past-due` | a payment fails and the license leaves good standing |
 | `lapse-warning`, `lapsed` | a license past due for 20 days, and once it lapses at 30 |
-| `key-expiring` | the newest key expires within 14 days with no newer one coming by itself |
+| `key-expiring` | the newest key expires within 14 days with no newer one coming by itself, as a trial's does before it ends |
 | `confirmation-due` | 30 days before an anniversary, to confirm the figures |
 | `plan-changed` | the confirmed figures move the plan, end the subscription for Free, or require a free license to buy one |
 | `free-request-approved`, `free-request-rejected` | staff decide a free license request |
@@ -210,14 +223,16 @@ with. If the two differ, Kinotic refuses every key this server issues.
 
 ## Legal
 
-The click-through with each purchase, free license request and design partner application (on `/buy`, `/free` and
-`/design-partner`) records who accepted which version of the terms, when and for which customer, and what publicity
+The click-through with each purchase, trial, free license request and design partner application (on `/buy`, `/free`
+and `/design-partner`) records who accepted which version of the terms, when and for which customer, and what publicity
 the customer consented to (`agreement_acceptance.publicity_consent`): none for a purchase, `CUSTOMER_NAME` for Free,
 whose terms let Minds Ignited name the customer as a Kinotic customer, and `DESIGN_PARTNER` for a design partner. A
+trial accepts the same terms as a purchase, with no publicity. A
 license records the terms version it started on and keeps it while it stays active.
 
 For a lawyer to confirm, not decided here: whether that click-through is the written agreement the Kinotic
-Enterprise License requires; the wording of "your terms never change while your license stays active"; and the Free
-and design partner publicity clauses, including the design partner promise that partners approve everything
-published about them and that nothing confidential is ever shared. The server records what it can and decides
+Enterprise License requires; the wording of "your terms never change while your license stays active"; whether a
+trial needs terms of its own, such as whether a trial key permits production use and what happens to a deployment
+when the trial ends; and the Free and design partner publicity clauses, including the design partner promise that
+partners approve everything published about them and that nothing confidential is ever shared. The server records what it can and decides
 nothing.

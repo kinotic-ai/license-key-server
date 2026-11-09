@@ -6,7 +6,7 @@ import SelectButton from 'primevue/selectbutton'
 import Message from 'primevue/message'
 import { useToast } from 'primevue/usetoast'
 import { PageHeader, showErrorToast } from '@kinotic-ai/frontend-common'
-import type { BillingPeriod, Plan, PlanPrice } from '@/api/model'
+import type { BillingPeriod, CompanyFigures, Plan, PlanPrice } from '@/api/model'
 import { customerAccountService } from '@/api/services'
 import CompanyFiguresFields from '@/components/CompanyFiguresFields.vue'
 import { SESSION_STATE } from '@/states/LicenseSessionState'
@@ -15,10 +15,11 @@ import TermsAcceptance from '@/components/TermsAcceptance.vue'
 import { formatMoney, planName } from '@/util/format'
 
 /**
- * Buying a paid plan for the signed-in customer's account. The pricing page links here with
- * `?plan=<small|medium|large>&billing=<monthly|annual>`. The customer gives its company's figures, which must match the
- * plan; when they set another plan, that one is offered instead, or Free. Then the click-through acceptance, and
- * Stripe Checkout, where the payment details are entered.
+ * Buying a paid plan for the signed-in customer's account, or starting a three-month trial of it when the account may
+ * have one. The pricing page links here with `?plan=<small|medium|large>&billing=<monthly|annual>`. The customer gives
+ * its company's figures, which must match the plan; when they set another plan, that one is offered instead, or Free.
+ * Then the click-through acceptance, and either the trial, whose key the account then shows, or Stripe Checkout, where
+ * the payment details are entered.
  */
 const route = useRoute()
 const router = useRouter()
@@ -35,6 +36,8 @@ const capitalRaised = ref<number | null>(null)
 const matching = ref<Plan | null>(null)
 const accepted = ref(false)
 const submitting = ref(false)
+const startingTrial = ref(false)
+const trialAvailable = ref(false)
 
 const plan = computed<Plan | null>(() => {
   const named = String(route.query.plan ?? '').toUpperCase() as Plan
@@ -48,7 +51,9 @@ watch([annualRevenue, capitalRaised, plan], () => { matching.value = null })
 
 onMounted(async () => {
   try {
-    prices.value = await customerAccountService.findPrices()
+    const [found, account] = await Promise.all([customerAccountService.findPrices(), customerAccountService.getAccount()])
+    prices.value = found
+    trialAvailable.value = account.trialAvailable
   } catch (err) {
     showErrorToast(toast, 'The prices could not be loaded', err)
   } finally {
@@ -60,32 +65,63 @@ function choose(next: { plan?: Plan, billing?: BillingPeriod }) {
   router.replace({ query: { plan: (next.plan ?? plan.value ?? 'SMALL').toLowerCase(), billing: (next.billing ?? period.value).toLowerCase() } })
 }
 
+// the figures given, once they fit the plan chosen; otherwise null, with the plan they fit offered instead
+async function fittingFigures(): Promise<CompanyFigures | null> {
+  const figures = { annualRevenue: annualRevenue.value!, capitalRaised: capitalRaised.value }
+  const fits = await customerAccountService.findPlanFor(figures)
+  if (fits !== plan.value) {
+    matching.value = fits
+  }
+  return fits === plan.value ? figures : null
+}
+
 async function submit() {
-  if (!plan.value || !figuresGiven.value || !accepted.value || submitting.value) {
+  if (!plan.value || !figuresGiven.value || !accepted.value || submitting.value || startingTrial.value) {
     return
   }
   submitting.value = true
   try {
-    const figures = { annualRevenue: annualRevenue.value!, capitalRaised: capitalRaised.value }
-    const fits = await customerAccountService.findPlanFor(figures)
-    if (fits !== plan.value) {
-      matching.value = fits
-      submitting.value = false
-    } else {
+    const figures = await fittingFigures()
+    if (figures) {
       // payment details are entered on Stripe's page, never here
       window.location.assign(await customerAccountService.startCheckout({ plan: plan.value, billingPeriod: period.value, figures }, SITE.termsVersion))
+    } else {
+      submitting.value = false
     }
   } catch (err) {
     submitting.value = false
     showErrorToast(toast, 'The purchase could not be started', err)
   }
 }
+
+async function startTrial() {
+  if (!plan.value || !figuresGiven.value || !accepted.value || submitting.value || startingTrial.value) {
+    return
+  }
+  startingTrial.value = true
+  try {
+    const figures = await fittingFigures()
+    if (figures) {
+      await customerAccountService.startTrial({ plan: plan.value, figures }, SITE.termsVersion)
+      toast.add({ severity: 'success', summary: 'Your trial has started', detail: 'Its key is below, and in your email.', life: 8000 })
+      await router.push('/account')
+    }
+  } catch (err) {
+    showErrorToast(toast, 'The trial could not be started', err)
+  } finally {
+    startingTrial.value = false
+  }
+}
 </script>
 
 <template>
   <div class="mx-auto max-w-2xl">
-    <PageHeader :title="plan ? `Buy the ${planName(plan)} plan` : 'Buy a plan'"
+    <PageHeader :title="plan ? `${trialAvailable ? 'Try or buy' : 'Buy'} the ${planName(plan)} plan` : 'Buy a plan'"
                 description="Your plan is set by your company's annual revenue. Stripe bills it; cancel any time, and the key you hold works until it expires." />
+    <Message v-if="trialAvailable && !loading" severity="info" class="mb-5">
+      Try any paid plan free for three months, with no payment details. Buy it before the trial ends to keep your
+      license, on the price list you started on.
+    </Message>
     <div v-if="loading" class="app-muted-text text-sm">Loading prices…</div>
     <form v-else class="flex flex-col gap-5" @submit.prevent="submit">
       <section class="app-card-surface flex flex-col gap-4 rounded-xl border p-5">
@@ -121,9 +157,11 @@ async function submit() {
       </section>
 
       <TermsAcceptance v-model="accepted" />
-      <div class="flex justify-end">
+      <div class="flex flex-wrap justify-end gap-3">
+        <Button v-if="trialAvailable" type="button" label="Start a 3-month trial" severity="secondary" outlined
+                :disabled="!accepted || !plan || !figuresGiven || submitting" :loading="startingTrial" @click="startTrial" />
         <Button type="submit" label="Continue to payment" icon="pi pi-arrow-right" icon-pos="right"
-                :disabled="!accepted || !price || !figuresGiven" :loading="submitting" />
+                :disabled="!accepted || !price || !figuresGiven || startingTrial" :loading="submitting" />
       </div>
     </form>
   </div>

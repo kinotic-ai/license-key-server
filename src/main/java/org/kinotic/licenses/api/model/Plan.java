@@ -60,6 +60,17 @@ public enum Plan {
                         "The capital raised must be zero or more when the annual revenue is under $1M");
     }
 
+    /**
+     * Checks that the plan is a paid plan and the one the company's figures set, as a purchase or a trial of it requires.
+     *
+     * @throws IllegalArgumentException when the plan is missing or Free, or the figures are not valid or set another plan
+     */
+    public static void requirePaidMatching(Plan plan, CompanyFigures figures) {
+        Validate.isTrue(plan != null && plan != FREE, "A paid plan is required; the free plan is requested, not bought");
+        Plan matching = matching(figures);
+        Validate.isTrue(matching == plan, "Your company's figures fit the %s plan, not %s", matching, plan);
+    }
+
     private static boolean isAmount(BigDecimal value) {
         return value != null && value.signum() >= 0;
     }

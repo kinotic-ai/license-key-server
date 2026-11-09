@@ -1,0 +1,7 @@
+The three-month trial of the {{planName}} plan for {{organization}} has ended without a plan being bought. Its key works until it expires, and no new key is issued for it.
+
+You can buy a plan from your account at any time. A new license starts on the price list and terms in effect when you buy:
+
+{{accountUrl}}
+
+— Minds Ignited, makers of Kinotic

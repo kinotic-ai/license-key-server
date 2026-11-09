@@ -20,7 +20,8 @@ public interface LicenseRenewalService {
 
     /**
      * The newest key of the license the caller signed in with, issued first when the license is paid beyond what that
-     * key covers. Calling it again returns the same key until the license is paid further.
+     * key covers. Calling it again returns the same key until the license is paid further. A trial's newest key is its
+     * only one, covering the trial.
      *
      * @return the newest key, or a failure naming the reason when the license is past due and the caller holds its
      *         newest key already; a past-due license whose caller holds an older key gets the newest

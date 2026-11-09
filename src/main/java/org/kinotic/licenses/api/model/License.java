@@ -9,7 +9,8 @@ import java.util.Set;
 
 /**
  * A customer's license to Kinotic Enterprise. It runs in license years from its start; a paid plan bills monthly or
- * annually through the Stripe subscription. It keeps the price list and the terms it started on for as long as it
+ * annually through the Stripe subscription. A trial runs for its three months instead, and buying its plan starts the
+ * license's first year. It keeps the price list and the terms it started on for as long as it
  * stays active.
  */
 @Data
@@ -20,15 +21,15 @@ public class License {
     private String customerId;
     private Plan plan;
     private LicenseStatus status;
-    /** How the subscription bills; {@code null} for a free license. */
+    /** How the subscription bills; {@code null} for a free license or a trial. */
     private BillingPeriod billingPeriod;
     /** The version of the price list in effect when the license started, which its plan moves are priced on. */
     private int priceList;
     /** The version of the terms in effect when the license started. */
     private String termsVersion;
-    /** The Stripe Subscription; {@code null} for a free license. */
+    /** The Stripe Subscription; {@code null} for a free license or a trial. */
     private String stripeSubscriptionId;
-    /** The Stripe Checkout Session that bought it; {@code null} for a free license. */
+    /** The Stripe Checkout Session that bought it; {@code null} for a free license or a trial. */
     private String checkoutSessionId;
     /** The end of the current billing period, as Stripe reports it. */
     private Instant currentPeriodEnd;
@@ -38,9 +39,9 @@ public class License {
     private Instant pastDueSince;
     /** What staff should look at; empty when nothing. */
     private Set<LicenseFlag> flags;
-    /** The start of the current license year. */
+    /** The start of the current license year, or of the trial. */
     private Instant termStart;
-    /** The end of the current license year, the license's next anniversary. */
+    /** The end of the current license year, the license's next anniversary, or when the trial ends. */
     private Instant termEnd;
     private Instant lastPaymentAt;
     private Instant createdAt;

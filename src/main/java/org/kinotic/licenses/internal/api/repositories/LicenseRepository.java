@@ -1,10 +1,12 @@
 package org.kinotic.licenses.internal.api.repositories;
 
 import io.vertx.core.Future;
+import io.vertx.pgclient.PgException;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import lombok.RequiredArgsConstructor;
+import org.kinotic.core.api.exceptions.AlreadyExistsException;
 import org.kinotic.licenses.api.model.BillingPeriod;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.LicenseFlag;
@@ -29,7 +31,8 @@ public class LicenseRepository {
     private static final String COLUMNS = "id, customer_id, plan, status, billing_period, price_list, terms_version, stripe_subscription_id,"
             + " checkout_session_id, current_period_end, cancels_at, past_due_since, flags, term_start, term_end, last_payment_at, created_at";
     // the statuses a billing change never moves a license out of
-    private static final String ENDED = "('REVOKED', 'CANCELED', 'LAPSED')";
+    private static final String ENDED = "('REVOKED', 'CANCELED', 'LAPSED', 'EXPIRED')";
+    private static final String UNIQUE_VIOLATION = "23505";
     // The status a billing change sets, unless staff revoked the license or its subscription ended; Stripe never
     // reopens a canceled subscription, so a later write is an event delivered out of order. A license entering
     // PAST_DUE records when, and keeps that time through further failures until it leaves PAST_DUE.
@@ -50,6 +53,17 @@ public class LicenseRepository {
                                                      PgValues.timestamp(license.getCurrentPeriodEnd()), PgValues.timestamp(license.getTermStart()),
                                                      PgValues.timestamp(license.getTermEnd()), PgValues.timestamp(license.getLastPaymentAt()))))
                    .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
+    }
+
+    /**
+     * Stores a new {@link LicenseStatus#TRIAL} license.
+     *
+     * @return the license, or a failure with {@link AlreadyExistsException} when the customer holds a trial already
+     */
+    public Future<License> saveTrial(License trial) {
+        return save(trial).recover(t -> Future.failedFuture(t instanceof PgException pg && UNIQUE_VIOLATION.equals(pg.getSqlState())
+                                                                    ? new AlreadyExistsException("This account already has a trial", t)
+                                                                    : t));
     }
 
     /**
@@ -85,18 +99,43 @@ public class LicenseRepository {
     }
 
     /**
-     * Moves an active free license onto the paid subscription its customer bought, keeping its price list, terms and
-     * license year.
+     * Moves an active free license or a trial onto the paid subscription its customer bought, keeping its price list and
+     * terms. A free license keeps its license year; a trial starts its first license year, from {@code termStart} to
+     * {@code termEnd}.
      *
-     * @return the license as stored, or {@code null} when it is no longer an active free license
+     * @return the license as stored, or {@code null} when it is no longer an active free license or a trial
      */
     public Future<License> attachSubscription(String id, Plan plan, BillingPeriod billingPeriod, String stripeSubscriptionId,
-                                              String checkoutSessionId, Instant currentPeriodEnd) {
+                                              String checkoutSessionId, Instant currentPeriodEnd, Instant termStart, Instant termEnd) {
+        // every CASE reads the status the row had before this update
         return pool.preparedQuery("UPDATE license SET plan = $2, billing_period = $3, stripe_subscription_id = $4,"
-                                          + " checkout_session_id = $5, current_period_end = $6"
-                                          + " WHERE id = $1 AND plan = 'FREE' AND status = 'ACTIVE' RETURNING " + COLUMNS)
-                   .execute(Tuple.of(id, PgValues.name(plan), PgValues.name(billingPeriod), stripeSubscriptionId,
-                                     checkoutSessionId, PgValues.timestamp(currentPeriodEnd)))
+                                          + " checkout_session_id = $5, current_period_end = $6,"
+                                          + " term_start = CASE WHEN status = 'TRIAL' THEN $7 ELSE term_start END,"
+                                          + " term_end = CASE WHEN status = 'TRIAL' THEN $8 ELSE term_end END, status = 'ACTIVE'"
+                                          + " WHERE id = $1 AND (status = 'TRIAL' OR (plan = 'FREE' AND status = 'ACTIVE')) RETURNING " + COLUMNS)
+                   .execute(Tuple.from(Arrays.asList(id, PgValues.name(plan), PgValues.name(billingPeriod), stripeSubscriptionId,
+                                                     checkoutSessionId, PgValues.timestamp(currentPeriodEnd),
+                                                     PgValues.timestamp(termStart), PgValues.timestamp(termEnd))))
+                   .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
+    }
+
+    /**
+     * The trials whose term has ended, oldest first.
+     */
+    public Future<List<License>> findTrialsEnded() {
+        return pool.query("SELECT " + COLUMNS + " FROM license WHERE status = 'TRIAL' AND term_end <= now() ORDER BY term_end")
+                   .execute()
+                   .map(rows -> PgValues.map(rows, LicenseRepository::toLicense));
+    }
+
+    /**
+     * Ends a trial whose plan was not bought.
+     *
+     * @return the license as stored, or {@code null} when it is no longer a trial
+     */
+    public Future<License> expire(String id) {
+        return pool.preparedQuery("UPDATE license SET status = 'EXPIRED' WHERE id = $1 AND status = 'TRIAL' RETURNING " + COLUMNS)
+                   .execute(Tuple.of(id))
                    .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
     }
 
@@ -265,6 +304,17 @@ public class LicenseRepository {
     public Future<License> findFreeLicense(String customerId) {
         return pool.preparedQuery("SELECT " + COLUMNS + " FROM license WHERE customer_id = $1 AND plan = $2 ORDER BY created_at DESC LIMIT 1")
                    .execute(Tuple.of(customerId, Plan.FREE.name()))
+                   .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
+    }
+
+    /**
+     * The customer's active free license or trial, which a purchase moves onto the subscription it buys, or {@code null}
+     * when it holds neither.
+     */
+    public Future<License> findMovable(String customerId) {
+        return pool.preparedQuery("SELECT " + COLUMNS + " FROM license WHERE customer_id = $1"
+                                          + " AND (status = 'TRIAL' OR (plan = 'FREE' AND status = 'ACTIVE')) ORDER BY created_at DESC LIMIT 1")
+                   .execute(Tuple.of(customerId))
                    .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
     }
 

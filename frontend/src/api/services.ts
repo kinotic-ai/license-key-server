@@ -11,6 +11,7 @@ import type {
     Plan,
     PlanPrice,
     CheckoutRequest,
+    TrialRequest,
     CompanyFigures,
     RevenueConfirmation,
     CaseStudyStatus,
@@ -49,6 +50,10 @@ export class CustomerAccountService {
     }
 
     /** Starts the purchase; resolves to the Stripe Checkout URL to send the browser to. */
+    startTrial(request: TrialRequest, termsVersion: string): Promise<License> {
+        return this.proxy.invoke('startTrial', [request, termsVersion])
+    }
+
     startCheckout(request: CheckoutRequest, termsVersion: string): Promise<string> {
         return this.proxy.invoke('startCheckout', [request, termsVersion])
     }

@@ -25,7 +25,7 @@ import java.util.Map;
  * routes, so a connection that presents that session is authenticated before it gets here. A Kinotic installation
  * signs in with a license key in the {@value #LICENSE_KEY_HEADER} header of its WebSocket upgrade, and is a licensee
  * of the key's license when the key is signed by this server, was issued by it, expired no more than
- * {@link #EXPIRED_KEY_ACCEPTED_FOR} ago, and its license is in good standing or past due. A key older than its
+ * {@link #EXPIRED_KEY_ACCEPTED_FOR} ago, and its license is in good standing, past due or a trial. A key older than its
  * license's newest still signs in, and flags the license {@link LicenseFlag#POSSIBLY_COPIED}, so a restored backup
  * is never locked out.
  */
@@ -77,7 +77,8 @@ public class LicenseSecurityService implements SecurityService {
                 return Future.failedFuture(new AuthenticationException(KEY_REFUSED));
             }
             return licenseRepository.findById(issued.getLicenseId()).compose(license -> {
-                if (license.getStatus() != LicenseStatus.ACTIVE && license.getStatus() != LicenseStatus.PAST_DUE) {
+                if (license.getStatus() != LicenseStatus.ACTIVE && license.getStatus() != LicenseStatus.PAST_DUE
+                        && license.getStatus() != LicenseStatus.TRIAL) {
                     log.info("The key {} signed in for license {}, which is {}", claims.keyId(), license.getId(), license.getStatus());
                     return Future.failedFuture(new AuthenticationException(KEY_REFUSED));
                 }

@@ -23,15 +23,15 @@ public class IssuedKeyRepository {
     private final Pool pool;
 
     /**
-     * Stores a key, provided its license is active.
+     * Stores a key, provided its license is active or a trial.
      *
-     * @return the key as stored, or {@code null} when its license is not active
+     * @return the key as stored, or {@code null} when its license is neither
      */
     public Future<IssuedKey> append(IssuedKey key) {
         // the status check and the insert are one statement, so a revocation or lapse committed first always wins
         return pool.preparedQuery("INSERT INTO issued_key (jti, license_id, key, issued_at, expires_at)"
                                           + " SELECT $1, $2, $3, $4, $5"
-                                          + " WHERE EXISTS (SELECT 1 FROM license WHERE id = $2 AND status = 'ACTIVE')"
+                                          + " WHERE EXISTS (SELECT 1 FROM license WHERE id = $2 AND status IN ('ACTIVE', 'TRIAL'))"
                                           + " RETURNING " + COLUMNS)
                    .execute(Tuple.of(key.getJti(), key.getLicenseId(), key.getKey(),
                                      PgValues.timestamp(key.getIssuedAt()), PgValues.timestamp(key.getExpiresAt())))
@@ -58,15 +58,15 @@ public class IssuedKeyRepository {
 
     /**
      * The newest key of each license that expires before {@code expiresBefore} and after now, with no warning sent for
-     * it, whose license will not replace it by itself: past due, set to end, or free, whose next year is approved by
-     * staff.
+     * it, whose license will not replace it by itself: past due, set to end, a trial, or free, whose next year is
+     * approved by staff.
      */
     public Future<List<IssuedKey>> findExpiringUnwarned(Instant expiresBefore) {
         return pool.preparedQuery("SELECT k.jti, k.license_id, k.key, k.issued_at, k.expires_at FROM license l"
                                           + " JOIN LATERAL (SELECT * FROM issued_key WHERE license_id = l.id ORDER BY issued_at DESC LIMIT 1) k ON true"
                                           + " WHERE k.expires_at > now() AND k.expires_at < $1"
                                           + " AND NOT EXISTS (SELECT 1 FROM key_expiry_warning w WHERE w.jti = k.jti)"
-                                          + " AND (l.status = 'PAST_DUE' OR (l.status = 'ACTIVE' AND (l.plan = 'FREE' OR l.cancels_at IS NOT NULL)))"
+                                          + " AND (l.status IN ('PAST_DUE', 'TRIAL') OR (l.status = 'ACTIVE' AND (l.plan = 'FREE' OR l.cancels_at IS NOT NULL)))"
                                           + " ORDER BY k.expires_at")
                    .execute(Tuple.of(PgValues.timestamp(expiresBefore)))
                    .map(rows -> PgValues.map(rows, IssuedKeyRepository::toKey));

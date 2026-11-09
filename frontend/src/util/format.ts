@@ -41,7 +41,9 @@ export function publicityLabel(consent: PublicityConsent | null | undefined): st
 }
 
 export function statusLabel(status: LicenseStatus | null | undefined): string {
-    const labels: Record<LicenseStatus, string> = { ACTIVE: 'Active', PAST_DUE: 'Past due', LAPSED: 'Lapsed', CANCELED: 'Canceled', REVOKED: 'Revoked' }
+    const labels: Record<LicenseStatus, string> = {
+        TRIAL: 'Trial', ACTIVE: 'Active', PAST_DUE: 'Past due', LAPSED: 'Lapsed', CANCELED: 'Canceled', EXPIRED: 'Expired', REVOKED: 'Revoked'
+    }
     return status ? labels[status] : 'No license'
 }
 
@@ -50,6 +52,8 @@ export function statusSeverity(status: LicenseStatus | null | undefined): string
     let ret: string
     if (status === 'ACTIVE') {
         ret = 'success'
+    } else if (status === 'TRIAL') {
+        ret = 'info'
     } else if (status === 'PAST_DUE') {
         ret = 'warn'
     } else if (status) {

@@ -12,7 +12,8 @@ import LicenseStatusTag from '@/components/LicenseStatusTag.vue'
 import { billingPeriodName, formatDate, formatMoney, planName } from '@/util/format'
 
 /**
- * The customer account: each license's status, plan, billing period, paid-through date and next anniversary, the
+ * The customer account: each license's status, plan, billing period, paid-through date and next anniversary, when a
+ * trial ends and how to buy its plan, the
  * yearly confirmation of the company's figures when it is due, the design partner discount, every key issued with copy
  * and download and how to install it on the system console's License page, and the Stripe Customer Portal for payment
  * details and receipts.
@@ -98,7 +99,9 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
       <template #actions>
         <Button v-if="account?.customer.stripeCustomerId" label="Payment details and receipts" icon="pi pi-credit-card" severity="secondary" outlined
                 :loading="openingPortal" @click="openPortal" />
-        <RouterLink v-if="account && !subscribed" to="/buy?plan=small&billing=monthly"><Button label="Buy a plan" icon="pi pi-shopping-cart" /></RouterLink>
+        <RouterLink v-if="account && !subscribed" to="/buy?plan=small&billing=monthly">
+          <Button :label="account.trialAvailable ? 'Try or buy a plan' : 'Buy a plan'" icon="pi pi-shopping-cart" />
+        </RouterLink>
       </template>
     </PageHeader>
 
@@ -109,7 +112,7 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
         <p class="app-muted-text mt-2">
           <span v-if="pendingRequest">Your free license request is being reviewed.</span>
           <span v-else>
-            <RouterLink to="/buy?plan=small&billing=monthly" class="underline">Buy a plan</RouterLink>, or
+            <RouterLink to="/buy?plan=small&billing=monthly" class="underline">{{ account.trialAvailable ? 'Try a paid plan free for three months or buy one' : 'Buy a plan' }}</RouterLink>, or
             <RouterLink to="/free" class="underline">request a free license</RouterLink> if your company qualifies.
           </span>
         </p>
@@ -146,7 +149,11 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
               <dt class="app-muted-text">Paid through</dt>
               <dd class="app-heading-text mt-1">{{ formatDate(entry.paidThrough) }}</dd>
             </div>
-            <div>
+            <div v-if="entry.license.status === 'TRIAL' || entry.license.status === 'EXPIRED'">
+              <dt class="app-muted-text">Trial {{ entry.license.status === 'TRIAL' ? 'ends' : 'ended' }}</dt>
+              <dd class="app-heading-text mt-1">{{ formatDate(entry.license.termEnd) }}</dd>
+            </div>
+            <div v-else>
               <dt class="app-muted-text">Next anniversary</dt>
               <dd class="app-heading-text mt-1">{{ formatDate(entry.license.termEnd) }}</dd>
             </div>
@@ -162,6 +169,11 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
               <dd v-else class="app-heading-text mt-1">Waiting for your payment to clear; your key is emailed the moment it does.</dd>
             </div>
           </dl>
+          <Message v-if="entry.license.status === 'TRIAL'" severity="info" class="mt-4">
+            Your trial of the {{ planName(entry.license.plan) }} plan ends on {{ formatDate(entry.license.termEnd) }}.
+            <RouterLink :to="`/buy?plan=${entry.license.plan.toLowerCase()}&billing=monthly`" class="font-medium underline">Buy it</RouterLink>
+            before then to keep your license and its price list.
+          </Message>
           <Message v-if="entry.confirmationDueFor" severity="info" class="mt-4">
             Please confirm your company's figures for your anniversary on {{ formatDate(entry.confirmationDueFor) }}.
             <a href="#" class="font-medium underline" @click.prevent="startConfirming(entry)">Confirm your figures</a>
@@ -192,7 +204,8 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
         </ol>
         <p class="app-muted-text mt-2">
           Each key expires seven days after the date your license is paid through, and a new one is emailed with every
-          payment. Kinotic keeps its Enterprise features on for 14 days after a key expires.
+          payment. A trial's key expires when the trial ends. Kinotic keeps its Enterprise features on for 14 days after a
+          key expires.
         </p>
       </section>
 

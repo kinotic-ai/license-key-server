@@ -12,12 +12,14 @@ import org.kinotic.licenses.api.model.DesignPartnerApplication;
 import org.kinotic.licenses.api.model.DesignPartnerApplicationForm;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.FreeLicenseRequest;
+import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.model.PlanPrice;
 import org.kinotic.licenses.api.model.PublicityConsent;
 import org.kinotic.licenses.api.model.RevenueConfirmation;
 import org.kinotic.licenses.api.model.CheckoutRequest;
 import org.kinotic.licenses.api.model.CompanyFigures;
+import org.kinotic.licenses.api.model.TrialRequest;
 import org.kinotic.licenses.api.security.LicenseParticipant;
 import org.kinotic.licenses.api.services.CustomerAccountService;
 import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
@@ -61,6 +63,7 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
     private final DesignPartnerService designPartnerService;
     private final DesignPartnerRepository designPartnerRepository;
     private final DesignPartnerApplicationRepository applicationRepository;
+    private final TrialService trialService;
 
     @Override
     public Future<CustomerAccount> getAccount() {
@@ -75,7 +78,10 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
                                      ret.setContacts(contacts);
                                      return licenseRepository.findByCustomerId(customerId);
                                  })
-                                 .compose(licenseService::withKeys)
+                                 .compose(licenses -> {
+                                     ret.setTrialAvailable(TrialService.isAvailable(licenses));
+                                     return licenseService.withKeys(licenses);
+                                 })
                                  .compose(licenses -> {
                                      ret.setLicenses(licenses);
                                      return requestRepository.findByCustomerId(customerId);
@@ -113,6 +119,14 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
         return customerRepository.findById(caller.getCustomerId())
                                  .compose(customer -> billingService.startCheckout(customer, caller, request))
                                  .compose(url -> recordAcceptance(caller, null).map(url));
+    }
+
+    @Override
+    public Future<License> startTrial(TrialRequest request, String termsVersion) {
+        LicenseParticipant caller = caller();
+        requireCurrentTerms(termsVersion);
+        return trialService.start(caller.getCustomerId(), request)
+                           .compose(trial -> recordAcceptance(caller, null).map(trial));
     }
 
     @Override

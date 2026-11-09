@@ -3,7 +3,7 @@
 export type Plan = 'FREE' | 'SMALL' | 'MEDIUM' | 'LARGE'
 export type BillingPeriod = 'MONTHLY' | 'ANNUAL'
 export type LicenseFlag = 'REVENUE_UNCONFIRMED' | 'POSSIBLY_COPIED'
-export type LicenseStatus = 'ACTIVE' | 'PAST_DUE' | 'LAPSED' | 'CANCELED' | 'REVOKED'
+export type LicenseStatus = 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'LAPSED' | 'CANCELED' | 'EXPIRED' | 'REVOKED'
 export type ContactRole = 'BILLING' | 'TECHNICAL'
 export type FreeLicenseRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
 export type ParticipantType = 'STAFF' | 'CUSTOMER'
@@ -26,6 +26,11 @@ export interface PlanPrice {
     /** What one billing period costs. */
     amount: number
     currency: string
+}
+
+export interface TrialRequest {
+    plan: Plan
+    figures: CompanyFigures
 }
 
 export interface CheckoutRequest {
@@ -65,7 +70,7 @@ export interface License {
     customerId: string
     plan: Plan
     status: LicenseStatus
-    /** Null for a free license. */
+    /** Null for a free license or a trial. */
     billingPeriod: BillingPeriod | null
     /** The price list the license keeps while it stays active. */
     priceList: number
@@ -144,6 +149,8 @@ export interface CustomerAccount {
     designPartnerApplications: DesignPartnerApplication[]
     /** Null when the customer is not a design partner. */
     designPartner: DesignPartner | null
+    /** Whether the customer may start a trial of a paid plan. */
+    trialAvailable: boolean
 }
 
 export interface CustomerSummary {

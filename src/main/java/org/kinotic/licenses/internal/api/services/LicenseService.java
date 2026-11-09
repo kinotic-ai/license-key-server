@@ -37,9 +37,9 @@ import java.util.function.BiFunction;
  * The lifecycle of a license and the keys issued for it. A license runs in twelve-month license years from its start.
  * Its keys follow the date it is paid through, the end of the Stripe billing period for a paid plan and the end of
  * the license year for Free: each key expires {@link #KEY_GRACE} after that date, is emailed to the customer's contacts,
- * and is kept in the append-only key log. A key is issued only for an active license. A key, once issued, is never
- * withdrawn: it is verified offline and works until it expires, so revoking, cancelling or lapsing a license only
- * stops new keys.
+ * and is kept in the append-only key log. A trial's key expires when the trial ends, {@link #TRIAL} after it starts.
+ * A key is issued only for an active license or a trial. A key, once issued, is never withdrawn: it is verified
+ * offline and works until it expires, so revoking, cancelling or lapsing a license only stops new keys.
  */
 @Slf4j
 @Component
@@ -48,6 +48,8 @@ public class LicenseService {
 
     /** A license year. */
     public static final Period TERM = Period.ofMonths(12);
+    /** How long a trial lasts. */
+    public static final Period TRIAL = Period.ofMonths(3);
     /** How long before an anniversary the customer is asked to confirm its figures for it. */
     public static final Duration CONFIRMATION_WINDOW = Duration.ofDays(30);
     /** How long a key outlives the date its license is paid through. */
@@ -87,6 +89,21 @@ public class LicenseService {
     }
 
     /**
+     * Creates a trial of a paid plan, running {@link #TRIAL} from now on the given price list and the current terms, and
+     * issues its key, which expires when the trial ends. The caller emails the key.
+     *
+     * @param priceList the current price list, which the license keeps when its plan is bought
+     * @return the license and its key, or a failure with {@link org.kinotic.core.api.exceptions.AlreadyExistsException}
+     *         when the customer holds a trial already
+     */
+    public Future<NewLicense> createTrial(Customer customer, Plan plan, int priceList) {
+        License license = newLicense(customer).setPlan(plan).setPriceList(priceList).setStatus(LicenseStatus.TRIAL);
+        license.setTermEnd(license.getTermStart().atZone(ZoneOffset.UTC).plus(TRIAL).toInstant());
+        return licenseRepository.saveTrial(license)
+                                .compose(saved -> issueKey(saved).map(key -> new NewLicense(saved, key)));
+    }
+
+    /**
      * Creates a paid license whose first payment has not cleared, as with a bank debit. It holds no key and is
      * {@link LicenseStatus#PAST_DUE} until the payment succeeds, when {@link #issueKeyIfExtended(License)} issues its first.
      *
@@ -97,23 +114,23 @@ public class LicenseService {
     }
 
     /**
-     * Issues a key covering the date the license is paid through.
+     * Issues a key covering the date the license is paid through, or the trial.
      *
-     * @return the key, or a failure with {@link IllegalStateException} when the license is not active
+     * @return the key, or a failure with {@link IllegalStateException} when the license is neither active nor a trial
      */
     public Future<IssuedKey> issueKey(License license) {
-        return claims(license, paidThrough(license)).compose(claims -> sign(claims, license.getId()));
+        return claims(license, keyExpiry(license)).compose(claims -> sign(claims, license.getId()));
     }
 
     /**
      * Issues a key when the license is paid through a later date than its newest key covers, or it has none, as when a
      * payment extends it. Repeated calls issue one key for each extension.
      *
-     * @return the key issued, or {@code null} when the newest key already covers the paid-through date; a failure with
-     *         {@link IllegalStateException} when the license is not active
+     * @return the key issued, or {@code null} when the newest key already covers the paid-through date or the trial; a
+     *         failure with {@link IllegalStateException} when the license is neither active nor a trial
      */
     public Future<IssuedKey> issueKeyIfExtended(License license) {
-        Instant coverage = keyExpiry(paidThrough(license));
+        Instant coverage = keyExpiry(license);
         return issuedKeyRepository.findLatestByLicenseId(license.getId())
                                   .compose(newest -> newest == null || newest.getExpiresAt().isBefore(coverage)
                                           ? issueKey(license)
@@ -196,6 +213,20 @@ public class LicenseService {
     }
 
     /**
+     * Emails a trial's key to the licensee's contacts.
+     */
+    public Future<Void> emailTrialStarted(License license, IssuedKey key) {
+        return emailContacts(license, (contact, organization) -> emailService.sendTrialStarted(contact, organization, license, key));
+    }
+
+    /**
+     * Tells the licensee's contacts the trial ended without its plan being bought.
+     */
+    public Future<Void> emailTrialExpired(License license) {
+        return emailContacts(license, (contact, organization) -> emailService.sendTrialExpired(contact, organization, license));
+    }
+
+    /**
      * Emails the key of an approved free license, or of its approved renewal, to the licensee's contacts.
      */
     public Future<Void> emailFreeApproval(License license, IssuedKey key) {
@@ -210,7 +241,7 @@ public class LicenseService {
     }
 
     /**
-     * Emails the license's newest key to the licensee's contacts again.
+     * Emails the license's newest key to the licensee's contacts again, as a trial's key for a trial.
      *
      * @throws IllegalArgumentException when the license has no key
      */
@@ -219,7 +250,7 @@ public class LicenseService {
             if (key == null) {
                 throw new IllegalArgumentException("The license " + license.getId() + " has no key to resend");
             }
-            return emailNewKey(license, key);
+            return license.getStatus() == LicenseStatus.TRIAL ? emailTrialStarted(license, key) : emailNewKey(license, key);
         });
     }
 
@@ -294,7 +325,7 @@ public class LicenseService {
 
     /**
      * The date the license is paid through: the end of its current Stripe billing period for a paid plan, the end of
-     * its license year for Free.
+     * its license year for Free; {@code null} for a trial.
      */
     public static Instant paidThrough(License license) {
         return paidThrough(license.getPlan(), license.getTermEnd(), license.getCurrentPeriodEnd());
@@ -305,6 +336,22 @@ public class LicenseService {
      */
     public static Instant paidThrough(Plan plan, Instant termEnd, Instant currentPeriodEnd) {
         return plan == Plan.FREE ? termEnd : currentPeriodEnd;
+    }
+
+    /**
+     * When a key issued for the license now expires, in whole seconds as the key carries it: {@link #KEY_GRACE} after the
+     * date it is paid through, or when its trial ends.
+     */
+    public static Instant keyExpiry(License license) {
+        Instant paidThrough = paidThrough(license);
+        Instant ret;
+        // only a trial, or a trial that expired, is paid through no date
+        if (paidThrough == null) {
+            ret = license.getTermEnd().truncatedTo(ChronoUnit.SECONDS);
+        } else {
+            ret = keyExpiry(paidThrough);
+        }
+        return ret;
     }
 
     /**
@@ -339,7 +386,7 @@ public class LicenseService {
     // the license is active and nobody moved its year meanwhile, and the key is logged only once it has.
     private Future<NewLicense> startFreeTerm(License license, Instant termStart) {
         Instant termEnd = termEnd(termStart);
-        return claims(license, termEnd).compose(claims -> keyIssuer.issue(claims)
+        return claims(license, keyExpiry(termEnd)).compose(claims -> keyIssuer.issue(claims)
                         .compose(key -> {
                             IssuedKey issued = issuedKey(claims, key, license.getId());
                             return licenseRepository.startTerm(license, termStart, termEnd, issued)
@@ -355,10 +402,10 @@ public class LicenseService {
     }
 
     // A key names its licensee by the customer's legal name, which Kinotic shows on its License page
-    private Future<LicenseKeyClaims> claims(License license, Instant paidThrough) {
+    private Future<LicenseKeyClaims> claims(License license, Instant expiresAt) {
         return customerRepository.findById(license.getCustomerId())
                                  .map(customer -> new LicenseKeyClaims(customer.getLegalName(), UUID.randomUUID().toString(),
-                                                                       Instant.now(), keyExpiry(paidThrough)));
+                                                                       Instant.now(), expiresAt));
     }
 
     private Future<IssuedKey> sign(LicenseKeyClaims claims, String licenseId) {
@@ -368,7 +415,7 @@ public class LicenseService {
     private Future<IssuedKey> append(LicenseKeyClaims claims, String key, String licenseId) {
         return issuedKeyRepository.append(issuedKey(claims, key, licenseId)).map(issued -> {
             if (issued == null) {
-                throw new IllegalStateException("The license " + licenseId + " is not active, so it is issued no key");
+                throw new IllegalStateException("The license " + licenseId + " is neither active nor a trial, so it is issued no key");
             }
             logIssued(issued);
             return issued;

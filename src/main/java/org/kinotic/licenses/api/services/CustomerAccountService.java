@@ -10,11 +10,13 @@ import org.kinotic.licenses.api.model.DesignPartnerApplication;
 import org.kinotic.licenses.api.model.DesignPartnerApplicationForm;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.FreeLicenseRequest;
+import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.model.PlanPrice;
 import org.kinotic.licenses.api.model.RevenueConfirmation;
 import org.kinotic.licenses.api.model.CheckoutRequest;
 import org.kinotic.licenses.api.model.CompanyFigures;
+import org.kinotic.licenses.api.model.TrialRequest;
 import org.kinotic.licenses.api.security.LicenseZones;
 
 import java.util.List;
@@ -57,8 +59,8 @@ public interface CustomerAccountService {
 
     /**
      * Starts the purchase of a paid plan by the calling customer, and records that the calling contact accepted the
-     * terms. A customer holding an active free license moves it onto the plan bought, with the price list and terms it
-     * keeps.
+     * terms. A customer holding an active free license or a trial moves it onto the plan bought, with the price list and
+     * terms it keeps.
      *
      * @param request      the plan, billing period and the company's figures, which must match the plan
      * @param termsVersion the version of the terms the contact accepted, which must be the current version
@@ -69,6 +71,21 @@ public interface CustomerAccountService {
      *                                                                plan moves at its yearly confirmation
      */
     Future<String> startCheckout(CheckoutRequest request, String termsVersion);
+
+    /**
+     * Starts a three-month trial of a paid plan for the calling customer, with no payment details, emails its key to the
+     * customer's contacts, and records that the calling contact accepted the terms. A customer has one trial, and only
+     * while it has never held a paid license and holds no active free license. Buying a plan before the trial ends moves
+     * the trial onto it, with the price list and terms the trial keeps; otherwise the trial expires.
+     *
+     * @param request      the plan and the company's figures, which must match the plan
+     * @param termsVersion the version of the terms the contact accepted, which must be the current version
+     * @return the trial, whose key the account shows
+     * @throws IllegalArgumentException when the plan is the free plan, the figures set another plan, or the terms
+     *                                  version is not the current one
+     * @throws IllegalStateException    when the customer has had a trial or a paid license, or holds an active free license
+     */
+    Future<License> startTrial(TrialRequest request, String termsVersion);
 
     /**
      * What the success page of a purchase by the calling customer is told about the key the purchase bought: the key

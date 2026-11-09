@@ -82,6 +82,11 @@ public class EmailService {
     private static final Template FREE_REJECTED_HTML = compile(HTML_TEMPLATES, "free-request-rejected");
     private static final Template FREE_REJECTED_TEXT = compile(TEXT_TEMPLATES, "free-request-rejected");
 
+    private static final Template TRIAL_STARTED_HTML = compile(HTML_TEMPLATES, "trial-started");
+    private static final Template TRIAL_STARTED_TEXT = compile(TEXT_TEMPLATES, "trial-started");
+    private static final Template TRIAL_EXPIRED_HTML = compile(HTML_TEMPLATES, "trial-expired");
+    private static final Template TRIAL_EXPIRED_TEXT = compile(TEXT_TEMPLATES, "trial-expired");
+
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("d MMMM uuuu").withZone(ZoneOffset.UTC);
 
     private final KinoticLicensesProperties properties;
@@ -197,6 +202,26 @@ public class EmailService {
     }
 
     /**
+     * Emails a contact a trial's key, with how to buy its plan before the trial ends.
+     */
+    public Future<Void> sendTrialStarted(CustomerContact contact, String organization, License license, IssuedKey key) {
+        return send(contact.getEmail(), contact.getName(), "Your Kinotic Enterprise trial license key",
+                    TRIAL_STARTED_HTML, TRIAL_STARTED_TEXT, keyVariables(organization, license, key));
+    }
+
+    /**
+     * Tells a contact the trial ended without its plan being bought.
+     */
+    public Future<Void> sendTrialExpired(CustomerContact contact, String organization, License license) {
+        Map<String, Object> variables = new HashMap<>();
+        variables.put("organization", organization);
+        variables.put("planName", planName(license.getPlan()));
+        variables.put("accountUrl", accountUrl());
+        return send(contact.getEmail(), contact.getName(), "Your Kinotic Enterprise trial has ended",
+                    TRIAL_EXPIRED_HTML, TRIAL_EXPIRED_TEXT, variables);
+    }
+
+    /**
      * Emails a contact the key of an approved free license.
      */
     public Future<Void> sendFreeRequestApproved(CustomerContact contact, String organization, License license, IssuedKey key) {
@@ -250,7 +275,10 @@ public class EmailService {
     // why no newer key comes by itself, for the license states KeyEmailJob warns about
     private static String expiryReason(License license) {
         String ret;
-        if (license.getStatus() == LicenseStatus.PAST_DUE) {
+        if (license.getStatus() == LicenseStatus.TRIAL) {
+            ret = "your trial of the " + planName(license.getPlan()) + " plan ends on " + DATE.format(license.getTermEnd())
+                    + ". Buy the plan from your account to keep your license, its price list and its terms.";
+        } else if (license.getStatus() == LicenseStatus.PAST_DUE) {
             ret = "a payment failed. Update your payment details from your account, and a new key is issued once it is paid.";
         } else if (license.getCancelsAt() != null) {
             ret = "your subscription is set to end on " + DATE.format(license.getCancelsAt()) + ".";

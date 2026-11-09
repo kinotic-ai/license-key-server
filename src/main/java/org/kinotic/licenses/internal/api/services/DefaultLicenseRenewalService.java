@@ -36,7 +36,7 @@ public class DefaultLicenseRenewalService implements LicenseRenewalService {
     public CompletableFuture<String> renew() {
         LicenseParticipant caller = securityContext.requireParticipant(LicenseParticipant.class);
         return licenseRepository.findById(caller.getLicenseId())
-                                .compose(license -> license.getStatus() == LicenseStatus.ACTIVE
+                                .compose(license -> license.getStatus() == LicenseStatus.ACTIVE || license.getStatus() == LicenseStatus.TRIAL
                                         ? licenseService.issueKeyIfExtended(license).compose(issued -> newest(license))
                                         : pastDue(caller, license))
                                 .map(IssuedKey::getKey)
