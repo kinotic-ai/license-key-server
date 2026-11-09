@@ -32,7 +32,7 @@ const freeLicense = computed(() => account.value?.licenses.find(l => l.license.p
 const subscribed = computed(() => account.value?.licenses.some(l => l.license.plan !== 'FREE'
     && (l.license.status === 'ACTIVE' || l.license.status === 'PAST_DUE')) ?? false)
 const pendingRenewal = computed(() => account.value?.freeLicenseRequests.some(r => r.status === 'PENDING') ?? false)
-const certificationReady = computed(() => annualRevenue.value !== null && capitalRaised.value !== null && intendedUse.value.trim() && accepted.value)
+const certificationReady = computed(() => annualRevenue.value !== null && capitalRaised.value !== null && intendedUse.value.trim() !== '' && accepted.value)
 
 onMounted(load)
 

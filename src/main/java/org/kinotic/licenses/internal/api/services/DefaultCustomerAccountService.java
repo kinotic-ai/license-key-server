@@ -25,7 +25,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -38,8 +38,9 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
     // how long after a license is created its success page may still show the key
     private static final Duration KEY_SHOW_WINDOW = Duration.ofHours(1);
 
-    // the Checkout Sessions whose key the success page has already been shown; this node is the whole cluster
-    private final Set<String> shownKeys = ConcurrentHashMap.newKeySet();
+    // the Checkout Sessions whose key the success page has already been shown, with when; this node is the whole
+    // cluster, and an entry past KEY_SHOW_WINDOW is dropped since its key is not shown again anyway
+    private final Map<String, Instant> shownKeys = new ConcurrentHashMap<>();
 
     private final SecurityContext securityContext;
     private final CustomerRepository customerRepository;
@@ -89,6 +90,8 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
     @Override
     public Future<CheckoutKey> findCheckoutKey(String checkoutSessionId) {
         String customerId = callingCustomerId();
+        Instant now = Instant.now();
+        shownKeys.values().removeIf(shownAt -> shownAt.plus(KEY_SHOW_WINDOW).isBefore(now));
         return licenseRepository.findByCheckoutSessionId(checkoutSessionId).compose(license -> {
             Future<CheckoutKey> ret;
             // a session that bought nothing for this customer reads as one whose license is not created yet
@@ -100,7 +103,7 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
                     // a license with no key yet is one whose payment is still clearing
                     if (keys.isEmpty()) {
                         key = new CheckoutKey().setStatus(CheckoutKeyStatus.PENDING);
-                    } else if (license.getCreatedAt().plus(KEY_SHOW_WINDOW).isAfter(Instant.now()) && shownKeys.add(checkoutSessionId)) {
+                    } else if (license.getCreatedAt().plus(KEY_SHOW_WINDOW).isAfter(now) && shownKeys.putIfAbsent(checkoutSessionId, now) == null) {
                         key = new CheckoutKey().setStatus(CheckoutKeyStatus.READY)
                                                .setKey(keys.getFirst().getKey())
                                                .setExpiresAt(keys.getFirst().getExpiresAt());

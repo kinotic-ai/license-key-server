@@ -56,10 +56,10 @@ public class CustomerService {
                                         ? customerRepository.save(customer)
                                         : Future.failedFuture(new AlreadyExistsException(CustomerContactRepository.EMAIL_TAKEN)))
                                  .compose(saved -> contactRepository.save(contact)
-                                                                    // a sign-up that lost a race past the check above leaves no customer behind
-                                                                    .recover(t -> t instanceof AlreadyExistsException
-                                                                            ? customerRepository.delete(customer.getId()).compose(v -> Future.failedFuture(t))
-                                                                            : Future.failedFuture(t)));
+                                                                    // a contact that could not be saved, as by losing a race past the check
+                                                                    // above, leaves no customer behind; the save's failure is the one reported
+                                                                    .recover(t -> customerRepository.delete(customer.getId())
+                                                                                                    .transform(deleted -> Future.<CustomerContact>failedFuture(t))));
     }
 
     /**

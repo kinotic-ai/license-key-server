@@ -21,7 +21,7 @@ const accepted = ref(false)
 const submitting = ref(false)
 const submitted = ref(false)
 
-const ready = computed(() => annualRevenue.value !== null && capitalRaised.value !== null && intendedUse.value.trim() && accepted.value)
+const ready = computed(() => annualRevenue.value !== null && capitalRaised.value !== null && intendedUse.value.trim() !== '' && accepted.value)
 
 async function submit() {
   if (!ready.value || submitting.value) {
