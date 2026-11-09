@@ -80,9 +80,7 @@ export interface FreeLicenseRequest {
     organization: string
     contactName: string
     contactEmail: string
-    annualRevenue: number
-    capitalRaised: number
-    intendedUse: string
+    certification: FreeLicenseCertification
     status: FreeLicenseRequestStatus
     reviewedBy: string | null
     reviewedAt: string | null

@@ -69,7 +69,8 @@ class FreeLicenseTest extends ServerTest {
         assertThat(request.getStatus()).isEqualTo(FreeLicenseRequestStatus.PENDING);
         assertThat(request.getOrganization()).isEqualTo("Tiny Startup LLC");
         assertThat(request.getContactEmail()).isEqualTo(email);
-        assertThat(request.getAnnualRevenue()).isEqualByComparingTo(new BigDecimal("250000.00"));
+        assertThat(request.getCertification().getAnnualRevenue()).isEqualByComparingTo(new BigDecimal("250000.00"));
+        assertThat(request.getCertification().getIntendedUse()).isEqualTo("Internal tools for a five-person team");
         List<AgreementAcceptance> acceptances = await(acceptanceRepository.findByCustomerId(request.getCustomerId()));
         assertThat(acceptances).hasSize(1);
         assertThat(acceptances.getFirst().getTermsVersion()).isEqualTo(AgreementTerms.VERSION);

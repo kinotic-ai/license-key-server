@@ -4,7 +4,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 
 /**
@@ -21,11 +20,8 @@ public class FreeLicenseRequest {
     private String organization;
     private String contactName;
     private String contactEmail;
-    /** Self-reported annual revenue, in US dollars. */
-    private BigDecimal annualRevenue;
-    /** Self-reported capital raised, in US dollars. */
-    private BigDecimal capitalRaised;
-    private String intendedUse;
+    /** What the organization certified about itself. */
+    private FreeLicenseCertification certification;
     private FreeLicenseRequestStatus status;
     /** The staff member who approved or rejected it. */
     private String reviewedBy;

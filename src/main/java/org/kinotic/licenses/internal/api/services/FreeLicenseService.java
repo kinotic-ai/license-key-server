@@ -48,12 +48,11 @@ public class FreeLicenseService {
      */
     public Future<FreeLicenseRequest> request(String customerId, FreeLicenseCertification certification) {
         validate(certification);
+        certification.setIntendedUse(certification.getIntendedUse().trim());
         return requestRepository.save(new FreeLicenseRequest()
                                               .setId(UUID.randomUUID().toString())
                                               .setCustomerId(customerId)
-                                              .setAnnualRevenue(certification.getAnnualRevenue())
-                                              .setCapitalRaised(certification.getCapitalRaised())
-                                              .setIntendedUse(certification.getIntendedUse().trim())
+                                              .setCertification(certification)
                                               .setStatus(FreeLicenseRequestStatus.PENDING));
     }
 
