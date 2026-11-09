@@ -40,9 +40,10 @@ public interface StaffCustomerService {
     Future<License> revokeLicense(String licenseId);
 
     /**
-     * Issues and emails another key for the license's current term.
+     * Issues and emails another key covering the date the license is paid through.
      *
      * @throws IllegalArgumentException when no license has the id
+     * @throws IllegalStateException    when the license is not active, which is issued no key
      */
     Future<IssuedKey> issueReplacementKey(String licenseId);
 

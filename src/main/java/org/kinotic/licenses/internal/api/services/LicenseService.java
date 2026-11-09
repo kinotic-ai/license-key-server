@@ -30,22 +30,22 @@ import java.util.UUID;
 import java.util.function.BiFunction;
 
 /**
- * The lifecycle of a license and the keys issued for it. A license runs in twelve-month terms; each term's key lives
- * the term plus a short buffer, is emailed to the customer's contacts, and is kept in the append-only key log. A key,
- * once issued, is never withdrawn: it is verified offline and works until it expires, so revoking or cancelling a
- * license only stops new keys.
+ * The lifecycle of a license and the keys issued for it. A license runs in twelve-month license years from its start.
+ * Its keys follow the date it is paid through, the end of the Stripe billing period for a paid plan and the end of
+ * the license year for Free: each key expires {@link #KEY_GRACE} after that date, is emailed to the customer's contacts,
+ * and is kept in the append-only key log. A key is issued only for an active license. A key, once issued, is never
+ * withdrawn: it is verified offline and works until it expires, so revoking, cancelling or lapsing a license only
+ * stops new keys.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class LicenseService {
 
-    /** A license term; each key lives this long plus {@link #KEY_BUFFER}. */
+    /** A license year. */
     public static final Period TERM = Period.ofMonths(12);
-    /** How long a key outlives its term, so a renewal pasted in late does not interrupt a deployment. */
-    public static final Duration KEY_BUFFER = Duration.ofDays(14);
-    /** How far ahead of a term's end its renewal key is issued. */
-    public static final Duration RENEWAL_WINDOW = Duration.ofDays(30);
+    /** How long a key outlives the date its license is paid through. */
+    public static final Duration KEY_GRACE = Duration.ofDays(7);
 
     private final LicenseRepository licenseRepository;
     private final IssuedKeyRepository issuedKeyRepository;
@@ -63,7 +63,7 @@ public class LicenseService {
     public Future<NewLicense> createLicense(Customer customer, PaidSubscription subscription) {
         License license = paidLicense(customer, subscription).setStatus(LicenseStatus.ACTIVE).setLastPaymentAt(Instant.now());
         return licenseRepository.save(license)
-                                .compose(saved -> issueKey(saved, saved.getTermEnd()).map(key -> new NewLicense(saved, key)));
+                                .compose(saved -> issueKey(saved).map(key -> new NewLicense(saved, key)));
     }
 
     /**
@@ -76,12 +76,12 @@ public class LicenseService {
     public Future<NewLicense> createFreeLicense(Customer customer, int priceList) {
         License license = newLicense(customer).setPlan(Plan.FREE).setPriceList(priceList).setStatus(LicenseStatus.ACTIVE);
         return licenseRepository.save(license)
-                                .compose(saved -> issueKey(saved, saved.getTermEnd()).map(key -> new NewLicense(saved, key)));
+                                .compose(saved -> issueKey(saved).map(key -> new NewLicense(saved, key)));
     }
 
     /**
      * Creates a paid license whose first payment has not cleared, as with a bank debit. It holds no key and is
-     * {@link LicenseStatus#PAST_DUE} until {@link #issueFirstKey(License)} is called once the payment succeeds.
+     * {@link LicenseStatus#PAST_DUE} until the payment succeeds, when {@link #issueKeyIfExtended(License)} issues its first.
      *
      * @return the license
      */
@@ -90,34 +90,49 @@ public class LicenseService {
     }
 
     /**
-     * Issues the first key of a license that has none, its term starting now.
+     * Issues a key covering the date the license is paid through.
      *
-     * @return the license and its key, or a failure with {@link IllegalStateException} when the license is revoked, or
-     *         changed since the caller read it
+     * @return the key, or a failure with {@link IllegalStateException} when the license is not active
      */
-    public Future<NewLicense> issueFirstKey(License license) {
-        return issueForTerm(license, Instant.now());
+    public Future<IssuedKey> issueKey(License license) {
+        return claims(license, paidThrough(license)).compose(claims -> sign(claims, license.getId()));
     }
 
     /**
-     * Starts the license's next term and issues its key. The next term starts when the current one ends, or now when
-     * that is already past. The current key keeps working until it expires.
+     * Issues a key when the license is paid through a later date than its newest key covers, or it has none, as when a
+     * payment extends it. Repeated calls issue one key for each extension.
      *
-     * @return the license and its key, or a failure with {@link IllegalStateException} when the license is revoked, or
-     *         changed since the caller read it
+     * @return the key issued, or {@code null} when the newest key already covers the paid-through date; a failure with
+     *         {@link IllegalStateException} when the license is not active
      */
-    public Future<NewLicense> issueRenewalKey(License license) {
+    public Future<IssuedKey> issueKeyIfExtended(License license) {
+        Instant coverage = keyExpiry(paidThrough(license));
+        return issuedKeyRepository.findLatestByLicenseId(license.getId())
+                                  .compose(newest -> newest == null || newest.getExpiresAt().isBefore(coverage)
+                                          ? issueKey(license)
+                                          : Future.succeededFuture());
+    }
+
+    /**
+     * Starts a free license's next license year and issues the key covering it. The year starts when the current one
+     * ends, or now when that is already past.
+     *
+     * @return the license and its key, or a failure with {@link IllegalStateException} when the license is not active,
+     *         or changed since the caller read it
+     */
+    public Future<NewLicense> renewFreeTerm(License license) {
         Instant now = Instant.now();
-        return issueForTerm(license, license.getTermEnd().isAfter(now) ? license.getTermEnd() : now);
+        return startFreeTerm(license, license.getTermEnd().isAfter(now) ? license.getTermEnd() : now);
     }
 
     /**
-     * Issues another key for the license's current term.
+     * Starts a free license's license year now and issues the key covering it, for a free license that holds no key.
      *
-     * @return the key, or a failure with {@link IllegalStateException} when the license is revoked
+     * @return the license and its key, or a failure with {@link IllegalStateException} when the license is not active,
+     *         or changed since the caller read it
      */
-    public Future<IssuedKey> issueReplacementKey(License license) {
-        return issueKey(license, license.getTermEnd());
+    public Future<NewLicense> startFreeTerm(License license) {
+        return startFreeTerm(license, Instant.now());
     }
 
     /**
@@ -128,10 +143,17 @@ public class LicenseService {
     }
 
     /**
-     * Emails a renewal key to the licensee's contacts.
+     * Emails the key a payment extended the license with to the licensee's contacts.
      */
     public Future<Void> emailRenewalKey(License license, IssuedKey key) {
         return emailContacts(license, (contact, organization) -> emailService.sendRenewalKey(contact, organization, license, key));
+    }
+
+    /**
+     * Warns the licensee's contacts that the license's newest key expires with no newer one issued.
+     */
+    public Future<Void> emailKeyExpiring(License license, IssuedKey key) {
+        return emailContacts(license, (contact, organization) -> emailService.sendKeyExpiring(contact, organization, license, key));
     }
 
     /**
@@ -177,10 +199,25 @@ public class LicenseService {
     }
 
     /**
-     * The end of a term starting at {@code start}.
+     * The end of a license year starting at {@code start}.
      */
     public static Instant termEnd(Instant start) {
         return start.atZone(ZoneOffset.UTC).plus(TERM).toInstant();
+    }
+
+    /**
+     * The date the license is paid through: the end of its current Stripe billing period for a paid plan, the end of
+     * its license year for Free.
+     */
+    public static Instant paidThrough(License license) {
+        return license.getPlan() == Plan.FREE ? license.getTermEnd() : license.getCurrentPeriodEnd();
+    }
+
+    /**
+     * When a key covering a license paid through {@code paidThrough} expires, in whole seconds as the key carries it.
+     */
+    public static Instant keyExpiry(Instant paidThrough) {
+        return paidThrough.plus(KEY_GRACE).truncatedTo(ChronoUnit.SECONDS);
     }
 
     private static License paidLicense(Customer customer, PaidSubscription subscription) {
@@ -204,9 +241,9 @@ public class LicenseService {
                 .setTermEnd(termEnd(now));
     }
 
-    // Signed first, so a signing failure leaves the term where it was for the next attempt. The term then moves only if
-    // nobody revoked the license or moved its term meanwhile, and the key is logged only once it has.
-    private Future<NewLicense> issueForTerm(License license, Instant termStart) {
+    // Signed first, so a signing failure leaves the year where it was for the next attempt. The year then moves only if
+    // the license is active and nobody moved its year meanwhile, and the key is logged only once it has.
+    private Future<NewLicense> startFreeTerm(License license, Instant termStart) {
         Instant termEnd = termEnd(termStart);
         return claims(license, termEnd).compose(claims -> keyIssuer.issue(claims)
                         .compose(key -> {
@@ -215,7 +252,7 @@ public class LicenseService {
                                                     .map(moved -> {
                                                         if (moved == null) {
                                                             throw new IllegalStateException("The license " + license.getId()
-                                                                    + " is revoked, or changed while its key was issued");
+                                                                    + " is not active, or changed while its key was issued");
                                                         }
                                                         logIssued(issued);
                                                         return new NewLicense(moved, issued);
@@ -223,16 +260,11 @@ public class LicenseService {
                         }));
     }
 
-    private Future<IssuedKey> issueKey(License license, Instant termEnd) {
-        return claims(license, termEnd).compose(claims -> sign(claims, license.getId()));
-    }
-
-    // A key names its licensee by the customer's legal name, which Kinotic shows on its License page. Its expiry is in
-    // whole seconds, as the JWT carries it, so the key log records the expiry the key has.
-    private Future<LicenseKeyClaims> claims(License license, Instant termEnd) {
+    // A key names its licensee by the customer's legal name, which Kinotic shows on its License page
+    private Future<LicenseKeyClaims> claims(License license, Instant paidThrough) {
         return customerRepository.findById(license.getCustomerId())
                                  .map(customer -> new LicenseKeyClaims(customer.getLegalName(), UUID.randomUUID().toString(),
-                                                                       Instant.now(), termEnd.plus(KEY_BUFFER).truncatedTo(ChronoUnit.SECONDS)));
+                                                                       Instant.now(), keyExpiry(paidThrough)));
     }
 
     private Future<IssuedKey> sign(LicenseKeyClaims claims, String licenseId) {
@@ -242,7 +274,7 @@ public class LicenseService {
     private Future<IssuedKey> append(LicenseKeyClaims claims, String key, String licenseId) {
         return issuedKeyRepository.append(issuedKey(claims, key, licenseId)).map(issued -> {
             if (issued == null) {
-                throw new IllegalStateException("The license " + licenseId + " is revoked");
+                throw new IllegalStateException("The license " + licenseId + " is not active, so it is issued no key");
             }
             logIssued(issued);
             return issued;

@@ -34,6 +34,7 @@ import org.kinotic.licenses.internal.api.model.PriceCatalog;
 import org.kinotic.licenses.internal.api.model.PriceLookupKey;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
+import org.kinotic.licenses.internal.api.repositories.UnsentKeyEmailRepository;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
@@ -81,6 +82,7 @@ public class StripeBillingService {
     private final CustomerRepository customerRepository;
     private final LicenseRepository licenseRepository;
     private final LicenseService licenseService;
+    private final UnsentKeyEmailRepository unsentRepository;
     private final Vertx vertx;
     private final ObjectProvider<StripeClient> stripeClient;
 
@@ -299,7 +301,7 @@ public class StripeBillingService {
             if (!keys.isEmpty()) {
                 ret = licenseService.resendLatestKey(license);
             } else if (paid) {
-                ret = licenseService.issueFirstKey(license).compose(issued -> licenseService.emailNewKey(issued.license(), issued.key()));
+                ret = licenseService.issueKey(license).compose(key -> licenseService.emailNewKey(license, key));
             } else {
                 ret = Future.succeededFuture();
             }
@@ -314,15 +316,27 @@ public class StripeBillingService {
         return withLicenseOf(subscriptionOf(invoice), (license, subscription) -> licenseRepository.recordPayment(license.getId(), paidAt)
                 .compose(paid -> sync(paid, subscription))
                 .compose(synced -> synced.getStatus() == LicenseStatus.ACTIVE
-                        ? issueFirstKeyIfNone(synced)
+                        ? issueExtendedKey(synced)
                         : Future.succeededFuture()));
     }
 
-    // the first payment of a checkout paid by bank debit clears here, and so does the license's first key
-    private Future<Void> issueFirstKeyIfNone(License license) {
-        return licenseService.keysOf(license.getId()).compose(keys -> keys.isEmpty()
-                ? licenseService.issueFirstKey(license).compose(issued -> licenseService.emailNewKey(issued.license(), issued.key()))
-                : Future.succeededFuture());
+    // A paid invoice extends the license's paid-through date, and the key covering it is issued once however often the
+    // event arrives. The first payment of a checkout paid by bank debit clears here, with the license's first key. The
+    // key stands once issued: an email that fails is owed, and the key email job sends it.
+    private Future<Void> issueExtendedKey(License license) {
+        return licenseService.keysOf(license.getId()).compose(keys -> licenseService.issueKeyIfExtended(license).compose(key -> {
+            Future<Void> ret;
+            if (key == null) {
+                ret = Future.succeededFuture();
+            } else {
+                Future<Void> email = keys.isEmpty() ? licenseService.emailNewKey(license, key) : licenseService.emailRenewalKey(license, key);
+                ret = email.recover(t -> {
+                    log.error("The key {} was issued but could not be emailed; the key email job sends it", key.getJti(), t);
+                    return unsentRepository.add(key.getJti(), license.getId());
+                });
+            }
+            return ret;
+        }));
     }
 
     private Future<Void> invoicePaymentFailed(Invoice invoice) {

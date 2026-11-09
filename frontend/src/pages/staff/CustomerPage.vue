@@ -67,7 +67,7 @@ function revoke(entry: LicenseWithKeys) {
 function replace(entry: LicenseWithKeys) {
   confirm.require({
     header: 'Issue a replacement key?',
-    message: 'A new key for the current term is issued and emailed to the customer\'s contacts.',
+    message: 'A new key covering the date the license is paid through is issued and emailed to the customer\'s contacts.',
     icon: 'pi pi-key',
     acceptProps: { label: 'Issue key' },
     rejectProps: { label: 'Cancel', severity: 'secondary', outlined: true },

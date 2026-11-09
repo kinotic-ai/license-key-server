@@ -37,6 +37,16 @@ whatever it likes to the left of it. A second proxy in the chain would make ever
   payment gets its key from `checkout.session.completed`; a bank debit through Link completes Checkout unpaid, and
   its key is issued and emailed once Stripe reports the first invoice paid. A subscription the customer cancels in
   the Customer Portal keeps its key until it expires and is not renewed.
+
+## Keys
+
+A key expires seven days after the date its license is paid through: the end of the Stripe billing period for a paid
+plan, the end of the license year for Free. Every `invoice.paid` that extends the paid-through date issues and emails
+the key covering the new date, once however often Stripe delivers it; an email that fails is sent by the daily key
+email job. A license that is past due, lapsed, cancelled or revoked is issued no key, and the key it holds works until
+it expires (Kinotic keeps its features on for 14 days more). The same daily job warns, once per key, the contacts of a
+license whose newest key expires within 14 days with no newer one coming by itself: one past due, one set to end, or
+a free license, whose next year staff approve.
 - **Staff OIDC**: a web application in Minds Ignited's Google Workspace (or Entra tenant) with the redirect URI
   `https://<staff host>/api/auth/staff/callback`, scopes `openid email profile`. With Entra, add `email` as an
   optional ID token claim: Entra sends no `email_verified`, so the server takes the tenant's own address for

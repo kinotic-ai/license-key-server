@@ -93,11 +93,17 @@ CREATE TABLE stripe_event (
     processed_at TIMESTAMPTZ
 );
 
--- Renewal keys issued whose email has not gone out yet; the renewal job sends them on its next run.
-CREATE TABLE unsent_renewal_email (
+-- Keys a payment extended a license with whose email has not gone out yet; the key email job sends them on its next run.
+CREATE TABLE unsent_key_email (
     jti        TEXT PRIMARY KEY REFERENCES issued_key (jti),
     license_id TEXT        NOT NULL REFERENCES license (id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- The keys whose contacts were warned that the key expires with no newer one issued, so each is warned once.
+CREATE TABLE key_expiry_warning (
+    jti     TEXT PRIMARY KEY REFERENCES issued_key (jti),
+    sent_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE sign_in_code (

@@ -23,6 +23,7 @@ import org.kinotic.licenses.api.config.KinoticLicensesProperties;
 import org.kinotic.licenses.api.model.CustomerContact;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
+import org.kinotic.licenses.api.model.LicenseStatus;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -58,6 +59,8 @@ public class EmailService {
     private static final Template RENEWAL_KEY_TEXT = compile(TEXT_TEMPLATES, "renewal-key");
     private static final Template PAST_DUE_HTML = compile(HTML_TEMPLATES, "past-due");
     private static final Template PAST_DUE_TEXT = compile(TEXT_TEMPLATES, "past-due");
+    private static final Template KEY_EXPIRING_HTML = compile(HTML_TEMPLATES, "key-expiring");
+    private static final Template KEY_EXPIRING_TEXT = compile(TEXT_TEMPLATES, "key-expiring");
     private static final Template FREE_APPROVED_HTML = compile(HTML_TEMPLATES, "free-request-approved");
     private static final Template FREE_APPROVED_TEXT = compile(TEXT_TEMPLATES, "free-request-approved");
     private static final Template FREE_REJECTED_HTML = compile(HTML_TEMPLATES, "free-request-rejected");
@@ -92,6 +95,16 @@ public class EmailService {
     public Future<Void> sendRenewalKey(CustomerContact contact, String organization, License license, IssuedKey key) {
         return send(contact.getEmail(), contact.getName(), "Your renewed Kinotic Enterprise license key",
                     RENEWAL_KEY_HTML, RENEWAL_KEY_TEXT, keyVariables(organization, license, key));
+    }
+
+    /**
+     * Warns a contact that the license's newest key expires with no newer one issued, saying why.
+     */
+    public Future<Void> sendKeyExpiring(CustomerContact contact, String organization, License license, IssuedKey key) {
+        Map<String, Object> variables = keyVariables(organization, license, key);
+        variables.put("reason", expiryReason(license));
+        return send(contact.getEmail(), contact.getName(), "Your Kinotic Enterprise license key expires soon",
+                    KEY_EXPIRING_HTML, KEY_EXPIRING_TEXT, variables);
     }
 
     /**
@@ -131,6 +144,19 @@ public class EmailService {
         ret.put("key", key.getKey());
         ret.put("expiresOn", DATE.format(key.getExpiresAt()));
         ret.put("accountUrl", accountUrl());
+        return ret;
+    }
+
+    // why no newer key comes by itself, for the license states KeyEmailJob warns about
+    private static String expiryReason(License license) {
+        String ret;
+        if (license.getStatus() == LicenseStatus.PAST_DUE) {
+            ret = "a payment failed. Update your payment details from your account, and a new key is issued once it is paid.";
+        } else if (license.getCancelsAt() != null) {
+            ret = "your subscription is set to end on " + DATE.format(license.getCancelsAt()) + ".";
+        } else {
+            ret = "your free license's year is ending. Confirm your company's figures in your account so we can renew it.";
+        }
         return ret;
     }
 

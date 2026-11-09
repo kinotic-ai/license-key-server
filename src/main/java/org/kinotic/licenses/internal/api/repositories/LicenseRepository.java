@@ -122,18 +122,18 @@ public class LicenseRepository {
     }
 
     /**
-     * Moves the license to a new term and stores that term's key, provided the license is not revoked and is as it was
+     * Moves the license to a new license year and stores that year's key, provided the license is active and is as it was
      * read: the same term end, status, plan and scheduled cancellation. So two callers moving the same term leave it
      * moved once, and a key is stored only for the standing it was signed for. The term moves only together with its key.
      *
      * @param read the license as the caller read it
      * @param key  the new term's key, which belongs to the license
-     * @return the license as stored, or {@code null} when it is revoked, or changed since it was read
+     * @return the license as stored, or {@code null} when it is not active, or changed since it was read
      */
     public Future<License> startTerm(License read, Instant termStart, Instant termEnd, IssuedKey key) {
         // one statement, so a failed key insert also leaves the term where it was
         return pool.preparedQuery("WITH moved AS (UPDATE license SET term_start = $3, term_end = $4"
-                                          + " WHERE id = $1 AND term_end = $2 AND status <> 'REVOKED' AND status = $9 AND plan = $10"
+                                          + " WHERE id = $1 AND term_end = $2 AND status = 'ACTIVE' AND status = $9 AND plan = $10"
                                           + " AND cancels_at IS NOT DISTINCT FROM $11 RETURNING " + COLUMNS + "),"
                                           + " stored AS (INSERT INTO issued_key (jti, license_id, key, issued_at, expires_at)"
                                           + " SELECT $5, id, $6, $7, $8 FROM moved)"
@@ -170,17 +170,6 @@ public class LicenseRepository {
     public Future<List<License>> findByCustomerId(String customerId) {
         return pool.preparedQuery("SELECT " + COLUMNS + " FROM license WHERE customer_id = $1 ORDER BY created_at DESC")
                    .execute(Tuple.of(customerId))
-                   .map(rows -> PgValues.map(rows, LicenseRepository::toLicense));
-    }
-
-    /**
-     * The paid licenses in good standing whose subscription renews and whose term ends before {@code termEndsBefore},
-     * which are due a renewal key. A free license renews only through a re-certification staff approve.
-     */
-    public Future<List<License>> findPaidRenewalsDue(Instant termEndsBefore) {
-        return pool.preparedQuery("SELECT " + COLUMNS + " FROM license WHERE status = $1 AND plan <> $2 AND cancels_at IS NULL"
-                                          + " AND term_end < $3 ORDER BY term_end")
-                   .execute(Tuple.of(LicenseStatus.ACTIVE.name(), Plan.FREE.name(), PgValues.timestamp(termEndsBefore)))
                    .map(rows -> PgValues.map(rows, LicenseRepository::toLicense));
     }
 

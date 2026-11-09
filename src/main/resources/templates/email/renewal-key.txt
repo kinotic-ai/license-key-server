@@ -1,4 +1,4 @@
-Your license for {{organization}} on the {{planName}} plan has been renewed for another term. Here is the new key; your current key keeps working until it expires, so paste this one in before then.
+Your payment renewed the license for {{organization}} on the {{planName}} plan. Here is its new key; your current key keeps working until it expires, so paste this one in on your system console's License page before then.
 
 {{key}}
 

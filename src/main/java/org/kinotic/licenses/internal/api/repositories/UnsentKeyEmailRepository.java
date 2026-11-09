@@ -9,16 +9,16 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 
 /**
- * The renewal keys issued whose email has not gone out yet, by key id.
+ * The keys a payment extended a license with whose email has not gone out yet, by key id.
  */
 @Repository
 @RequiredArgsConstructor
-public class UnsentRenewalEmailRepository {
+public class UnsentKeyEmailRepository {
 
     private final Pool pool;
 
     public Future<Void> add(String jti, String licenseId) {
-        return pool.preparedQuery("INSERT INTO unsent_renewal_email (jti, license_id) VALUES ($1, $2) ON CONFLICT (jti) DO NOTHING")
+        return pool.preparedQuery("INSERT INTO unsent_key_email (jti, license_id) VALUES ($1, $2) ON CONFLICT (jti) DO NOTHING")
                    .execute(Tuple.of(jti, licenseId))
                    .mapEmpty();
     }
@@ -27,13 +27,13 @@ public class UnsentRenewalEmailRepository {
      * The ids of the keys still to email, oldest first.
      */
     public Future<List<String>> findAll() {
-        return pool.query("SELECT jti FROM unsent_renewal_email ORDER BY created_at")
+        return pool.query("SELECT jti FROM unsent_key_email ORDER BY created_at")
                    .execute()
                    .map(rows -> PgValues.map(rows, row -> row.getString("jti")));
     }
 
     public Future<Void> remove(String jti) {
-        return pool.preparedQuery("DELETE FROM unsent_renewal_email WHERE jti = $1")
+        return pool.preparedQuery("DELETE FROM unsent_key_email WHERE jti = $1")
                    .execute(Tuple.of(jti))
                    .mapEmpty();
     }

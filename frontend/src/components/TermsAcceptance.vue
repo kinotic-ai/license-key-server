@@ -18,8 +18,9 @@ const accepted = defineModel<boolean>({ required: true })
       <div class="app-muted-text mt-3 space-y-2 text-sm leading-6">
         <p>
           By accepting you agree, on behalf of the organization named above, to the Kinotic Enterprise License, which
-          licenses the Enterprise Features of Kinotic to that organization for the term of each license key issued to
-          it.
+          licenses the Enterprise Features of Kinotic to that organization until each license key issued to it expires.
+          A key expires seven days after the date your license is paid through, and a new key is issued with each
+          payment.
         </p>
         <p>
           Your plan is set by your organization's annual revenue, including any companies it owns, and for the free

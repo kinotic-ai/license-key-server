@@ -176,7 +176,7 @@ class FreeLicenseTest extends ServerTest {
         License renewed = await(licenseRepository.findById(license.getId()));
         assertThat(renewed.getTermStart()).isAfterOrEqualTo(before);
         assertThat(await(licenseService.keysOf(license.getId())).getFirst().getExpiresAt())
-                .isEqualTo(renewed.getTermEnd().plus(LicenseService.KEY_BUFFER).truncatedTo(ChronoUnit.SECONDS));
+                .isEqualTo(LicenseService.keyExpiry(renewed.getTermEnd()));
     }
 
     @Test

@@ -70,7 +70,7 @@ public class DefaultStaffCustomerService implements StaffCustomerService {
     @Override
     public Future<IssuedKey> issueReplacementKey(String licenseId) {
         // the key is issued either way; a failed email is retried with resendKey rather than by issuing another key
-        return license(licenseId).compose(license -> licenseService.issueReplacementKey(license)
+        return license(licenseId).compose(license -> licenseService.issueKey(license)
                                                                    .compose(key -> licenseService.emailNewKey(license, key)
                                                                                                  .recover(t -> {
                                                                                                      log.error("The replacement key {} was issued but could not be emailed", key.getJti(), t);

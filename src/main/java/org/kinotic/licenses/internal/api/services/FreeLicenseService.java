@@ -130,9 +130,9 @@ public class FreeLicenseService {
                     if (!keys.isEmpty() && !keys.getFirst().getIssuedAt().isBefore(request.getReviewedAt())) {
                         issued = Future.succeededFuture(new NewLicense(license, keys.getFirst()));
                     } else if (keys.isEmpty()) {
-                        issued = licenseService.issueFirstKey(license);
+                        issued = licenseService.startFreeTerm(license);
                     } else {
-                        issued = licenseService.issueRenewalKey(license);
+                        issued = licenseService.renewFreeTerm(license);
                     }
                     return issued;
                 });
