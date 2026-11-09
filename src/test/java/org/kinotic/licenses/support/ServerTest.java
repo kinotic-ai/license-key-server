@@ -29,6 +29,7 @@ import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -38,12 +39,13 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Boots the whole server once for the suite: Ignite, the gateway on the test ports, and the schema migrated into the
- * suite's database. Tests call the server over HTTP as the browser would and read the database through the
+ * Boots the whole server once for the suite: Ignite, the gateway on the test ports, the schema migrated into the
+ * suite's database, and Stripe answered by {@link StripeStandIn}. Tests call the server over HTTP as the browser would and read the database through the
  * repositories.
  */
 @SpringBootTest
 @ActiveProfiles("test")
+@Import(StripeStandIn.class)
 // an extension, unlike @EnabledIf, is inherited, so every server test class is disabled without a database
 @ExtendWith(DatabaseAvailableCondition.class)
 public abstract class ServerTest {

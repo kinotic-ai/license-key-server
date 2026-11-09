@@ -178,24 +178,10 @@ public class LicenseService {
     }
 
     /**
-     * Records a successful payment and returns the license to good standing, unless it is revoked or canceled.
+     * Records a successful payment as the license's last, unless a later one is recorded already.
      */
     public Future<License> recordPayment(License license, Instant paidAt) {
         return licenseRepository.recordPayment(license.getId(), paidAt);
-    }
-
-    /**
-     * Marks a payment failed, unless the license is revoked or canceled; no renewal key is issued until a payment succeeds.
-     */
-    public Future<License> markPastDue(License license) {
-        return licenseRepository.updateStatus(license.getId(), LicenseStatus.PAST_DUE);
-    }
-
-    /**
-     * Marks the subscription ended, unless the license is revoked; no renewal key is issued.
-     */
-    public Future<License> cancel(License license) {
-        return licenseRepository.updateStatus(license.getId(), LicenseStatus.CANCELED);
     }
 
     /**

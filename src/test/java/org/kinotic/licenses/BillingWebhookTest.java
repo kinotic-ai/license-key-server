@@ -21,6 +21,7 @@ import org.kinotic.licenses.internal.api.services.KeyRenewalJob;
 import org.kinotic.licenses.internal.api.services.LicenseService;
 import org.kinotic.licenses.support.ServerTest;
 import org.kinotic.licenses.support.StripeEvents;
+import org.kinotic.licenses.support.StripeStandIn;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
@@ -57,52 +58,74 @@ class BillingWebhookTest extends ServerTest {
     void eventsMoveTheLicenseAndAreHandledOnce(CapturedOutput output) throws Exception {
         Customer customer = seedCustomer();
         String subscriptionId = "sub_" + UUID.randomUUID();
-        License license = await(licenseService.createLicense(customer, Plan.STARTUP, subscriptionId, "cs_" + UUID.randomUUID(),
-                                                             Instant.now().plus(Duration.ofDays(30)))).license();
+        Instant periodEnd = Instant.now().plus(Duration.ofDays(30)).truncatedTo(ChronoUnit.SECONDS);
+        License license = await(licenseService.createLicense(customer, Plan.STARTUP, subscriptionId, "cs_" + UUID.randomUUID(), periodEnd)).license();
 
+        StripeStandIn.report(StripeEvents.subscription(subscriptionId, "past_due", Plan.STARTUP.lookupKey(), periodEnd));
         JsonObject failed = StripeEvents.event("invoice.payment_failed", StripeEvents.invoice(subscriptionId, null));
         assertThat(deliver(failed).statusCode()).isEqualTo(200);
         assertThat(await(licenseRepository.findById(license.getId())).getStatus()).isEqualTo(LicenseStatus.PAST_DUE);
         assertThat(output.getAll()).contains("Action needed: your Kinotic payment didn't go through");
 
-        // the same event again changes nothing and sends nothing
+        // the same event again changes nothing and sends nothing, and nor does Stripe's next failed retry
         int pastDueEmails = count(output.getAll(), "Action needed: your Kinotic payment didn't go through");
         assertThat(deliver(failed).statusCode()).isEqualTo(200);
         assertThat(deliver(StripeEvents.event("invoice.payment_failed", StripeEvents.invoice(subscriptionId, null))).statusCode()).isEqualTo(200);
         assertThat(count(output.getAll(), "Action needed: your Kinotic payment didn't go through")).isEqualTo(pastDueEmails);
 
-        Instant paidAt = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", Plan.STARTUP.lookupKey(), periodEnd));
+        // a retry that cleared after the license was bought, whose purchase is its first recorded payment
+        Instant paidAt = Instant.now().plusSeconds(1).truncatedTo(ChronoUnit.SECONDS);
         assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, paidAt))).statusCode()).isEqualTo(200);
         License paid = await(licenseRepository.findById(license.getId()));
         assertThat(paid.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
         assertThat(paid.getLastPaymentAt()).isEqualTo(paidAt);
+        // an older invoice paid late leaves the latest payment the last
+        assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, paidAt.minus(Duration.ofDays(30))))).statusCode())
+                .isEqualTo(200);
+        assertThat(await(licenseRepository.findById(license.getId())).getLastPaymentAt()).isEqualTo(paidAt);
 
-        Instant periodEnd = Instant.now().plus(Duration.ofDays(60)).truncatedTo(ChronoUnit.SECONDS);
-        JsonObject updated = StripeEvents.event("customer.subscription.updated",
-                                                StripeEvents.subscription(subscriptionId, "active", Plan.BUSINESS.lookupKey(), periodEnd));
-        assertThat(deliver(updated).statusCode()).isEqualTo(200);
+        Instant nextPeriodEnd = Instant.now().plus(Duration.ofDays(60)).truncatedTo(ChronoUnit.SECONDS);
+        JsonObject upgraded = StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", Plan.BUSINESS.lookupKey(), nextPeriodEnd));
+        assertThat(deliver(StripeEvents.event("customer.subscription.updated", upgraded)).statusCode()).isEqualTo(200);
         License synced = await(licenseRepository.findById(license.getId()));
         assertThat(synced.getPlan()).isEqualTo(Plan.BUSINESS);
-        assertThat(synced.getCurrentPeriodEnd()).isEqualTo(periodEnd);
+        assertThat(synced.getCurrentPeriodEnd()).isEqualTo(nextPeriodEnd);
 
-        JsonObject deleted = StripeEvents.event("customer.subscription.deleted",
-                                                StripeEvents.subscription(subscriptionId, "canceled", Plan.BUSINESS.lookupKey(), periodEnd));
-        assertThat(deliver(deleted).statusCode()).isEqualTo(200);
+        JsonObject deleted = StripeStandIn.report(StripeEvents.subscription(subscriptionId, "canceled", Plan.BUSINESS.lookupKey(), nextPeriodEnd));
+        assertThat(deliver(StripeEvents.event("customer.subscription.deleted", deleted)).statusCode()).isEqualTo(200);
         assertThat(await(licenseRepository.findById(license.getId())).getStatus()).isEqualTo(LicenseStatus.CANCELED);
+    }
+
+    @Test
+    void anEventDeliveredLateLeavesTheLicenseAsStripeHasIt() throws Exception {
+        String subscriptionId = "sub_" + UUID.randomUUID();
+        Instant periodEnd = Instant.now().plus(Duration.ofDays(20)).truncatedTo(ChronoUnit.SECONDS);
+        License license = await(licenseService.createLicense(seedCustomer(), Plan.STARTUP, subscriptionId, "cs_" + UUID.randomUUID(), periodEnd)).license();
+        // the customer scheduled the cancellation after moving to the business plan
+        StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", Plan.STARTUP.lookupKey(), periodEnd).put("cancel_at_period_end", true));
+
+        // the update from before both changes, delivered last
+        JsonObject older = StripeEvents.subscription(subscriptionId, "active", Plan.BUSINESS.lookupKey(), periodEnd);
+        assertThat(deliver(StripeEvents.event("customer.subscription.updated", older)).statusCode()).isEqualTo(200);
+
+        License stored = await(licenseRepository.findById(license.getId()));
+        assertThat(stored.getCancelsAt()).isEqualTo(periodEnd);
+        assertThat(stored.getPlan()).isEqualTo(Plan.STARTUP);
     }
 
     @Test
     void aRevokedLicenseStaysRevokedWhateverStripeSays() throws Exception {
         String subscriptionId = "sub_" + UUID.randomUUID();
+        Instant periodEnd = Instant.now().plus(Duration.ofDays(60)).truncatedTo(ChronoUnit.SECONDS);
         License license = await(licenseService.createLicense(seedCustomer(), Plan.STARTUP, subscriptionId, "cs_" + UUID.randomUUID(),
                                                              Instant.now().plus(Duration.ofDays(30)))).license();
         await(licenseService.revoke(license));
+        JsonObject active = StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", Plan.STARTUP.lookupKey(), periodEnd));
 
         assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
         assertThat(await(licenseRepository.findById(license.getId())).getStatus()).isEqualTo(LicenseStatus.REVOKED);
-        Instant periodEnd = Instant.now().plus(Duration.ofDays(60)).truncatedTo(ChronoUnit.SECONDS);
-        assertThat(deliver(StripeEvents.event("customer.subscription.updated",
-                                              StripeEvents.subscription(subscriptionId, "active", Plan.STARTUP.lookupKey(), periodEnd))).statusCode()).isEqualTo(200);
+        assertThat(deliver(StripeEvents.event("customer.subscription.updated", active)).statusCode()).isEqualTo(200);
         assertThat(await(licenseRepository.findById(license.getId())).getStatus()).isEqualTo(LicenseStatus.REVOKED);
     }
 
@@ -112,13 +135,13 @@ class BillingWebhookTest extends ServerTest {
         License license = await(licenseService.createLicense(seedCustomer(), Plan.STARTUP, subscriptionId, "cs_" + UUID.randomUUID(),
                                                              Instant.now().plus(Duration.ofDays(30)))).license();
         Instant periodEnd = Instant.now().plus(Duration.ofDays(30)).truncatedTo(ChronoUnit.SECONDS);
-        assertThat(deliver(StripeEvents.event("customer.subscription.deleted",
-                                              StripeEvents.subscription(subscriptionId, "canceled", Plan.STARTUP.lookupKey(), periodEnd))).statusCode()).isEqualTo(200);
+        JsonObject canceled = StripeStandIn.report(StripeEvents.subscription(subscriptionId, "canceled", Plan.STARTUP.lookupKey(), periodEnd));
+        assertThat(deliver(StripeEvents.event("customer.subscription.deleted", canceled)).statusCode()).isEqualTo(200);
 
-        // events created before the cancellation, delivered after it
+        // Stripe never reopens a canceled subscription, so a later report of it in good standing is not believed
+        JsonObject active = StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", Plan.STARTUP.lookupKey(), periodEnd));
         assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
-        assertThat(deliver(StripeEvents.event("customer.subscription.updated",
-                                              StripeEvents.subscription(subscriptionId, "active", Plan.STARTUP.lookupKey(), periodEnd))).statusCode()).isEqualTo(200);
+        assertThat(deliver(StripeEvents.event("customer.subscription.updated", active)).statusCode()).isEqualTo(200);
         assertThat(await(licenseRepository.findById(license.getId())).getStatus()).isEqualTo(LicenseStatus.CANCELED);
     }
 
@@ -181,7 +204,7 @@ class BillingWebhookTest extends ServerTest {
         License pastDue = await(licenseService.createLicense(seedCustomer(), Plan.STARTUP, "sub_" + UUID.randomUUID(), "cs_" + UUID.randomUUID(),
                                                              Instant.now().plus(Duration.ofDays(30)))).license();
         setTermEnd(pastDue.getId(), termEnd);
-        await(licenseService.markPastDue(pastDue));
+        sql("UPDATE license SET status = 'PAST_DUE' WHERE id = $1", pastDue.getId());
 
         License free = await(licenseService.createLicense(seedCustomer(), Plan.FREE, null, null, null)).license();
         setTermEnd(free.getId(), termEnd);
@@ -192,9 +215,9 @@ class BillingWebhookTest extends ServerTest {
                                                                Instant.now().plus(Duration.ofDays(30)))).license();
         setTermEnd(cancelled.getId(), termEnd);
         Instant periodEnd = Instant.now().plus(Duration.ofDays(12)).truncatedTo(ChronoUnit.SECONDS);
-        assertThat(deliver(StripeEvents.event("customer.subscription.updated",
-                                              StripeEvents.subscription(cancelledSubscription, "active", Plan.STARTUP.lookupKey(), periodEnd)
-                                                          .put("cancel_at_period_end", true))).statusCode()).isEqualTo(200);
+        JsonObject cancelling = StripeStandIn.report(StripeEvents.subscription(cancelledSubscription, "active", Plan.STARTUP.lookupKey(), periodEnd)
+                                                                 .put("cancel_at_period_end", true));
+        assertThat(deliver(StripeEvents.event("customer.subscription.updated", cancelling)).statusCode()).isEqualTo(200);
         assertThat(await(licenseRepository.findById(cancelled.getId())).getCancelsAt()).isEqualTo(periodEnd);
 
         await(renewalJob.run());
@@ -217,17 +240,46 @@ class BillingWebhookTest extends ServerTest {
     }
 
     @Test
-    void aBankDebitGetsItsFirstKeyWhenThePaymentClears() throws Exception {
+    void aPaidCheckoutCreatesTheLicenseWithItsKeyOnce(CapturedOutput output) throws Exception {
+        Customer customer = seedCustomer();
         String subscriptionId = "sub_" + UUID.randomUUID();
         String sessionId = "cs_" + UUID.randomUUID();
+        Instant periodEnd = Instant.now().plus(Duration.ofDays(30)).truncatedTo(ChronoUnit.SECONDS);
+        StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", Plan.BUSINESS.lookupKey(), periodEnd));
+        JsonObject completed = StripeEvents.event("checkout.session.completed",
+                                                  StripeEvents.checkoutSession(sessionId, subscriptionId, customer.getId(), "paid"));
+
+        assertThat(deliver(completed).statusCode()).isEqualTo(200);
+        License license = await(licenseRepository.findByCheckoutSessionId(sessionId));
+        assertThat(license.getCustomerId()).isEqualTo(customer.getId());
+        assertThat(license.getPlan()).isEqualTo(Plan.BUSINESS);
+        assertThat(license.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
+        assertThat(license.getCurrentPeriodEnd()).isEqualTo(periodEnd);
+        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
+
+        assertThat(deliver(completed).statusCode()).isEqualTo(200);
+        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
+    }
+
+    @Test
+    void aBankDebitGetsItsFirstKeyWhenThePaymentClears() throws Exception {
         Customer customer = seedCustomer();
         CustomerContact buyer = await(contactRepository.findByCustomerId(customer.getId())).getFirst();
-        License awaiting = await(licenseService.createAwaitingPayment(customer, Plan.STARTUP, subscriptionId, sessionId,
-                                                                      Instant.now().plus(Duration.ofDays(30))));
+        String subscriptionId = "sub_" + UUID.randomUUID();
+        String sessionId = "cs_" + UUID.randomUUID();
+        Instant periodEnd = Instant.now().plus(Duration.ofDays(30)).truncatedTo(ChronoUnit.SECONDS);
+        // Checkout completes while the debit is still clearing
+        JsonObject clearing = StripeEvents.subscription(subscriptionId, "incomplete", Plan.STARTUP.lookupKey(), periodEnd);
+        clearing.getJsonObject("latest_invoice").put("status", "open");
+        StripeStandIn.report(clearing);
+        assertThat(deliver(StripeEvents.event("checkout.session.completed",
+                                              StripeEvents.checkoutSession(sessionId, subscriptionId, customer.getId(), "unpaid"))).statusCode()).isEqualTo(200);
+        License awaiting = await(licenseRepository.findByCheckoutSessionId(sessionId));
         assertThat(awaiting.getStatus()).isEqualTo(LicenseStatus.PAST_DUE);
         assertThat(await(licenseService.keysOf(awaiting.getId()))).isEmpty();
         assertThat(checkoutKey(buyer, sessionId).getStatus()).isEqualTo(CheckoutKeyStatus.PENDING);
 
+        StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", Plan.STARTUP.lookupKey(), periodEnd));
         Instant before = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
 
@@ -245,12 +297,29 @@ class BillingWebhookTest extends ServerTest {
     }
 
     @Test
+    void aDebitThatClearedBeforeItsCheckoutWasHandledGetsItsKeyAtOnce() throws Exception {
+        Customer customer = seedCustomer();
+        String subscriptionId = "sub_" + UUID.randomUUID();
+        String sessionId = "cs_" + UUID.randomUUID();
+        Instant periodEnd = Instant.now().plus(Duration.ofDays(30)).truncatedTo(ChronoUnit.SECONDS);
+        // the invoice.paid came first and found no license; Stripe has the first invoice paid by now
+        assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
+        StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", Plan.STARTUP.lookupKey(), periodEnd));
+
+        assertThat(deliver(StripeEvents.event("checkout.session.completed",
+                                              StripeEvents.checkoutSession(sessionId, subscriptionId, customer.getId(), "unpaid"))).statusCode()).isEqualTo(200);
+        License license = await(licenseRepository.findByCheckoutSessionId(sessionId));
+        assertThat(license.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
+        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
+    }
+
+    @Test
     void anEventWhoseDeliveryDiedIsHandledWhenStripeRedeliversIt() throws Exception {
         String subscriptionId = "sub_" + UUID.randomUUID();
         License license = await(licenseService.createLicense(seedCustomer(), Plan.STARTUP, subscriptionId, "cs_" + UUID.randomUUID(),
                                                              Instant.now().plus(Duration.ofDays(30)))).license();
         JsonObject event = StripeEvents.event("customer.subscription.deleted",
-                                              StripeEvents.subscription(subscriptionId, "canceled", Plan.STARTUP.lookupKey(), Instant.now()));
+                                              StripeStandIn.report(StripeEvents.subscription(subscriptionId, "canceled", Plan.STARTUP.lookupKey(), Instant.now())));
         // a delivery that claimed the event and stopped before finishing it, long enough ago for its claim to expire
         sql("INSERT INTO stripe_event (id, type, claimed_at) VALUES ($1, $2, now() - interval '10 minutes')",
             event.getString("id"), event.getString("type"));
@@ -277,7 +346,7 @@ class BillingWebhookTest extends ServerTest {
         License license = await(licenseService.createLicense(seedCustomer(), Plan.STARTUP, "sub_" + UUID.randomUUID(), "cs_" + UUID.randomUUID(),
                                                              Instant.now().plus(Duration.ofDays(30)))).license();
         // the renewal read the license before a payment failed
-        await(licenseService.markPastDue(license));
+        sql("UPDATE license SET status = 'PAST_DUE' WHERE id = $1", license.getId());
         assertThatThrownBy(() -> await(licenseService.issueRenewalKey(license))).hasCauseInstanceOf(IllegalStateException.class);
         assertThat(await(licenseRepository.findById(license.getId())).getTermEnd()).isEqualTo(license.getTermEnd());
         assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);

@@ -57,21 +57,12 @@ public class LicenseRepository {
     }
 
     /**
-     * Sets the status, unless the license is revoked or canceled.
-     *
-     * @return the license as stored, or {@code null} when none has the id
-     */
-    public Future<License> updateStatus(String id, LicenseStatus status) {
-        return updateOne(STATUS_UNLESS_ENDED.formatted("$2"), id, PgValues.name(status));
-    }
-
-    /**
-     * Records a payment and returns the license to good standing, unless it is revoked or canceled.
+     * Records a payment, which is the license's last payment unless a later one is recorded already.
      *
      * @return the license as stored, or {@code null} when none has the id
      */
     public Future<License> recordPayment(String id, Instant paidAt) {
-        return updateOne("last_payment_at = $2, " + STATUS_UNLESS_ENDED.formatted("'ACTIVE'"), id, PgValues.timestamp(paidAt));
+        return updateOne("last_payment_at = GREATEST(last_payment_at, $2)", id, PgValues.timestamp(paidAt));
     }
 
     /**

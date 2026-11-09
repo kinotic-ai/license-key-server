@@ -1,5 +1,6 @@
 package org.kinotic.licenses.internal.config;
 
+import com.stripe.StripeClient;
 import io.vertx.core.Vertx;
 import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
@@ -17,6 +18,7 @@ import org.kinotic.licenses.api.config.DatabaseProperties;
 import org.kinotic.licenses.api.config.KinoticLicensesProperties;
 import org.kinotic.licenses.api.security.LicenseParticipant;
 import org.kinotic.licenses.api.security.LicenseZones;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import tools.jackson.databind.module.SimpleModule;
@@ -26,7 +28,7 @@ import java.util.Set;
 
 /**
  * Wires the server's infrastructure: the zones it serves, an Ignite node confined to this host, the Postgres
- * pool behind a migrated schema, and the Jackson binding of this server's participant.
+ * pool behind a migrated schema, the Stripe client, and the Jackson binding of this server's participant.
  */
 @Slf4j
 @Configuration
@@ -73,6 +75,16 @@ public class LicenseServerConfiguration {
         ret.setLocalAddress(LOOPBACK);
         ret.setLocalPort(properties.getIgnite().getCommunicationPort());
         return ret;
+    }
+
+    /**
+     * The Stripe client, built when a secret key is set; without one the server boots, and each call to Stripe fails
+     * saying the key is missing.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "kinotic.licenses.stripe", name = "secretKey")
+    public StripeClient stripeClient(KinoticLicensesProperties properties) {
+        return new StripeClient(properties.getLicenses().getStripe().getSecretKey());
     }
 
     /**

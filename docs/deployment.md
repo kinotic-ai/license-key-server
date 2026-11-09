@@ -30,10 +30,14 @@ whatever it likes to the left of it. A second proxy in the chain would make ever
 - **Stripe webhook**: an endpoint at `https://licenses.kinotic.ai/api/stripe/webhook` delivering
   `checkout.session.completed`, `invoice.paid`, `invoice.payment_failed`, `customer.subscription.updated` and
   `customer.subscription.deleted`, pinned to the API version of the `stripe-java` release in `gradle.properties`.
-  Its signing secret is `KINOTIC_LICENSES_STRIPE_WEBHOOKSECRET`. A card payment gets its key from
-  `checkout.session.completed`; a bank debit through Link completes Checkout unpaid, and its key is issued and
-  emailed when `invoice.paid` reports the payment cleared. A subscription the customer cancels in the Customer
-  Portal keeps its key until it expires and is not renewed.
+  Its signing secret is `KINOTIC_LICENSES_STRIPE_WEBHOOKSECRET`. Stripe delivers events in no set order, so an
+  event only tells the server which subscription changed: the server reads that subscription, with its price and
+  latest invoice, from Stripe and brings the license to it. A restricted secret key therefore needs read access to
+  prices, products, subscriptions and invoices, and write access to customers and to Checkout and Customer Portal
+  sessions. A card
+  payment gets its key from `checkout.session.completed`; a bank debit through Link completes Checkout unpaid, and
+  its key is issued and emailed once Stripe reports the first invoice paid. A subscription the customer cancels in
+  the Customer Portal keeps its key until it expires and is not renewed.
 - **Staff OIDC**: a web application in Minds Ignited's Google Workspace (or Entra tenant) with the redirect URI
   `https://<staff host>/api/auth/staff/callback`, scopes `openid email profile`. With Entra, add `email` as an
   optional ID token claim: Entra sends no `email_verified`, so the server takes the tenant's own address for

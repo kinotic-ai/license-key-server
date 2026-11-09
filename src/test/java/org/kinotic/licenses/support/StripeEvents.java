@@ -37,7 +37,20 @@ public final class StripeEvents {
                 .put("id", id)
                 .put("object", "subscription")
                 .put("status", status)
-                .put("items", new JsonObject().put("object", "list").put("data", new JsonArray().add(item)));
+                .put("items", new JsonObject().put("object", "list").put("data", new JsonArray().add(item)))
+                .put("latest_invoice", new JsonObject().put("id", "in_" + UUID.randomUUID().toString().replace("-", ""))
+                                                       .put("object", "invoice").put("status", "paid"));
+    }
+
+    /** A completed Checkout Session in subscription mode, bought by the customer. */
+    public static JsonObject checkoutSession(String id, String subscriptionId, String customerId, String paymentStatus) {
+        return new JsonObject()
+                .put("id", id)
+                .put("object", "checkout.session")
+                .put("mode", "subscription")
+                .put("subscription", subscriptionId)
+                .put("client_reference_id", customerId)
+                .put("payment_status", paymentStatus);
     }
 
     public static JsonObject invoice(String subscriptionId, Instant paidAt) {
