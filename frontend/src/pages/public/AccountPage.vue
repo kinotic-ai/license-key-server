@@ -93,7 +93,7 @@ async function submitRecertification() {
       <section v-if="account.licenses.length === 0" class="app-card-surface rounded-xl border p-5 text-sm">
         <p class="app-heading-text">No license yet.</p>
         <p class="app-muted-text mt-2">
-          <span v-if="pendingRenewal || account.freeLicenseRequests.length">Your free license request is being reviewed.</span>
+          <span v-if="pendingRenewal">Your free license request is being reviewed.</span>
           <span v-else><RouterLink to="/buy" class="underline">Pick a plan</RouterLink>.</span>
         </p>
       </section>
