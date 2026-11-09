@@ -168,7 +168,14 @@ with. If the two differ, Kinotic refuses every key this server issues.
 
 ## Legal
 
-The click-through with each purchase and free license request (on `/buy`, `/free` and the account page's renewal)
-records who accepted which version of the terms, when and for which customer (`agreement_acceptance`). Whether that
-click-through is the written agreement the Kinotic Enterprise License requires is for a lawyer to confirm; the server
-records what it can and decides nothing.
+The click-through with each purchase, free license request and design partner application (on `/buy`, `/free` and
+`/design-partner`) records who accepted which version of the terms, when and for which customer, and what publicity
+the customer consented to (`agreement_acceptance.publicity_consent`): none for a purchase, `CUSTOMER_NAME` for Free,
+whose terms let Minds Ignited name the customer as a Kinotic customer, and `DESIGN_PARTNER` for a design partner. A
+license records the terms version it started on and keeps it while it stays active.
+
+For a lawyer to confirm, not decided here: whether that click-through is the written agreement the Kinotic
+Enterprise License requires; the wording of "your terms never change while your license stays active"; and the Free
+and design partner publicity clauses, including the design partner promise that partners approve everything
+published about them and that nothing confidential is ever shared. The server records what it can and decides
+nothing.

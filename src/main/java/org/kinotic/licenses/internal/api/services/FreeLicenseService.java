@@ -180,5 +180,7 @@ public class FreeLicenseService {
         Validate.isTrue(certification.getFigures().getCapitalRaised() != null && certification.getFigures().getCapitalRaised().signum() >= 0,
                         "The capital raised must be zero or more");
         Validate.notBlank(certification.getIntendedUse(), "The intended use is required");
+        Plan plan = Plan.matching(certification.getFigures());
+        Validate.isTrue(plan == Plan.FREE, "Your company's figures fit the %s plan, which is bought rather than requested", plan);
     }
 }

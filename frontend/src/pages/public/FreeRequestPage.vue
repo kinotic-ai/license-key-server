@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Button from 'primevue/button'
+import Message from 'primevue/message'
 import { useToast } from 'primevue/usetoast'
 import { PageHeader, showErrorToast } from '@kinotic-ai/frontend-common'
+import type { Plan } from '@/api/model'
 import { customerAccountService } from '@/api/services'
+import { planName } from '@/util/format'
 import { SESSION_STATE } from '@/states/LicenseSessionState'
 import { SITE } from '@/states/site'
 import CertificationFields from '@/components/CertificationFields.vue'
@@ -21,6 +24,10 @@ const accepted = ref(false)
 const submitting = ref(false)
 const submitted = ref(false)
 
+// the paid plan the figures set, when they do not qualify for Free
+const paidPlan = ref<Plan | null>(null)
+watch([annualRevenue, capitalRaised], () => { paidPlan.value = null })
+
 const ready = computed(() => annualRevenue.value !== null && capitalRaised.value !== null && intendedUse.value.trim() !== '' && accepted.value)
 
 async function submit() {
@@ -29,11 +36,14 @@ async function submit() {
   }
   submitting.value = true
   try {
-    await customerAccountService.requestFreeLicense({
-      figures: { annualRevenue: annualRevenue.value ?? 0, capitalRaised: capitalRaised.value ?? 0 },
-      intendedUse: intendedUse.value.trim()
-    }, SITE.termsVersion)
-    submitted.value = true
+    const figures = { annualRevenue: annualRevenue.value ?? 0, capitalRaised: capitalRaised.value ?? 0 }
+    const plan = await customerAccountService.findPlanFor(figures)
+    if (plan !== 'FREE') {
+      paidPlan.value = plan
+    } else {
+      await customerAccountService.requestFreeLicense({ figures, intendedUse: intendedUse.value.trim() }, SITE.termsVersion)
+      submitted.value = true
+    }
   } catch (err) {
     showErrorToast(toast, 'The request could not be submitted', err)
   } finally {
@@ -65,7 +75,11 @@ async function submit() {
         <h2 class="app-heading-text font-medium">What you certify</h2>
         <CertificationFields v-model:annual-revenue="annualRevenue" v-model:capital-raised="capitalRaised" v-model:intended-use="intendedUse" />
       </section>
-      <TermsAcceptance v-model="accepted" />
+      <Message v-if="paidPlan" severity="warn">
+        Your company's figures fit the {{ planName(paidPlan) }} plan, which is bought rather than requested.
+        <RouterLink :to="`/buy?plan=${paidPlan.toLowerCase()}&billing=monthly`" class="font-medium underline">Buy {{ planName(paidPlan) }}</RouterLink>
+      </Message>
+      <TermsAcceptance v-model="accepted" publicity="CUSTOMER_NAME" />
       <div class="flex justify-end">
         <Button type="submit" label="Submit request" :disabled="!ready" :loading="submitting" />
       </div>

@@ -1,4 +1,4 @@
-import type { BillingPeriod, LicenseStatus, Plan } from '@/api/model'
+import type { BillingPeriod, LicenseStatus, Plan, PublicityConsent } from '@/api/model'
 
 /** Formatting shared by the public pages and the dashboard. */
 
@@ -24,6 +24,18 @@ export function billingPeriodName(period: BillingPeriod | null | undefined): str
         ret = 'Monthly'
     } else {
         ret = '—'
+    }
+    return ret
+}
+
+export function publicityLabel(consent: PublicityConsent | null | undefined): string {
+    let ret: string
+    if (consent === 'CUSTOMER_NAME') {
+        ret = 'May be named as a customer'
+    } else if (consent === 'DESIGN_PARTNER') {
+        ret = 'Design partner'
+    } else {
+        ret = 'None'
     }
     return ret
 }

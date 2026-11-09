@@ -14,6 +14,7 @@ import org.kinotic.licenses.api.model.FreeLicenseRequestStatus;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
+import org.kinotic.licenses.api.model.PublicityConsent;
 import org.kinotic.licenses.api.services.CustomerAccountService;
 import org.kinotic.licenses.api.services.StaffCustomerService;
 import org.kinotic.licenses.api.services.StaffFreeLicenseRequestService;
@@ -77,6 +78,8 @@ class FreeLicenseTest extends ServerTest {
         assertThat(acceptances).hasSize(1);
         assertThat(acceptances.getFirst().getTermsVersion()).isEqualTo(AgreementTerms.VERSION);
         assertThat(acceptances.getFirst().getAcceptedByEmail()).isEqualTo(email);
+        // the Free terms let Minds Ignited name the customer as a Kinotic customer
+        assertThat(acceptances.getFirst().getPublicityConsent()).isEqualTo(PublicityConsent.CUSTOMER_NAME);
         assertThat(await(staffRequests.findPending())).extracting(FreeLicenseRequest::getId).contains(requestId);
 
         FreeLicenseRequest approved = asStaff(() -> staffRequests.approve(requestId));
@@ -155,6 +158,20 @@ class FreeLicenseTest extends ServerTest {
         assertThat(again.getCustomerId()).isEqualTo(first.getCustomerId());
         // each request that was recorded recorded its acceptance
         assertThat(await(acceptanceRepository.findByCustomerId(first.getCustomerId()))).hasSize(2);
+    }
+
+    @Test
+    void figuresThatSetAPaidPlanAreRefused() throws Exception {
+        CustomerContact contact = await(contactRepository.findByCustomerId(seedCustomer().getId())).getFirst();
+        for (CompanyFigures figures : List.of(new CompanyFigures().setAnnualRevenue(new BigDecimal("1000000")).setCapitalRaised(BigDecimal.ZERO),
+                                              new CompanyFigures().setAnnualRevenue(new BigDecimal("400000")).setCapitalRaised(new BigDecimal("5000000")))) {
+            assertThatThrownBy(() -> asCustomer(contact, () -> customerAccount.requestFreeLicense(
+                    new FreeLicenseCertification().setIntendedUse("Too big").setFigures(figures), AgreementTerms.VERSION)))
+                    .hasCauseInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("SMALL");
+        }
+        assertThat(await(requestRepository.findByCustomerId(contact.getCustomerId()))).isEmpty();
+        assertThat(await(acceptanceRepository.findByCustomerId(contact.getCustomerId()))).isEmpty();
     }
 
     @Test

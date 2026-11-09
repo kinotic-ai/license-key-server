@@ -25,6 +25,8 @@ CREATE TABLE agreement_acceptance (
     terms_version     TEXT        NOT NULL,
     accepted_by_name  TEXT        NOT NULL,
     accepted_by_email TEXT        NOT NULL,
+    -- what the customer let Minds Ignited publish about it, as a PublicityConsent name; NULL for none
+    publicity_consent TEXT,
     accepted_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX agreement_acceptance_customer_idx ON agreement_acceptance (customer_id);

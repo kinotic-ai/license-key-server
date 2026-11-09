@@ -9,6 +9,7 @@ import org.kinotic.licenses.api.model.AgreementTerms;
 import org.kinotic.licenses.api.model.ContactRole;
 import org.kinotic.licenses.api.model.Customer;
 import org.kinotic.licenses.api.model.CustomerContact;
+import org.kinotic.licenses.api.model.PublicityConsent;
 import org.kinotic.licenses.internal.api.repositories.AgreementAcceptanceRepository;
 import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
@@ -63,15 +64,19 @@ public class CustomerService {
     }
 
     /**
-     * Records that a contact of the customer accepted the current terms, as with every purchase and free license
-     * request.
+     * Records that a contact of the customer accepted the current terms, as with every purchase, free license request
+     * and design partner application, with the publicity the terms ask for.
+     *
+     * @param publicityConsent what the customer lets Minds Ignited publish about it, or {@code null} for nothing
      */
-    public Future<AgreementAcceptance> recordAcceptance(String customerId, String acceptedByName, String acceptedByEmail) {
+    public Future<AgreementAcceptance> recordAcceptance(String customerId, String acceptedByName, String acceptedByEmail,
+                                                        PublicityConsent publicityConsent) {
         return acceptanceRepository.save(new AgreementAcceptance()
                                                  .setId(UUID.randomUUID().toString())
                                                  .setCustomerId(customerId)
                                                  .setTermsVersion(AgreementTerms.VERSION)
                                                  .setAcceptedByName(acceptedByName)
-                                                 .setAcceptedByEmail(acceptedByEmail));
+                                                 .setAcceptedByEmail(acceptedByEmail)
+                                                 .setPublicityConsent(publicityConsent));
     }
 }

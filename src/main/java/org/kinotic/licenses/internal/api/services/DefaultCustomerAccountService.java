@@ -12,6 +12,7 @@ import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.FreeLicenseRequest;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.model.PlanPrice;
+import org.kinotic.licenses.api.model.PublicityConsent;
 import org.kinotic.licenses.api.model.RevenueConfirmation;
 import org.kinotic.licenses.api.model.CheckoutRequest;
 import org.kinotic.licenses.api.model.CompanyFigures;
@@ -96,7 +97,7 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
         requireCurrentTerms(termsVersion);
         return customerRepository.findById(caller.getCustomerId())
                                  .compose(customer -> billingService.startCheckout(customer, caller.getName(), caller.getEmail(), request))
-                                 .compose(url -> recordAcceptance(caller).map(url));
+                                 .compose(url -> recordAcceptance(caller, null).map(url));
     }
 
     @Override
@@ -139,7 +140,7 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
         LicenseParticipant caller = caller();
         requireCurrentTerms(termsVersion);
         return freeLicenseService.request(caller.getCustomerId(), certification)
-                                 .compose(request -> recordAcceptance(caller).map(request));
+                                 .compose(request -> recordAcceptance(caller, PublicityConsent.CUSTOMER_NAME).map(request));
     }
 
     private String callingCustomerId() {
@@ -150,8 +151,8 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
         return securityContext.requireParticipant(LicenseParticipant.class);
     }
 
-    private Future<Void> recordAcceptance(LicenseParticipant caller) {
-        return customerService.recordAcceptance(caller.getCustomerId(), caller.getName(), caller.getEmail()).mapEmpty();
+    private Future<Void> recordAcceptance(LicenseParticipant caller, PublicityConsent publicityConsent) {
+        return customerService.recordAcceptance(caller.getCustomerId(), caller.getName(), caller.getEmail(), publicityConsent).mapEmpty();
     }
 
     private static void requireCurrentTerms(String termsVersion) {

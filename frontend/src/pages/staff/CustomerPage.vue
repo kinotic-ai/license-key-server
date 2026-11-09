@@ -9,7 +9,7 @@ import type { CustomerDetail, LicenseWithKeys } from '@/api/model'
 import { staffCustomerService } from '@/api/services'
 import KeyBlock from '@/components/KeyBlock.vue'
 import LicenseStatusTag from '@/components/LicenseStatusTag.vue'
-import { formatDate, planName } from '@/util/format'
+import { formatDate, planName, publicityLabel } from '@/util/format'
 
 /** One customer: its contacts, each license with its keys and the actions on it, and its agreement acceptances. */
 const props = defineProps<{
@@ -123,13 +123,14 @@ function resend(entry: LicenseWithKeys) {
         <h2 class="app-heading-text font-medium">Agreement acceptances</h2>
         <table class="mt-3 w-full text-left text-sm">
           <thead class="app-muted-text">
-            <tr><th class="py-1 pr-4 font-medium">Accepted</th><th class="py-1 pr-4 font-medium">By</th><th class="py-1 font-medium">Terms version</th></tr>
+            <tr><th class="py-1 pr-4 font-medium">Accepted</th><th class="py-1 pr-4 font-medium">By</th><th class="py-1 pr-4 font-medium">Terms version</th><th class="py-1 font-medium">Publicity consent</th></tr>
           </thead>
           <tbody>
             <tr v-for="acceptance in detail.acceptances" :key="acceptance.id" class="app-surface-divider border-t">
               <td class="py-2 pr-4">{{ formatDate(acceptance.acceptedAt) }}</td>
               <td class="py-2 pr-4">{{ acceptance.acceptedByName }} &lt;{{ acceptance.acceptedByEmail }}&gt;</td>
-              <td class="py-2 font-mono text-xs">{{ acceptance.termsVersion }}</td>
+              <td class="py-2 pr-4 font-mono text-xs">{{ acceptance.termsVersion }}</td>
+              <td class="py-2">{{ publicityLabel(acceptance.publicityConsent) }}</td>
             </tr>
           </tbody>
         </table>

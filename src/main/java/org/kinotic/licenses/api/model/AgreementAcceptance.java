@@ -8,7 +8,7 @@ import java.time.Instant;
 
 /**
  * A click-through acceptance of the order terms and the Kinotic Enterprise License: who accepted, for which
- * customer, which version of the terms, and when.
+ * customer, which version of the terms, what publicity the customer consented to, and when.
  */
 @Data
 @Accessors(chain = true)
@@ -19,5 +19,7 @@ public class AgreementAcceptance {
     private String termsVersion;
     private String acceptedByName;
     private String acceptedByEmail;
+    /** What the customer let Minds Ignited publish about it; {@code null} for nothing. */
+    private PublicityConsent publicityConsent;
     private Instant acceptedAt;
 }

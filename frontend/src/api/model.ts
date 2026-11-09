@@ -8,6 +8,8 @@ export type ContactRole = 'BILLING' | 'TECHNICAL'
 export type FreeLicenseRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
 export type ParticipantType = 'STAFF' | 'CUSTOMER'
 export type Site = 'PUBLIC' | 'STAFF'
+/** What a customer let Minds Ignited publish about it when it accepted the terms. */
+export type PublicityConsent = 'CUSTOMER_NAME' | 'DESIGN_PARTNER'
 
 /** What a customer reports about its company, which sets its plan. */
 export interface CompanyFigures {
@@ -53,6 +55,8 @@ export interface AgreementAcceptance {
     termsVersion: string
     acceptedByName: string
     acceptedByEmail: string
+    /** Null for no publicity. */
+    publicityConsent: PublicityConsent | null
     acceptedAt: string
 }
 

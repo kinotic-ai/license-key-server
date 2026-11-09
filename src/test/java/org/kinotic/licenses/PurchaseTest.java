@@ -167,7 +167,11 @@ class PurchaseTest extends ServerTest {
         assertThat(created.params().get("cancel_url"))
                 .endsWith("/buy?plan=" + plan.name().toLowerCase() + "&billing=" + period.name().toLowerCase());
         assertThat(await(acceptanceRepository.findByCustomerId(contact.getCustomerId())))
-                .anySatisfy(acceptance -> assertThat(acceptance.getTermsVersion()).isEqualTo(AgreementTerms.VERSION));
+                .anySatisfy(acceptance -> {
+                    assertThat(acceptance.getTermsVersion()).isEqualTo(AgreementTerms.VERSION);
+                    // a purchase consents to no publicity
+                    assertThat(acceptance.getPublicityConsent()).isNull();
+                });
         return complete(created, lookupKey);
     }
 

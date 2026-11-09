@@ -94,14 +94,16 @@ public interface CustomerAccountService {
     Future<RevenueConfirmation> confirmRevenue(String licenseId, CompanyFigures figures);
 
     /**
-     * Requests a free license for the calling customer with the figures it certifies, and records that the calling
-     * contact accepted the terms. Staff approve or reject the request. A free license renews with its yearly
+     * Requests a free license for the calling customer with the figures it certifies, which must set the Free plan, and
+     * records that the calling contact accepted the terms, with the Free terms' consent to name the customer as a
+     * Kinotic customer. Staff approve or reject the request. A free license renews with its yearly
      * confirmation.
      *
      * @param certification the figures the customer certifies
      * @param termsVersion  the version of the terms the contact accepted, which must be the current version
      * @return the pending request
-     * @throws IllegalArgumentException when a figure is missing or negative, or the terms version is not the current one
+     * @throws IllegalArgumentException when a figure is missing or negative, the figures set a paid plan, or the terms
+     *                                  version is not the current one
      * @throws IllegalStateException    when the customer holds an active free license
      * @throws org.kinotic.core.api.exceptions.AlreadyExistsException when another request of the customer's is open
      */
