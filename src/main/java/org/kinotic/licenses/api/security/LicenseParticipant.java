@@ -8,12 +8,13 @@ import lombok.Getter;
 import lombok.ToString;
 import org.kinotic.core.api.security.Participant;
 import org.kinotic.licenses.api.model.CustomerContact;
+import org.kinotic.licenses.api.model.License;
 
 import java.util.List;
 import java.util.Map;
 
 /**
- * A signed-in staff member or customer contact. Equality is by {@code id}, following the {@link Participant}
+ * A signed-in staff member, customer contact or Kinotic installation. Equality is by {@code id}, following the {@link Participant}
  * convention. Nothing sensitive belongs here: the participant travels with every request it sends.
  */
 @Getter
@@ -21,14 +22,18 @@ import java.util.Map;
 @EqualsAndHashCode(of = "id")
 public class LicenseParticipant implements Participant {
 
-    /** The staff member's email, or the customer contact's id. */
+    /** The staff member's email, the customer contact's id, or the installation's license id. */
     private final String id;
     private final ParticipantType type;
-    /** The customer the contact belongs to; {@code null} for staff. */
+    /** The customer the contact or installation belongs to; {@code null} for staff. */
     private final String customerId;
-    /** The signed-in email address. */
+    /** The license an installation signed in with; {@code null} for a person. */
+    private final String licenseId;
+    /** The id of the key an installation signed in with; {@code null} for a person. */
+    private final String keyId;
+    /** The signed-in email address; {@code null} for an installation. */
     private final String email;
-    /** The signed-in person's name, as the provider or the customer record gives it. */
+    /** The signed-in person's name, as the provider or the customer record gives it, or the licensee's legal name. */
     private final String name;
     private final Map<String, String> metadata;
     private final List<String> roles;
@@ -48,11 +53,29 @@ public class LicenseParticipant implements Participant {
                                  .build();
     }
 
+    /**
+     * The participant a Kinotic installation signs in as with a key of the license.
+     */
+    public static LicenseParticipant ofLicensee(License license, String keyId, String licensee) {
+        return LicenseParticipant.builder()
+                                 .id(license.getId())
+                                 .type(ParticipantType.LICENSEE)
+                                 .customerId(license.getCustomerId())
+                                 .licenseId(license.getId())
+                                 .keyId(keyId)
+                                 .name(licensee)
+                                 .metadata(Map.of())
+                                 .roles(List.of())
+                                 .build();
+    }
+
     @Builder
     @JsonCreator
     public LicenseParticipant(@JsonProperty("id") String id,
                               @JsonProperty("type") ParticipantType type,
                               @JsonProperty("customerId") String customerId,
+                              @JsonProperty("licenseId") String licenseId,
+                              @JsonProperty("keyId") String keyId,
                               @JsonProperty("email") String email,
                               @JsonProperty("name") String name,
                               @JsonProperty("metadata") Map<String, String> metadata,
@@ -60,6 +83,8 @@ public class LicenseParticipant implements Participant {
         this.id = id;
         this.type = type;
         this.customerId = customerId;
+        this.licenseId = licenseId;
+        this.keyId = keyId;
         this.email = email;
         this.name = name;
         this.metadata = metadata;

@@ -62,6 +62,7 @@ dependencyManagement {
         dependency "org.flywaydb:flyway-core:${flywayVersion}"
         dependency "org.flywaydb:flyway-database-postgresql:${flywayVersion}"
         dependency "org.kinotic:kinotic-api-gateway:${kinoticVersion}"
+        dependency "org.kinotic:kinotic-client:${kinoticVersion}"
         dependency "org.kinotic:kinotic-core:${kinoticVersion}"
         dependency "org.postgresql:postgresql:${postgresqlVersion}"
     }
@@ -103,9 +104,10 @@ dependencies {
     implementation 'tools.jackson.core:jackson-databind'
     implementation 'com.fasterxml.jackson.core:jackson-annotations'
 
-    // The test suites deploy the Kinotic TypeScript client for the frontend; the Java suites call the server over HTTP
+    // The Java suites call the server over HTTP, and over Kinotic RPC as Kinotic renews its key: with kinotic-client
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'io.vertx:vertx-web-client'
+    testImplementation('org.kinotic:kinotic-client') { changing = true }
     testImplementation 'org.testcontainers:testcontainers-postgresql'
     testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
     // the key format test parses keys with jjwt, as Kinotic's license verifier does

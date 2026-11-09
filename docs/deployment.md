@@ -159,6 +159,9 @@ KINOTIC_CORS_ALLOWEDORIGINPATTERN='https://(licenses\.kinotic\.ai|<staff host>)'
 
 `kinotic.cors.allowCredentials` is `true` in `application.yml`, so the session cookie flows.
 
+A Kinotic installation renewing its key connects with `kinotic-client`, whose WebSocket upgrade sends the gateway's
+own origin, `https://licenses.kinotic.ai`, as its `Origin`; the pattern above already admits it.
+
 ## Running the image
 
 ```bash
