@@ -73,13 +73,10 @@ export class StaffCustomerService {
         return this.proxy.invoke('resendKey', [licenseId])
     }
 
-    issueTrialKey(): Promise<IssuedKey> {
-        return this.proxy.invoke('issueTrialKey', [])
-    }
 
-    /** The public key license keys are signed with, as a JSON Web Key. */
-    getSigningKey(): Promise<Record<string, unknown>> {
-        return this.proxy.invoke('getSigningKey', [])
+    /** The public key license keys are signed with, as Base64 X.509 SubjectPublicKeyInfo. */
+    getSigningPublicKey(): Promise<string> {
+        return this.proxy.invoke('getSigningPublicKey', [])
     }
 }
 

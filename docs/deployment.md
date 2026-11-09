@@ -13,10 +13,9 @@ whatever it likes to the left of it. A second proxy in the chain would make ever
 - **Postgres** 16 or later, one database. Flyway migrates it at startup from `src/main/resources/db/migration`.
 - **Ignite** runs inside the container as a single node bound to the loopback interface; nothing to deploy, and no
   port to expose. The work directory is `/var/lib/license-key-server/ignite`.
-- **Azure Key Vault** holds the ES256 signing key. Create it once, and never export it:
-  ```bash
-  az keyvault key create --vault-name <vault> --name kinotic-license-signing --kty EC --curve P-256 --ops sign verify
-  ```
+- **Azure Key Vault** holds the ES256 signing key, `kinotic-license-signing`, which kinotic-ai/kinotic's
+  `deployment/terraform/azure/global/license.tf` creates in the system Key Vault; its private key cannot be exported.
+  Never create another: Kinotic trusts only that one (see [Checking the signing key](#checking-the-signing-key)).
   Grant the container's identity (a managed identity, or the workload identity `DefaultAzureCredential` resolves)
   the `Key Vault Crypto User` role, which allows `sign` and `get` and nothing else. Key Vault offers P-256, P-384,
   P-521 and P-256K; it has no Ed25519, which is why the format is ES256. In a Premium vault or a Managed HSM, an
@@ -89,11 +88,22 @@ docker run --rm -p 58503:58503 --env-file license-key-server.env kinoticai/licen
 `GET /health` answers `204` once the gateway is up. The frontend is built into the image; `/` serves it on both
 hostnames.
 
-## The trial key
+## Checking the signing key
 
-Staff issue the trial key from the dashboard (Customers, "Issue trial key"). It licenses `kinotic-trial` for
-development and testing with every feature and never expires; commit it to kinotic-ai/kinotic for CI and tests
-together with the public key the dashboard shows beside it, which the future `kinotic-license` verifier needs.
+Kinotic accepts only keys signed by the key its verifier trusts: `TRUSTED_PUBLIC_KEY` in
+`kinotic-domain/src/main/java/org/kinotic/domain/internal/api/ee/license/LicenseVerifier.java` in kinotic-ai/kinotic,
+the X.509 SubjectPublicKeyInfo of `kinotic-license-signing` in Base64. That key is the one
+`deployment/terraform/azure/global/license.tf` in kinotic-ai/kinotic creates (its `license_signing_public_key_pem`
+output). Before the server issues its first key, and whenever `KINOTIC_LICENSES_SIGNINGKEYID` changes, check that the
+key this server signs with is that key:
+
+```bash
+az keyvault key download --vault-name <vault> --name kinotic-license-signing --encoding DER --file signing.der
+base64 -w0 signing.der   # must print TRUSTED_PUBLIC_KEY exactly
+```
+
+The staff dashboard shows the same value under Customers, "Signing key", read from the key the running server signs
+with. If the two differ, Kinotic refuses every key this server issues.
 
 ## Legal
 

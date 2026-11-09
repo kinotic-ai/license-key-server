@@ -5,7 +5,6 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import lombok.RequiredArgsConstructor;
-import org.kinotic.licenses.api.model.Feature;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseStatus;
@@ -14,9 +13,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
 import java.util.Arrays;
-import java.util.EnumSet;
 import java.util.List;
-import java.util.Set;
 
 /**
  * Stores licenses. Every change writes only the columns it is about, in one statement, so changes made at the same
@@ -27,7 +24,7 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class LicenseRepository {
 
-    private static final String COLUMNS = "id, customer_id, plan, status, features, stripe_subscription_id, checkout_session_id,"
+    private static final String COLUMNS = "id, customer_id, plan, status, stripe_subscription_id, checkout_session_id,"
             + " current_period_end, cancels_at, term_start, term_end, last_payment_at, created_at";
     // the status a billing change sets, unless staff revoked the license or its subscription ended; Stripe never
     // reopens a canceled subscription, so a later write is an event delivered out of order
@@ -36,11 +33,11 @@ public class LicenseRepository {
     private final Pool pool;
 
     public Future<License> save(License license) {
-        return pool.preparedQuery("INSERT INTO license (id, customer_id, plan, status, features, stripe_subscription_id,"
+        return pool.preparedQuery("INSERT INTO license (id, customer_id, plan, status, stripe_subscription_id,"
                                           + " checkout_session_id, current_period_end, term_start, term_end, last_payment_at)"
-                                          + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING " + COLUMNS)
+                                          + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING " + COLUMNS)
                    .execute(Tuple.of(license.getId(), license.getCustomerId(), PgValues.name(license.getPlan()),
-                                     PgValues.name(license.getStatus()), featureNames(license.getFeatures()),
+                                     PgValues.name(license.getStatus()),
                                      license.getStripeSubscriptionId(), license.getCheckoutSessionId(),
                                      PgValues.timestamp(license.getCurrentPeriodEnd()), PgValues.timestamp(license.getTermStart()),
                                      PgValues.timestamp(license.getTermEnd()), PgValues.timestamp(license.getLastPaymentAt())))
@@ -66,14 +63,14 @@ public class LicenseRepository {
     }
 
     /**
-     * Writes what Stripe reports about the subscription: its plan and features, the end of the billing period, when it
+     * Writes what Stripe reports about the subscription: its plan, the end of the billing period, when it
      * is set to end, and its status, unless the license is revoked or canceled.
      *
      * @return the license as stored, or {@code null} when none has the id
      */
     public Future<License> syncSubscription(String id, Plan plan, LicenseStatus status, Instant currentPeriodEnd, Instant cancelsAt) {
-        return updateOne("plan = $2, features = $3, current_period_end = $4, cancels_at = $5, " + STATUS_UNLESS_ENDED.formatted("$6"),
-                         id, PgValues.name(plan), featureNames(plan.features()), PgValues.timestamp(currentPeriodEnd),
+        return updateOne("plan = $2, current_period_end = $3, cancels_at = $4, " + STATUS_UNLESS_ENDED.formatted("$5"),
+                         id, PgValues.name(plan), PgValues.timestamp(currentPeriodEnd),
                          PgValues.timestamp(cancelsAt), PgValues.name(status));
     }
 
@@ -89,13 +86,13 @@ public class LicenseRepository {
     public Future<License> startTerm(License read, Instant termStart, Instant termEnd, IssuedKey key) {
         // one statement, so a failed key insert also leaves the term where it was
         return pool.preparedQuery("WITH moved AS (UPDATE license SET term_start = $3, term_end = $4"
-                                          + " WHERE id = $1 AND term_end = $2 AND status <> 'REVOKED' AND status = $10 AND plan = $11"
-                                          + " AND cancels_at IS NOT DISTINCT FROM $12 RETURNING " + COLUMNS + "),"
-                                          + " stored AS (INSERT INTO issued_key (jti, license_id, purpose, key, issued_at, expires_at)"
-                                          + " SELECT $5, id, $6, $7, $8, $9 FROM moved)"
+                                          + " WHERE id = $1 AND term_end = $2 AND status <> 'REVOKED' AND status = $9 AND plan = $10"
+                                          + " AND cancels_at IS NOT DISTINCT FROM $11 RETURNING " + COLUMNS + "),"
+                                          + " stored AS (INSERT INTO issued_key (jti, license_id, key, issued_at, expires_at)"
+                                          + " SELECT $5, id, $6, $7, $8 FROM moved)"
                                           + " SELECT " + COLUMNS + " FROM moved")
                    .execute(Tuple.from(Arrays.asList(read.getId(), PgValues.timestamp(read.getTermEnd()), PgValues.timestamp(termStart),
-                                                     PgValues.timestamp(termEnd), key.getJti(), PgValues.name(key.getPurpose()),
+                                                     PgValues.timestamp(termEnd), key.getJti(),
                                                      key.getKey(), PgValues.timestamp(key.getIssuedAt()),
                                                      PgValues.timestamp(key.getExpiresAt()), PgValues.name(read.getStatus()),
                                                      PgValues.name(read.getPlan()), PgValues.timestamp(read.getCancelsAt()))))
@@ -156,21 +153,12 @@ public class LicenseRepository {
                    .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
     }
 
-    private static String[] featureNames(Set<Feature> features) {
-        return features.stream().map(Feature::name).toArray(String[]::new);
-    }
-
     private static License toLicense(Row row) {
-        Set<Feature> features = EnumSet.noneOf(Feature.class);
-        for (String name : row.getArrayOfStrings("features")) {
-            features.add(Feature.valueOf(name));
-        }
         return new License()
                 .setId(row.getString("id"))
                 .setCustomerId(row.getString("customer_id"))
                 .setPlan(PgValues.enumValue(row, "plan", Plan.class))
                 .setStatus(PgValues.enumValue(row, "status", LicenseStatus.class))
-                .setFeatures(features)
                 .setStripeSubscriptionId(row.getString("stripe_subscription_id"))
                 .setCheckoutSessionId(row.getString("checkout_session_id"))
                 .setCurrentPeriodEnd(PgValues.instant(row, "current_period_end"))

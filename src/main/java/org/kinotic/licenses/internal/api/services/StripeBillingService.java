@@ -384,7 +384,6 @@ public class StripeBillingService {
                               .setName(product != null ? product.getName() : plan.name())
                               .setMonthlyPrice(price.getUnitAmountDecimal().divide(MINOR_UNITS))
                               .setCurrency(price.getCurrency())
-                              .setFeatures(plan.features())
                               .setHighlights(product != null && product.getMarketingFeatures() != null
                                                      ? product.getMarketingFeatures().stream().map(Product.MarketingFeature::getName).toList()
                                                      : List.of())
@@ -395,7 +394,6 @@ public class StripeBillingService {
                           .setName("Free")
                           .setMonthlyPrice(BigDecimal.ZERO)
                           .setCurrency(currency)
-                          .setFeatures(Plan.FREE.features())
                           .setHighlights(List.of())
                           .setRequiresApproval(true));
         plans.sort(Comparator.comparing(PlanInfo::getId));

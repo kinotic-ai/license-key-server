@@ -227,7 +227,7 @@ class BillingWebhookTest extends ServerTest {
         License renewed = await(licenseRepository.findById(due.getId()));
         assertThat(renewed.getTermStart()).isEqualTo(termEnd);
         assertThat(renewed.getTermEnd()).isEqualTo(LicenseService.termEnd(termEnd));
-        assertThat(dueKeys.getFirst().getExpiresAt()).isEqualTo(renewed.getTermEnd().plus(LicenseService.KEY_BUFFER));
+        assertThat(dueKeys.getFirst().getExpiresAt()).isEqualTo(renewed.getTermEnd().plus(LicenseService.KEY_BUFFER).truncatedTo(ChronoUnit.SECONDS));
         assertThat(output.getAll()).contains("Your renewed Kinotic Enterprise license key");
 
         assertThat(await(licenseService.keysOf(pastDue.getId()))).hasSize(1);
@@ -288,7 +288,7 @@ class BillingWebhookTest extends ServerTest {
         assertThat(paid.getTermStart()).isAfterOrEqualTo(before);
         List<IssuedKey> keys = await(licenseService.keysOf(awaiting.getId()));
         assertThat(keys).hasSize(1);
-        assertThat(keys.getFirst().getExpiresAt()).isEqualTo(paid.getTermEnd().plus(LicenseService.KEY_BUFFER));
+        assertThat(keys.getFirst().getExpiresAt()).isEqualTo(paid.getTermEnd().plus(LicenseService.KEY_BUFFER).truncatedTo(ChronoUnit.SECONDS));
         assertThat(checkoutKey(buyer, sessionId).getStatus()).isEqualTo(CheckoutKeyStatus.READY);
 
         // the next invoice of a license that has its key issues no other

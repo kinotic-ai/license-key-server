@@ -5,11 +5,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.kinotic.licenses.api.model.Customer;
 import org.kinotic.licenses.api.model.CustomerContact;
-import org.kinotic.licenses.api.model.Feature;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseKeyClaims;
-import org.kinotic.licenses.api.model.LicensePurpose;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.internal.api.model.NewLicense;
@@ -23,7 +21,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.Period;
 import java.time.ZoneOffset;
-import java.util.EnumSet;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.BiFunction;
@@ -45,8 +43,6 @@ public class LicenseService {
     public static final Duration KEY_BUFFER = Duration.ofDays(14);
     /** How far ahead of a term's end its renewal key is issued. */
     public static final Duration RENEWAL_WINDOW = Duration.ofDays(30);
-    /** The licensee named by the trial key, which Kinotic's own tests and CI run under. */
-    public static final String TRIAL_SUBJECT = "kinotic-trial";
 
     private final LicenseRepository licenseRepository;
     private final IssuedKeyRepository issuedKeyRepository;
@@ -161,16 +157,6 @@ public class LicenseService {
     }
 
     /**
-     * Issues the trial key: it licenses {@link #TRIAL_SUBJECT} for development and testing with every feature and
-     * never expires. It belongs to no license and is logged like every other key.
-     */
-    public Future<IssuedKey> issueTrialKey() {
-        LicenseKeyClaims claims = new LicenseKeyClaims(TRIAL_SUBJECT, UUID.randomUUID().toString(), Instant.now(), null,
-                                                       LicensePurpose.DEVELOPMENT_AND_TESTING, EnumSet.allOf(Feature.class));
-        return sign(claims, null);
-    }
-
-    /**
      * Revokes the license: no further key is issued for it.
      */
     public Future<License> revoke(License license) {
@@ -215,7 +201,6 @@ public class LicenseService {
                 .setId(UUID.randomUUID().toString())
                 .setCustomerId(customer.getId())
                 .setPlan(plan)
-                .setFeatures(plan.features())
                 .setStripeSubscriptionId(stripeSubscriptionId)
                 .setCheckoutSessionId(checkoutSessionId)
                 .setCurrentPeriodEnd(currentPeriodEnd)
@@ -227,8 +212,7 @@ public class LicenseService {
     // nobody revoked the license or moved its term meanwhile, and the key is logged only once it has.
     private Future<NewLicense> issueForTerm(License license, Instant termStart) {
         Instant termEnd = termEnd(termStart);
-        LicenseKeyClaims claims = claims(license, termEnd);
-        return keyIssuer.issue(claims)
+        return claims(license, termEnd).compose(claims -> keyIssuer.issue(claims)
                         .compose(key -> {
                             IssuedKey issued = issuedKey(claims, key, license.getId());
                             return licenseRepository.startTerm(license, termStart, termEnd, issued)
@@ -240,16 +224,19 @@ public class LicenseService {
                                                         logIssued(issued);
                                                         return new NewLicense(moved, issued);
                                                     });
-                        });
+                        }));
     }
 
     private Future<IssuedKey> issueKey(License license, Instant termEnd) {
-        return sign(claims(license, termEnd), license.getId());
+        return claims(license, termEnd).compose(claims -> sign(claims, license.getId()));
     }
 
-    private static LicenseKeyClaims claims(License license, Instant termEnd) {
-        return new LicenseKeyClaims(license.getCustomerId(), UUID.randomUUID().toString(), Instant.now(),
-                                    termEnd.plus(KEY_BUFFER), LicensePurpose.PRODUCTION, license.getFeatures());
+    // A key names its licensee by the customer's legal name, which Kinotic shows on its License page. Its expiry is in
+    // whole seconds, as the JWT carries it, so the key log records the expiry the key has.
+    private Future<LicenseKeyClaims> claims(License license, Instant termEnd) {
+        return customerRepository.findById(license.getCustomerId())
+                                 .map(customer -> new LicenseKeyClaims(customer.getLegalName(), UUID.randomUUID().toString(),
+                                                                       Instant.now(), termEnd.plus(KEY_BUFFER).truncatedTo(ChronoUnit.SECONDS)));
     }
 
     private Future<IssuedKey> sign(LicenseKeyClaims claims, String licenseId) {
@@ -270,14 +257,13 @@ public class LicenseService {
         return new IssuedKey()
                 .setJti(claims.keyId())
                 .setLicenseId(licenseId)
-                .setPurpose(claims.purpose())
                 .setKey(key)
                 .setIssuedAt(claims.issuedAt())
                 .setExpiresAt(claims.expiresAt());
     }
 
     private static void logIssued(IssuedKey issued) {
-        log.info("Issued key {} for {}", issued.getJti(), issued.getLicenseId() != null ? "license " + issued.getLicenseId() : TRIAL_SUBJECT);
+        log.info("Issued key {} for license {}", issued.getJti(), issued.getLicenseId());
     }
 
     // every contact of the licensee gets the email; a failure to send fails the caller, which retries or reports it

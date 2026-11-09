@@ -18,7 +18,6 @@ import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * The staff dashboard's customers and license actions. Every action is logged with the staff member taking it.
@@ -88,14 +87,8 @@ public class DefaultStaffCustomerService implements StaffCustomerService {
     }
 
     @Override
-    public Future<IssuedKey> issueTrialKey() {
-        return licenseService.issueTrialKey()
-                             .onSuccess(key -> log.info("{} issued the trial key {}", staff(), key.getJti()));
-    }
-
-    @Override
-    public Future<Map<String, Object>> getSigningKey() {
-        return Future.succeededFuture(signingKey.publicJwk().getMap());
+    public Future<String> getSigningPublicKey() {
+        return Future.succeededFuture(signingKey.publicKey());
     }
 
     private Future<License> license(String licenseId) {

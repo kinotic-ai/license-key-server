@@ -6,7 +6,6 @@ import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import lombok.RequiredArgsConstructor;
 import org.kinotic.licenses.api.model.IssuedKey;
-import org.kinotic.licenses.api.model.LicensePurpose;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -18,7 +17,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class IssuedKeyRepository {
 
-    private static final String COLUMNS = "jti, license_id, purpose, key, issued_at, expires_at";
+    private static final String COLUMNS = "jti, license_id, key, issued_at, expires_at";
 
     private final Pool pool;
 
@@ -29,11 +28,11 @@ public class IssuedKeyRepository {
      */
     public Future<IssuedKey> append(IssuedKey key) {
         // the revocation check and the insert are one statement, so a revocation committed first always wins
-        return pool.preparedQuery("INSERT INTO issued_key (jti, license_id, purpose, key, issued_at, expires_at)"
-                                          + " SELECT $1, $2, $3, $4, $5, $6"
+        return pool.preparedQuery("INSERT INTO issued_key (jti, license_id, key, issued_at, expires_at)"
+                                          + " SELECT $1, $2, $3, $4, $5"
                                           + " WHERE NOT EXISTS (SELECT 1 FROM license WHERE id = $2 AND status = 'REVOKED')"
                                           + " RETURNING " + COLUMNS)
-                   .execute(Tuple.of(key.getJti(), key.getLicenseId(), PgValues.name(key.getPurpose()), key.getKey(),
+                   .execute(Tuple.of(key.getJti(), key.getLicenseId(), key.getKey(),
                                      PgValues.timestamp(key.getIssuedAt()), PgValues.timestamp(key.getExpiresAt())))
                    .map(rows -> PgValues.first(rows, IssuedKeyRepository::toKey));
     }
@@ -66,7 +65,6 @@ public class IssuedKeyRepository {
         return new IssuedKey()
                 .setJti(row.getString("jti"))
                 .setLicenseId(row.getString("license_id"))
-                .setPurpose(PgValues.enumValue(row, "purpose", LicensePurpose.class))
                 .setKey(row.getString("key"))
                 .setIssuedAt(PgValues.instant(row, "issued_at"))
                 .setExpiresAt(PgValues.instant(row, "expires_at"));

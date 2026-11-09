@@ -30,8 +30,7 @@ async function copy() {
       <div class="min-w-0 text-sm">
         <div class="app-heading-text font-medium">Issued {{ formatDate(issuedKey.issuedAt) }}</div>
         <div class="app-muted-text">
-          {{ issuedKey.expiresAt ? `Expires ${formatDate(issuedKey.expiresAt)}` : 'Never expires' }}
-          · {{ issuedKey.purpose === 'PRODUCTION' ? 'Production' : 'Development and testing' }}
+          Expires {{ formatDate(issuedKey.expiresAt) }}
           · <span class="font-mono text-xs">{{ issuedKey.jti }}</span>
         </div>
       </div>

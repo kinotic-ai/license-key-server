@@ -1,7 +1,5 @@
 package org.kinotic.licenses.api.model;
 
-import java.util.Set;
-
 /**
  * The plans Kinotic Enterprise is licensed under. Every paid plan is a monthly Stripe subscription whose price
  * lives on the Stripe Price with the plan's {@link #lookupKey()}; the free plan is granted by staff.
@@ -14,14 +12,6 @@ public enum Plan {
     ENTERPRISE;
 
     private static final String LOOKUP_KEY_PREFIX = "kinotic-";
-    private static final Set<Feature> EVERY_PLAN_FEATURES = Set.of(Feature.AZURE_KEY_VAULT);
-
-    /**
-     * The Enterprise Features a key for this plan enables.
-     */
-    public Set<Feature> features() {
-        return EVERY_PLAN_FEATURES;
-    }
 
     /**
      * The {@code lookup_key} of the Stripe Price that prices this plan, {@code kinotic-startup} for

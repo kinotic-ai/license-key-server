@@ -6,7 +6,6 @@ import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import lombok.RequiredArgsConstructor;
-import org.kinotic.licenses.api.model.Feature;
 import org.kinotic.licenses.api.model.LicenseKeyClaims;
 import org.springframework.stereotype.Component;
 
@@ -16,20 +15,21 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 
 /**
- * Issues license keys to the Kinotic license key format: a compact JWS,
- * {@code base64url(header).base64url(payload).base64url(signature)}, whose header is
- * {@code {"alg":"ES256","typ":"kinotic-license"}} and whose signature is ES256 over the signing input in IEEE P1363
- * form ({@code R||S}), as Azure Key Vault returns it. The payload carries {@code sub}, {@code jti}, {@code iat},
- * {@code exp} (absent for a key that never expires), {@code purpose} and {@code features}.
+ * Issues license keys in the format Kinotic verifies: a JWT signed with ES256, whose header is
+ * {@code {"alg":"ES256","typ":"JWT"}} and whose payload carries {@code sub} (the licensee's legal name), {@code jti},
+ * {@code iat}, {@code exp} and {@code features: ["*"]}, which turns on every Enterprise Feature. The signature is over
+ * the signing input in IEEE P1363 form ({@code R||S}), as JWS requires and Azure Key Vault returns it.
  * <p>
- * The format is shared with the verifier in Kinotic's {@code kinotic-license} module; this is the one class that
- * knows it on the issuing side.
+ * Kinotic's verifier is {@code org.kinotic.domain.internal.api.ee.license.LicenseVerifier} in kinotic-ai/kinotic; this
+ * is the one class that knows the format on the issuing side.
  */
 @Component
 @RequiredArgsConstructor
 public class LicenseKeyIssuer {
 
-    private static final String HEADER = "{\"alg\":\"ES256\",\"typ\":\"kinotic-license\"}";
+    private static final String HEADER = "{\"alg\":\"ES256\",\"typ\":\"JWT\"}";
+    // the features entry Kinotic reads as every Enterprise Feature, those released later included
+    private static final String ALL_FEATURES = "*";
     private static final Base64.Encoder BASE64URL = Base64.getUrlEncoder().withoutPadding();
 
     private final LicenseSigningKey signingKey;
@@ -49,17 +49,12 @@ public class LicenseKeyIssuer {
     }
 
     private static JsonObject payload(LicenseKeyClaims claims) {
-        JsonObject ret = new JsonObject()
+        return new JsonObject()
                 .put("sub", claims.subject())
                 .put("jti", claims.keyId())
-                .put("iat", claims.issuedAt().getEpochSecond());
-        if (claims.expiresAt() != null) {
-            ret.put("exp", claims.expiresAt().getEpochSecond());
-        }
-        JsonArray features = new JsonArray();
-        claims.features().stream().map(Feature::name).sorted().forEach(features::add);
-        return ret.put("purpose", claims.purpose().name())
-                  .put("features", features);
+                .put("iat", claims.issuedAt().getEpochSecond())
+                .put("exp", claims.expiresAt().getEpochSecond())
+                .put("features", new JsonArray().add(ALL_FEATURES));
     }
 
     private static byte[] sha256(byte[] input) {

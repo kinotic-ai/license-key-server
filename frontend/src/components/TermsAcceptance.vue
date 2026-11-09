@@ -19,7 +19,7 @@ const accepted = defineModel<boolean>({ required: true })
         <p>
           By accepting you agree, on behalf of the organization named above, to the Kinotic Enterprise License, which
           licenses the Enterprise Features of Kinotic to that organization for the term of each license key issued to
-          it, for the purpose the key names.
+          it.
         </p>
         <p>
           Paid plans bill monthly through Stripe until canceled. Canceling stops new keys from being issued; a key
@@ -28,8 +28,8 @@ const accepted = defineModel<boolean>({ required: true })
         </p>
         <p>
           The full text of the Kinotic Enterprise License is published with Kinotic at
-          <a class="underline" href="https://github.com/kinotic-ai/kinotic/blob/develop/kinotic-ee/LICENSE" target="_blank" rel="noopener">
-            kinotic-ee/LICENSE</a>.
+          <a class="underline" href="https://github.com/kinotic-ai/kinotic/blob/develop/LICENSE-ENTERPRISE" target="_blank" rel="noopener">
+            LICENSE-ENTERPRISE</a>.
         </p>
       </div>
     </details>

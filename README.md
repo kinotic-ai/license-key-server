@@ -6,8 +6,9 @@ and get a signed key the moment payment succeeds; small organizations request a 
 Staff see every customer and the keys it holds on a dashboard served on a network-restricted host.
 
 The server runs on Kinotic RPC alone (`kinotic-core` and `kinotic-api-gateway`) with its own single-node Ignite and
-a Postgres database. It never needs a Kinotic OS server: it is what licenses them. Keys are compact ES256 JWS signed
-in Azure Key Vault, where the private key stays.
+a Postgres database. It never needs a Kinotic OS server: it is what licenses them. Keys are ES256 JWTs signed in Azure
+Key Vault, where the private key stays, in the format Kinotic's license verifier reads: `sub` is the customer's legal
+name, `exp` is always set, and `features` is `["*"]`, every Enterprise Feature.
 
 Everything a signed-in page does goes through the published services over Kinotic RPC. HTTP carries only sign-in and
 sign-up (as the Kinotic consoles do), the Stripe webhook, the staff OIDC redirect, and `GET /api/site`, which a page

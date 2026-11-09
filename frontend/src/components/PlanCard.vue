@@ -6,11 +6,6 @@ import { formatMoney } from '@/util/format'
 defineProps<{
   plan: PlanInfo
 }>()
-
-const FEATURE_LABELS: Record<string, string> = {
-  AZURE_KEY_VAULT: 'Secrets in Azure Key Vault',
-  ENTERPRISE_IDENTITY_PROVIDERS: 'Okta and Entra organization SSO'
-}
 </script>
 
 <template>
@@ -28,9 +23,6 @@ const FEATURE_LABELS: Record<string, string> = {
     <ul class="app-muted-text mt-5 flex-1 space-y-2 text-sm">
       <li v-for="highlight in plan.highlights" :key="highlight" class="flex gap-2">
         <i class="pi pi-check mt-0.5 text-primary-500" /> {{ highlight }}
-      </li>
-      <li v-for="feature in plan.features" :key="feature" class="flex gap-2">
-        <i class="pi pi-check mt-0.5 text-primary-500" /> {{ FEATURE_LABELS[feature] ?? feature }}
       </li>
     </ul>
     <RouterLink :to="plan.requiresApproval ? '/free' : { path: '/buy', query: { plan: plan.id } }" class="mt-6">

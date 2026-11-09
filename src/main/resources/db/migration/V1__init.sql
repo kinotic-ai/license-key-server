@@ -34,7 +34,6 @@ CREATE TABLE license (
     customer_id            TEXT        NOT NULL REFERENCES customer (id),
     plan                   TEXT        NOT NULL,
     status                 TEXT        NOT NULL,
-    features               TEXT[]      NOT NULL,
     stripe_subscription_id TEXT UNIQUE,
     -- the Checkout Session that bought it, which the success page shows the first key for
     checkout_session_id    TEXT UNIQUE,
@@ -68,14 +67,13 @@ CREATE INDEX free_license_request_status_idx ON free_license_request (status, cr
 CREATE UNIQUE INDEX free_license_request_open_idx ON free_license_request (customer_id)
     WHERE status = 'PENDING' OR (status = 'APPROVED' AND issued_key_jti IS NULL);
 
--- Every key ever issued, appended to and never updated. The trial key belongs to no license.
+-- Every key ever issued, appended to and never updated.
 CREATE TABLE issued_key (
     jti        TEXT PRIMARY KEY,
-    license_id TEXT REFERENCES license (id),
-    purpose    TEXT        NOT NULL,
+    license_id TEXT        NOT NULL REFERENCES license (id),
     key        TEXT        NOT NULL,
     issued_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at TIMESTAMPTZ
+    expires_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX issued_key_license_idx ON issued_key (license_id, issued_at);
 

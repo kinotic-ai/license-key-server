@@ -15,13 +15,12 @@ import {
   type CrudHeader,
   type DescriptiveIdentifiable
 } from '@kinotic-ai/frontend-common'
-import type { CustomerSummary, IssuedKey } from '@/api/model'
+import type { CustomerSummary } from '@/api/model'
 import { staffCustomerService } from '@/api/services'
-import KeyBlock from '@/components/KeyBlock.vue'
 import LicenseStatusTag from '@/components/LicenseStatusTag.vue'
 import { formatDate, planName } from '@/util/format'
 
-/** Every customer with its plan, status, billing period, term, last payment and latest key; and the trial key action. */
+/** Every customer with its plan, status, billing period, term, last payment and latest key; and the signing public key. */
 const router = useRouter()
 const toast = useToast()
 
@@ -50,19 +49,18 @@ async function load(pageable: Pageable, searchText: string | null): Promise<Iter
 
 const { tableSearch, dataSource } = useCrudTablePage(load)
 
-const trialKey = ref<IssuedKey | null>(null)
-const signingKey = ref<string>('')
-const issuingTrial = ref(false)
+// the signing public key, shown on request so staff can check it against the key Kinotic trusts
+const signingPublicKey = ref<string | null>(null)
+const loadingSigningKey = ref(false)
 
-async function issueTrialKey() {
-  issuingTrial.value = true
+async function showSigningKey() {
+  loadingSigningKey.value = true
   try {
-    trialKey.value = await staffCustomerService.issueTrialKey()
-    signingKey.value = JSON.stringify(await staffCustomerService.getSigningKey(), null, 2)
+    signingPublicKey.value = await staffCustomerService.getSigningPublicKey()
   } catch (err) {
-    showErrorToast(toast, 'The trial key could not be issued', err, { life: 8000 })
+    showErrorToast(toast, 'The signing key could not be read', err, { life: 8000 })
   } finally {
-    issuingTrial.value = false
+    loadingSigningKey.value = false
   }
 }
 </script>
@@ -71,7 +69,7 @@ async function issueTrialKey() {
   <div>
     <PageHeader title="Customers" description="Every licensee, with the state of its newest license and the key it holds.">
       <template #actions>
-        <Button label="Issue trial key" icon="pi pi-key" severity="secondary" outlined :loading="issuingTrial" @click="issueTrialKey" />
+        <Button label="Signing key" icon="pi pi-key" severity="secondary" outlined :loading="loadingSigningKey" @click="showSigningKey" />
       </template>
     </PageHeader>
     <CrudTable ref="crudTable" :headers="headers" :data-source="dataSource" :search="tableSearch" :is-show-add-new="false"
@@ -88,16 +86,12 @@ async function issueTrialKey() {
       </template>
     </CrudTable>
 
-    <FormDrawer :visible="trialKey !== null" title="Trial key"
-                description="Development and testing only, never expires, every feature. Commit it to kinotic-ai/kinotic for CI and tests, with the public key that verifies it."
-                @close="trialKey = null">
-      <KeyBlock v-if="trialKey" :issued-key="trialKey" />
-      <div v-if="signingKey" class="mt-5">
-        <h3 class="app-heading-text mb-2 text-sm font-medium">Public key (JSON Web Key)</h3>
-        <pre class="app-card-surface overflow-x-auto rounded-lg border p-3 font-mono text-xs">{{ signingKey }}</pre>
-      </div>
+    <FormDrawer :visible="signingPublicKey !== null" title="Signing public key"
+                description="The public key every license key is signed with. It must equal TRUSTED_PUBLIC_KEY in Kinotic's LicenseVerifier, or Kinotic refuses every key this server issues."
+                @close="signingPublicKey = null">
+      <pre class="app-card-surface overflow-x-auto whitespace-pre-wrap break-all rounded-lg border p-3 font-mono text-xs">{{ signingPublicKey }}</pre>
       <template #footer>
-        <Button type="button" label="Done" @click="trialKey = null" />
+        <Button type="button" label="Done" @click="signingPublicKey = null" />
       </template>
     </FormDrawer>
   </div>

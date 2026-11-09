@@ -2,8 +2,6 @@
 
 export type Plan = 'FREE' | 'STARTUP' | 'BUSINESS' | 'ENTERPRISE'
 export type LicenseStatus = 'ACTIVE' | 'PAST_DUE' | 'CANCELED' | 'REVOKED'
-export type Feature = 'AZURE_KEY_VAULT' | 'ENTERPRISE_IDENTITY_PROVIDERS'
-export type LicensePurpose = 'DEVELOPMENT_AND_TESTING' | 'PRODUCTION'
 export type ContactRole = 'BILLING' | 'TECHNICAL'
 export type FreeLicenseRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
 export type ParticipantType = 'STAFF' | 'CUSTOMER'
@@ -14,7 +12,6 @@ export interface PlanInfo {
     name: string
     monthlyPrice: number
     currency: string
-    features: Feature[]
     highlights: string[]
     requiresApproval: boolean
 }
@@ -48,7 +45,6 @@ export interface License {
     customerId: string
     plan: Plan
     status: LicenseStatus
-    features: Feature[]
     stripeSubscriptionId: string | null
     checkoutSessionId: string | null
     currentPeriodEnd: string | null
@@ -62,11 +58,10 @@ export interface License {
 
 export interface IssuedKey {
     jti: string
-    licenseId: string | null
-    purpose: LicensePurpose
+    licenseId: string
     key: string
     issuedAt: string
-    expiresAt: string | null
+    expiresAt: string
 }
 
 export interface LicenseWithKeys {
