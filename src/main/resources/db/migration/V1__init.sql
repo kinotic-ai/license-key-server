@@ -47,12 +47,32 @@ CREATE TABLE license (
     cancels_at             TIMESTAMPTZ,
     -- when the payment that left the license PAST_DUE failed; 30 days on, the license lapses
     past_due_since         TIMESTAMPTZ,
+    -- what staff should look at, as LicenseFlag names
+    flags                  TEXT[]      NOT NULL DEFAULT '{}',
+    -- when the contacts were last asked to confirm the figures; once per license year
+    confirmation_requested_at TIMESTAMPTZ,
     term_start             TIMESTAMPTZ NOT NULL,
     term_end               TIMESTAMPTZ NOT NULL,
     last_payment_at        TIMESTAMPTZ,
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX license_customer_idx ON license (customer_id);
+
+-- The figures a customer confirms once a year for its license's anniversary; capital_raised only where it decides
+-- between Free and Small. plan is the plan the figures set, license_plan the plan the license was on.
+CREATE TABLE revenue_confirmation (
+    id                 TEXT PRIMARY KEY,
+    license_id         TEXT           NOT NULL REFERENCES license (id),
+    anniversary        TIMESTAMPTZ    NOT NULL,
+    annual_revenue     NUMERIC(16, 2) NOT NULL,
+    capital_raised     NUMERIC(16, 2),
+    plan               TEXT           NOT NULL,
+    license_plan       TEXT           NOT NULL,
+    confirmed_by_name  TEXT           NOT NULL,
+    confirmed_by_email TEXT           NOT NULL,
+    confirmed_at       TIMESTAMPTZ    NOT NULL DEFAULT now(),
+    UNIQUE (license_id, anniversary)
+);
 
 CREATE TABLE free_license_request (
     id              TEXT PRIMARY KEY,

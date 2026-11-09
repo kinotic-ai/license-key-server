@@ -4,7 +4,9 @@ Minds Ignited's license key server: sells, issues and tracks Kinotic Enterprise 
 account on `licenses.kinotic.ai` by confirming their email with a code, then buy the plan their annual revenue sets
 (Small, Medium or Large), paying monthly or annually through Stripe, and get a signed key the moment payment
 succeeds; small organizations request a free license that staff approve. A license keeps the price list and terms it
-started on for as long as it stays active; see [Price lists](docs/deployment.md#price-lists).
+started on for as long as it stays active; see [Price lists](docs/deployment.md#price-lists). Once a year the customer
+confirms its figures, and the license moves to the plan they set at its anniversary; see
+[Yearly confirmation](docs/deployment.md#yearly-confirmation-and-plan-moves).
 Staff see every customer and the keys it holds on a dashboard served on a network-restricted host.
 
 The server runs on Kinotic RPC alone (`kinotic-core` and `kinotic-api-gateway`) with its own single-node Ignite and

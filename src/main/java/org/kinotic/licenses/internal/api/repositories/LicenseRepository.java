@@ -7,6 +7,7 @@ import io.vertx.sqlclient.Tuple;
 import lombok.RequiredArgsConstructor;
 import org.kinotic.licenses.api.model.BillingPeriod;
 import org.kinotic.licenses.api.model.IssuedKey;
+import org.kinotic.licenses.api.model.LicenseFlag;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
@@ -26,7 +27,7 @@ import java.util.List;
 public class LicenseRepository {
 
     private static final String COLUMNS = "id, customer_id, plan, status, billing_period, price_list, terms_version, stripe_subscription_id,"
-            + " checkout_session_id, current_period_end, cancels_at, past_due_since, term_start, term_end, last_payment_at, created_at";
+            + " checkout_session_id, current_period_end, cancels_at, past_due_since, flags, term_start, term_end, last_payment_at, created_at";
     // the statuses a billing change never moves a license out of
     private static final String ENDED = "('REVOKED', 'CANCELED', 'LAPSED')";
     // The status a billing change sets, unless staff revoked the license or its subscription ended; Stripe never
@@ -97,6 +98,86 @@ public class LicenseRepository {
                    .execute(Tuple.of(id, PgValues.name(plan), PgValues.name(billingPeriod), stripeSubscriptionId,
                                      checkoutSessionId, PgValues.timestamp(currentPeriodEnd)))
                    .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
+    }
+
+    /**
+     * Raises a flag on the license, unless it is raised already.
+     */
+    public Future<License> addFlag(String id, LicenseFlag flag) {
+        return updateOne("flags = CASE WHEN $2::text = ANY(flags) THEN flags ELSE array_append(flags, $2::text) END", id, flag.name());
+    }
+
+    /**
+     * Clears a flag of the license.
+     */
+    public Future<License> removeFlag(String id, LicenseFlag flag) {
+        return updateOne("flags = array_remove(flags, $2::text)", id, flag.name());
+    }
+
+    /**
+     * The licenses with the flag raised, oldest anniversary first.
+     */
+    public Future<List<License>> findFlagged(LicenseFlag flag) {
+        return pool.preparedQuery("SELECT " + COLUMNS + " FROM license WHERE $1::text = ANY(flags) ORDER BY term_start")
+                   .execute(Tuple.of(flag.name()))
+                   .map(rows -> PgValues.map(rows, LicenseRepository::toLicense));
+    }
+
+    /**
+     * Starts the next license year of a license whose year ends at {@code termEnd}, so two callers move it once.
+     *
+     * @return the license as stored, or {@code null} when its year no longer ends at {@code termEnd}
+     */
+    public Future<License> advanceTerm(String id, Instant termEnd, Instant nextTermEnd) {
+        return pool.preparedQuery("UPDATE license SET term_start = term_end, term_end = $3 WHERE id = $1 AND term_end = $2"
+                                          + " RETURNING " + COLUMNS)
+                   .execute(Tuple.of(id, PgValues.timestamp(termEnd), PgValues.timestamp(nextTermEnd)))
+                   .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
+    }
+
+    /**
+     * Moves a paid license whose subscription ended at its anniversary onto Free, keeping its price list, terms and
+     * license year. It no longer refers to the ended subscription.
+     *
+     * @return the license as stored, or {@code null} when it is not a paid license in good standing or past due
+     */
+    public Future<License> moveToFree(String id) {
+        return pool.preparedQuery("UPDATE license SET plan = 'FREE', billing_period = NULL, stripe_subscription_id = NULL,"
+                                          + " current_period_end = NULL, cancels_at = NULL, past_due_since = NULL, status = 'ACTIVE'"
+                                          + " WHERE id = $1 AND plan <> 'FREE' AND status IN ('ACTIVE', 'PAST_DUE') RETURNING " + COLUMNS)
+                   .execute(Tuple.of(id))
+                   .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
+    }
+
+    /**
+     * The licenses whose contacts are due the request to confirm their figures: in good standing or past due, with an
+     * anniversary before {@code anniversaryBefore} and after now, and not asked yet this license year.
+     */
+    public Future<List<License>> findConfirmationRequestsDue(Instant anniversaryBefore) {
+        return pool.preparedQuery("SELECT " + COLUMNS + " FROM license WHERE status IN ('ACTIVE', 'PAST_DUE')"
+                                          + " AND term_end > now() AND term_end < $1"
+                                          + " AND (confirmation_requested_at IS NULL OR confirmation_requested_at < term_start)"
+                                          + " ORDER BY term_end")
+                   .execute(Tuple.of(PgValues.timestamp(anniversaryBefore)))
+                   .map(rows -> PgValues.map(rows, LicenseRepository::toLicense));
+    }
+
+    /**
+     * Records that the license's contacts were asked to confirm their figures.
+     */
+    public Future<Void> markConfirmationRequested(String id) {
+        return pool.preparedQuery("UPDATE license SET confirmation_requested_at = now() WHERE id = $1")
+                   .execute(Tuple.of(id))
+                   .mapEmpty();
+    }
+
+    /**
+     * The licenses in good standing or past due whose anniversary has passed, oldest first.
+     */
+    public Future<List<License>> findAnniversariesPassed() {
+        return pool.query("SELECT " + COLUMNS + " FROM license WHERE status IN ('ACTIVE', 'PAST_DUE') AND term_end <= now() ORDER BY term_end")
+                   .execute()
+                   .map(rows -> PgValues.map(rows, LicenseRepository::toLicense));
     }
 
     /**
@@ -203,6 +284,7 @@ public class LicenseRepository {
                 .setCurrentPeriodEnd(PgValues.instant(row, "current_period_end"))
                 .setCancelsAt(PgValues.instant(row, "cancels_at"))
                 .setPastDueSince(PgValues.instant(row, "past_due_since"))
+                .setFlags(PgValues.enumSet(row, "flags", LicenseFlag.class))
                 .setTermStart(PgValues.instant(row, "term_start"))
                 .setTermEnd(PgValues.instant(row, "term_end"))
                 .setLastPaymentAt(PgValues.instant(row, "last_payment_at"))

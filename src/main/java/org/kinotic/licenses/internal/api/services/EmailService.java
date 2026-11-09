@@ -23,11 +23,13 @@ import org.kinotic.licenses.api.config.KinoticLicensesProperties;
 import org.kinotic.licenses.api.model.CustomerContact;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
+import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -61,6 +63,10 @@ public class EmailService {
     private static final Template PAST_DUE_TEXT = compile(TEXT_TEMPLATES, "past-due");
     private static final Template KEY_EXPIRING_HTML = compile(HTML_TEMPLATES, "key-expiring");
     private static final Template KEY_EXPIRING_TEXT = compile(TEXT_TEMPLATES, "key-expiring");
+    private static final Template CONFIRMATION_DUE_HTML = compile(HTML_TEMPLATES, "confirmation-due");
+    private static final Template CONFIRMATION_DUE_TEXT = compile(TEXT_TEMPLATES, "confirmation-due");
+    private static final Template PLAN_CHANGED_HTML = compile(HTML_TEMPLATES, "plan-changed");
+    private static final Template PLAN_CHANGED_TEXT = compile(TEXT_TEMPLATES, "plan-changed");
     private static final Template FREE_APPROVED_HTML = compile(HTML_TEMPLATES, "free-request-approved");
     private static final Template FREE_APPROVED_TEXT = compile(TEXT_TEMPLATES, "free-request-approved");
     private static final Template FREE_REJECTED_HTML = compile(HTML_TEMPLATES, "free-request-rejected");
@@ -108,12 +114,51 @@ public class EmailService {
     }
 
     /**
+     * Asks a contact to confirm the company's figures before the license's next anniversary.
+     */
+    public Future<Void> sendConfirmationDue(CustomerContact contact, String organization, License license) {
+        Map<String, Object> variables = new HashMap<>();
+        variables.put("organization", organization);
+        variables.put("planName", planName(license.getPlan()));
+        variables.put("anniversaryOn", DATE.format(license.getTermEnd()));
+        variables.put("figuresAsked", license.getPlan() == Plan.FREE ? "annual revenue and the capital it has raised" : "annual revenue");
+        variables.put("accountUrl", accountUrl());
+        return send(contact.getEmail(), contact.getName(), "Confirm your figures for your Kinotic license",
+                    CONFIRMATION_DUE_HTML, CONFIRMATION_DUE_TEXT, variables);
+    }
+
+    /**
+     * Tells a contact what the figures confirmed for the license's anniversary change: the plan it moves to, the paid
+     * subscription ending as the license continues as Free, or the paid plan a free license must buy.
+     *
+     * @param plan the plan the figures set
+     * @param at   the anniversary the change takes effect at
+     */
+    public Future<Void> sendPlanChanged(CustomerContact contact, String organization, License license, Plan plan, Instant at) {
+        String on = DATE.format(at);
+        String summary;
+        if (plan == Plan.FREE) {
+            summary = "Your paid subscription ends on " + on + ", and your license continues on the Free plan from then.";
+        } else if (license.getPlan() == Plan.FREE) {
+            summary = "Your company's figures now set the " + planName(plan) + " plan. Buy it from your account by " + on
+                    + " to keep your license, with the price list it keeps.";
+        } else {
+            summary = "Your license moves from the " + planName(license.getPlan()) + " plan to the " + planName(plan) + " plan on " + on + ".";
+        }
+        Map<String, Object> variables = new HashMap<>();
+        variables.put("organization", organization);
+        variables.put("summary", summary);
+        variables.put("accountUrl", accountUrl());
+        return send(contact.getEmail(), contact.getName(), "Your Kinotic plan is changing", PLAN_CHANGED_HTML, PLAN_CHANGED_TEXT, variables);
+    }
+
+    /**
      * Tells a contact a payment failed and no renewal key is issued until it is paid.
      */
     public Future<Void> sendPastDue(CustomerContact contact, String organization, License license) {
         Map<String, Object> variables = new HashMap<>();
         variables.put("organization", organization);
-        variables.put("planName", planName(license));
+        variables.put("planName", planName(license.getPlan()));
         variables.put("accountUrl", accountUrl());
         return send(contact.getEmail(), contact.getName(), "Action needed: your Kinotic payment didn't go through",
                     PAST_DUE_HTML, PAST_DUE_TEXT, variables);
@@ -140,7 +185,7 @@ public class EmailService {
     private Map<String, Object> keyVariables(String organization, License license, IssuedKey key) {
         Map<String, Object> ret = new HashMap<>();
         ret.put("organization", organization);
-        ret.put("planName", planName(license));
+        ret.put("planName", planName(license.getPlan()));
         ret.put("key", key.getKey());
         ret.put("expiresOn", DATE.format(key.getExpiresAt()));
         ret.put("accountUrl", accountUrl());
@@ -164,8 +209,8 @@ public class EmailService {
         return properties.getLicenses().getPublicBaseUrl() + ACCOUNT_PATH;
     }
 
-    private static String planName(License license) {
-        String name = license.getPlan().name();
+    private static String planName(Plan plan) {
+        String name = plan.name();
         return name.charAt(0) + name.substring(1).toLowerCase();
     }
 

@@ -5,6 +5,7 @@ import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
 
 import java.time.Instant;
+import java.util.Set;
 
 /**
  * A row of the staff customer list: the customer, its newest license and that license's newest key. The license
@@ -24,6 +25,8 @@ public class CustomerSummary {
     private Instant currentPeriodEnd;
     private Instant termEnd;
     private Instant lastPaymentAt;
+    /** What staff should look at on the license; empty when nothing or when the customer has no license. */
+    private Set<LicenseFlag> flags;
     private String latestKeyJti;
     private Instant latestKeyExpiresAt;
 }

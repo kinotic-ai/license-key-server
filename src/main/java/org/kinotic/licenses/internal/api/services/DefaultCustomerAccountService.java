@@ -10,10 +10,9 @@ import org.kinotic.licenses.api.model.CheckoutKeyStatus;
 import org.kinotic.licenses.api.model.CustomerAccount;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.FreeLicenseRequest;
-import org.kinotic.licenses.api.model.License;
-import org.kinotic.licenses.api.model.LicenseWithKeys;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.model.PlanPrice;
+import org.kinotic.licenses.api.model.RevenueConfirmation;
 import org.kinotic.licenses.api.model.CheckoutRequest;
 import org.kinotic.licenses.api.model.CompanyFigures;
 import org.kinotic.licenses.api.security.LicenseParticipant;
@@ -26,7 +25,6 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -54,6 +52,7 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
     private final StripeBillingService billingService;
     private final FreeLicenseService freeLicenseService;
     private final CustomerService customerService;
+    private final RevenueConfirmationService confirmationService;
 
     @Override
     public Future<CustomerAccount> getAccount() {
@@ -68,7 +67,7 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
                                      ret.setContacts(contacts);
                                      return licenseRepository.findByCustomerId(customerId);
                                  })
-                                 .compose(licenses -> withKeys(licenses, licenseService))
+                                 .compose(licenseService::withKeys)
                                  .compose(licenses -> {
                                      ret.setLicenses(licenses);
                                      return requestRepository.findByCustomerId(customerId);
@@ -131,6 +130,11 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
     }
 
     @Override
+    public Future<RevenueConfirmation> confirmRevenue(String licenseId, CompanyFigures figures) {
+        return confirmationService.confirm(caller(), licenseId, figures);
+    }
+
+    @Override
     public Future<FreeLicenseRequest> requestFreeLicense(FreeLicenseCertification certification, String termsVersion) {
         LicenseParticipant caller = caller();
         requireCurrentTerms(termsVersion);
@@ -153,19 +157,5 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
     private static void requireCurrentTerms(String termsVersion) {
         Validate.isTrue(AgreementTerms.VERSION.equals(termsVersion), "The terms must be accepted in their current version, %s",
                         AgreementTerms.VERSION);
-    }
-
-    /**
-     * Each license with its keys, in the order given.
-     */
-    static Future<List<LicenseWithKeys>> withKeys(List<License> licenses, LicenseService licenseService) {
-        Future<List<LicenseWithKeys>> ret = Future.succeededFuture(new ArrayList<>());
-        for (License license : licenses) {
-            ret = ret.compose(list -> licenseService.keysOf(license.getId()).map(keys -> {
-                list.add(new LicenseWithKeys().setLicense(license).setKeys(keys));
-                return list;
-            }));
-        }
-        return ret;
     }
 }

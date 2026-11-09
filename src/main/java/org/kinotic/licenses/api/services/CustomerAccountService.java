@@ -10,6 +10,7 @@ import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.FreeLicenseRequest;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.model.PlanPrice;
+import org.kinotic.licenses.api.model.RevenueConfirmation;
 import org.kinotic.licenses.api.model.CheckoutRequest;
 import org.kinotic.licenses.api.model.CompanyFigures;
 import org.kinotic.licenses.api.security.LicenseZones;
@@ -78,13 +79,30 @@ public interface CustomerAccountService {
     Future<CheckoutKey> findCheckoutKey(String checkoutSessionId);
 
     /**
-     * Requests a free license for the calling customer, or the renewal of the one it holds, with the figures it
-     * certifies, and records that the calling contact accepted the terms. Staff approve or reject the request.
+     * Confirms the calling customer's figures for the anniversary of its license they are due for (see
+     * {@link org.kinotic.licenses.api.model.LicenseWithKeys#getConfirmationDueFor()}). Figures that set another plan
+     * move the license at its next anniversary; a free license's figures that still set Free ask staff to approve its
+     * next year.
+     *
+     * @param licenseId the license
+     * @param figures   the annual revenue, and for a free license the capital raised
+     * @return the confirmation
+     * @throws IllegalArgumentException when the figures are not valid or the customer has no license with the id
+     * @throws IllegalStateException    when no confirmation is due
+     * @throws org.kinotic.core.api.exceptions.AlreadyExistsException when the figures are confirmed already
+     */
+    Future<RevenueConfirmation> confirmRevenue(String licenseId, CompanyFigures figures);
+
+    /**
+     * Requests a free license for the calling customer with the figures it certifies, and records that the calling
+     * contact accepted the terms. Staff approve or reject the request. A free license renews with its yearly
+     * confirmation.
      *
      * @param certification the figures the customer certifies
      * @param termsVersion  the version of the terms the contact accepted, which must be the current version
      * @return the pending request
      * @throws IllegalArgumentException when a figure is missing or negative, or the terms version is not the current one
+     * @throws IllegalStateException    when the customer holds an active free license
      * @throws org.kinotic.core.api.exceptions.AlreadyExistsException when another request of the customer's is open
      */
     Future<FreeLicenseRequest> requestFreeLicense(FreeLicenseCertification certification, String termsVersion);

@@ -5,6 +5,7 @@ import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
 
 import java.time.Instant;
+import java.util.Set;
 
 /**
  * A customer's license to Kinotic Enterprise. It runs in license years from its start; a paid plan bills monthly or
@@ -35,6 +36,8 @@ public class License {
     private Instant cancelsAt;
     /** When the payment that left the license past due failed; {@code null} unless it is {@link LicenseStatus#PAST_DUE}. */
     private Instant pastDueSince;
+    /** What staff should look at; empty when nothing. */
+    private Set<LicenseFlag> flags;
     /** The start of the current license year. */
     private Instant termStart;
     /** The end of the current license year, the license's next anniversary. */

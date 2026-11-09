@@ -8,7 +8,10 @@ import org.kinotic.licenses.api.model.Customer;
 import org.kinotic.licenses.api.model.CustomerContact;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
+import org.kinotic.licenses.api.model.LicenseFlag;
 import org.kinotic.licenses.api.model.LicenseKeyClaims;
+import org.kinotic.licenses.api.model.LicenseWithKeys;
+import org.kinotic.licenses.api.model.RevenueConfirmation;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.internal.api.model.NewLicense;
@@ -18,6 +21,7 @@ import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.kinotic.licenses.internal.api.repositories.IssuedKeyRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
+import org.kinotic.licenses.internal.api.repositories.RevenueConfirmationRepository;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -25,6 +29,7 @@ import java.time.Instant;
 import java.time.Period;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.BiFunction;
@@ -44,6 +49,8 @@ public class LicenseService {
 
     /** A license year. */
     public static final Period TERM = Period.ofMonths(12);
+    /** How long before an anniversary the customer is asked to confirm its figures for it. */
+    public static final Duration CONFIRMATION_WINDOW = Duration.ofDays(30);
     /** How long a key outlives the date its license is paid through. */
     public static final Duration KEY_GRACE = Duration.ofDays(7);
 
@@ -53,6 +60,7 @@ public class LicenseService {
     private final CustomerContactRepository contactRepository;
     private final LicenseKeyIssuer keyIssuer;
     private final EmailService emailService;
+    private final RevenueConfirmationRepository confirmationRepository;
 
     /**
      * Creates a paid license whose first payment has cleared, its year starting now on the subscription's price list
@@ -114,15 +122,19 @@ public class LicenseService {
     }
 
     /**
-     * Starts a free license's next license year and issues the key covering it. The year starts when the current one
-     * ends, or now when that is already past.
+     * Starts a free license's next license year and issues the key covering it. The year starts at an anniversary of the
+     * license: when the current year ends, or the latest anniversary since when that is more than a year past.
      *
      * @return the license and its key, or a failure with {@link IllegalStateException} when the license is not active,
      *         or changed since the caller read it
      */
     public Future<NewLicense> renewFreeTerm(License license) {
         Instant now = Instant.now();
-        return startFreeTerm(license, license.getTermEnd().isAfter(now) ? license.getTermEnd() : now);
+        Instant start = license.getTermEnd();
+        while (!termEnd(start).isAfter(now)) {
+            start = termEnd(start);
+        }
+        return startFreeTerm(license, start);
     }
 
     /**
@@ -147,6 +159,20 @@ public class LicenseService {
      */
     public Future<Void> emailRenewalKey(License license, IssuedKey key) {
         return emailContacts(license, (contact, organization) -> emailService.sendRenewalKey(contact, organization, license, key));
+    }
+
+    /**
+     * Asks the licensee's contacts to confirm the company's figures before the license's next anniversary.
+     */
+    public Future<Void> emailConfirmationDue(License license) {
+        return emailContacts(license, (contact, organization) -> emailService.sendConfirmationDue(contact, organization, license));
+    }
+
+    /**
+     * Tells the licensee's contacts what the figures they confirmed change at the anniversary {@code at}.
+     */
+    public Future<Void> emailPlanChanged(License license, Plan plan, Instant at) {
+        return emailContacts(license, (contact, organization) -> emailService.sendPlanChanged(contact, organization, license, plan, at));
     }
 
     /**
@@ -189,6 +215,54 @@ public class LicenseService {
      */
     public Future<License> revoke(License license) {
         return licenseRepository.revoke(license.getId());
+    }
+
+    /**
+     * Each license with its keys, its yearly confirmations and the anniversary its figures are due for, in the order
+     * given.
+     */
+    public Future<List<LicenseWithKeys>> withKeys(List<License> licenses) {
+        Future<List<LicenseWithKeys>> ret = Future.succeededFuture(new ArrayList<>());
+        for (License license : licenses) {
+            ret = ret.compose(list -> keysOf(license.getId()).compose(keys -> confirmationRepository.findByLicenseId(license.getId()).map(confirmations -> {
+                list.add(new LicenseWithKeys().setLicense(license)
+                                              .setKeys(keys)
+                                              .setPaidThrough(paidThrough(license))
+                                              .setConfirmations(confirmations)
+                                              .setConfirmationDueFor(confirmationDueFor(license, confirmations)));
+                return list;
+            })));
+        }
+        return ret;
+    }
+
+    /**
+     * The anniversary the license's figures are confirmed for now: its next one from {@link #CONFIRMATION_WINDOW} before
+     * it, or the one it missed while it is flagged {@link LicenseFlag#REVENUE_UNCONFIRMED}; {@code null} when it is too
+     * early or the license has ended.
+     */
+    public static Instant anniversaryToConfirm(License license) {
+        Instant ret = null;
+        if (license.getStatus() == LicenseStatus.ACTIVE || license.getStatus() == LicenseStatus.PAST_DUE) {
+            if (license.getFlags() != null && license.getFlags().contains(LicenseFlag.REVENUE_UNCONFIRMED)) {
+                ret = license.getTermStart();
+            } else if (!Instant.now().isBefore(license.getTermEnd().minus(CONFIRMATION_WINDOW))) {
+                ret = license.getTermEnd();
+            }
+        }
+        return ret;
+    }
+
+    /**
+     * The anniversary the license's figures are due for: {@link #anniversaryToConfirm(License)}, unless the figures for
+     * it are confirmed already.
+     *
+     * @param confirmations the license's confirmations
+     */
+    public static Instant confirmationDueFor(License license, List<RevenueConfirmation> confirmations) {
+        Instant ret = anniversaryToConfirm(license);
+        Instant due = ret;
+        return due != null && confirmations.stream().anyMatch(confirmation -> confirmation.getAnniversary().equals(due)) ? null : ret;
     }
 
     /**

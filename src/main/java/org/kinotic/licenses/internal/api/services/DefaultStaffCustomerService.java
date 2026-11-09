@@ -9,6 +9,7 @@ import org.kinotic.licenses.api.model.CustomerDetail;
 import org.kinotic.licenses.api.model.CustomerSummary;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
+import org.kinotic.licenses.api.model.LicenseFlag;
 import org.kinotic.licenses.api.security.LicenseParticipant;
 import org.kinotic.licenses.api.services.StaffCustomerService;
 import org.kinotic.licenses.internal.api.repositories.AgreementAcceptanceRepository;
@@ -17,6 +18,7 @@ import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.springframework.stereotype.Component;
 
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -41,6 +43,15 @@ public class DefaultStaffCustomerService implements StaffCustomerService {
     }
 
     @Override
+    public Future<List<CustomerSummary>> findRevenueUnconfirmed() {
+        return customerRepository.findSummaries()
+                                 .map(summaries -> summaries.stream()
+                                                            .filter(summary -> summary.getFlags().contains(LicenseFlag.REVENUE_UNCONFIRMED))
+                                                            .sorted(Comparator.comparing(CustomerSummary::getTermEnd))
+                                                            .toList());
+    }
+
+    @Override
     public Future<CustomerDetail> getCustomerDetail(String customerId) {
         CustomerDetail ret = new CustomerDetail();
         return customerRepository.findById(customerId)
@@ -53,7 +64,7 @@ public class DefaultStaffCustomerService implements StaffCustomerService {
                                      ret.setContacts(contacts);
                                      return licenseRepository.findByCustomerId(customerId);
                                  })
-                                 .compose(licenses -> DefaultCustomerAccountService.withKeys(licenses, licenseService))
+                                 .compose(licenseService::withKeys)
                                  .compose(licenses -> {
                                      ret.setLicenses(licenses);
                                      return acceptanceRepository.findByCustomerId(customerId);

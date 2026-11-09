@@ -26,6 +26,12 @@ public interface StaffCustomerService {
     Future<List<CustomerSummary>> findCustomerSummaries();
 
     /**
+     * The customers whose newest license reached its anniversary without its figures confirmed, oldest anniversary
+     * first. The license went on as it was; staff follow up with the customer.
+     */
+    Future<List<CustomerSummary>> findRevenueUnconfirmed();
+
+    /**
      * A customer with its contacts, licenses, keys and agreement acceptances.
      *
      * @throws IllegalArgumentException when no customer has the id

@@ -2,6 +2,7 @@
 
 export type Plan = 'FREE' | 'SMALL' | 'MEDIUM' | 'LARGE'
 export type BillingPeriod = 'MONTHLY' | 'ANNUAL'
+export type LicenseFlag = 'REVENUE_UNCONFIRMED'
 export type LicenseStatus = 'ACTIVE' | 'PAST_DUE' | 'LAPSED' | 'CANCELED' | 'REVOKED'
 export type ContactRole = 'BILLING' | 'TECHNICAL'
 export type FreeLicenseRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
@@ -73,6 +74,8 @@ export interface License {
     cancelsAt: string | null
     /** When the license fell past due; it lapses 30 days on. */
     pastDueSince: string | null
+    /** What staff should look at. */
+    flags: LicenseFlag[]
     termStart: string
     termEnd: string
     lastPaymentAt: string | null
@@ -90,6 +93,25 @@ export interface IssuedKey {
 export interface LicenseWithKeys {
     license: License
     keys: IssuedKey[]
+    /** The date the license is paid through, which its keys follow. */
+    paidThrough: string | null
+    /** The anniversary the figures are due for, when they are due. */
+    confirmationDueFor: string | null
+    /** The figures confirmed for each anniversary, newest first. */
+    confirmations: RevenueConfirmation[]
+}
+
+/** The figures a customer confirmed for one anniversary of its license, and the plan they set. */
+export interface RevenueConfirmation {
+    id: string
+    licenseId: string
+    anniversary: string
+    figures: CompanyFigures
+    plan: Plan
+    licensePlan: Plan
+    confirmedByName: string
+    confirmedByEmail: string
+    confirmedAt: string
 }
 
 export interface FreeLicenseRequest {
@@ -128,6 +150,7 @@ export interface CustomerSummary {
     currentPeriodEnd: string | null
     termEnd: string | null
     lastPaymentAt: string | null
+    flags: LicenseFlag[]
     latestKeyJti: string | null
     latestKeyExpiresAt: string | null
 }

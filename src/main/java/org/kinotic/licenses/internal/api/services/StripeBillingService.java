@@ -8,11 +8,15 @@ import com.stripe.model.Price;
 import com.stripe.model.StripeObject;
 import com.stripe.model.Subscription;
 import com.stripe.model.SubscriptionItem;
+import com.stripe.model.SubscriptionSchedule;
 import com.stripe.model.checkout.Session;
 import com.stripe.service.V1Services;
 import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.PriceListParams;
 import com.stripe.param.SubscriptionRetrieveParams;
+import com.stripe.param.SubscriptionScheduleCreateParams;
+import com.stripe.param.SubscriptionScheduleUpdateParams;
+import com.stripe.param.SubscriptionUpdateParams;
 import com.stripe.param.checkout.SessionCreateParams;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -34,6 +38,7 @@ import org.kinotic.licenses.internal.api.model.PriceCatalog;
 import org.kinotic.licenses.internal.api.model.PriceLookupKey;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
+import org.kinotic.licenses.internal.api.repositories.RevenueConfirmationRepository;
 import org.kinotic.licenses.internal.api.repositories.UnsentKeyEmailRepository;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
@@ -76,6 +81,8 @@ public class StripeBillingService {
     private static final String SUBSCRIPTION_MODE = "subscription";
     private static final BigDecimal MINOR_UNITS = BigDecimal.valueOf(100);
     private static final String PAID = "paid";
+    // how long before a license's anniversary its subscription's end can be the end the customer's figures set
+    private static final Duration ANNIVERSARY_SLACK = Duration.ofDays(1);
     private static final String ALREADY_SUBSCRIBED = "This account already has a subscription. Change its plan from your account.";
 
     private final KinoticLicensesProperties properties;
@@ -83,6 +90,7 @@ public class StripeBillingService {
     private final LicenseRepository licenseRepository;
     private final LicenseService licenseService;
     private final UnsentKeyEmailRepository unsentRepository;
+    private final RevenueConfirmationRepository confirmationRepository;
     private final Vertx vertx;
     private final ObjectProvider<StripeClient> stripeClient;
 
@@ -171,6 +179,67 @@ public class StripeBillingService {
                         .build();
                 return stripe().checkout().sessions().create(params).getUrl();
             }));
+        }));
+    }
+
+    /**
+     * Moves the license's subscription to the plan at {@code at}, its anniversary, billed for the same period at the
+     * plan's Price on the license's own price list. The subscription keeps its discounts through the move.
+     *
+     * @return a failure with {@link IllegalStateException} when the license's price list has no active Price for the plan
+     */
+    public Future<Void> schedulePlanMove(License license, Plan plan, Instant at) {
+        PriceLookupKey next = new PriceLookupKey(license.getPriceList(), plan, license.getBillingPeriod());
+        String subscriptionId = license.getStripeSubscriptionId();
+        return catalog().compose(prices -> {
+            Price price = prices.prices().get(next);
+            Validate.validState(price != null, "Stripe has no active Price with the lookup key %s", next.lookupKey());
+            return oneAtATime(subscriptionId, () -> blocking(() -> {
+                SubscriptionSchedule schedule = scheduleOf(stripe().subscriptions().retrieve(subscriptionId));
+                SubscriptionSchedule.Phase current = currentPhase(schedule);
+                List<SubscriptionScheduleUpdateParams.Phase.Discount> discounts = discountsOf(current);
+                SubscriptionScheduleUpdateParams.Phase.Duration.Interval interval = license.getBillingPeriod() == BillingPeriod.ANNUAL
+                        ? SubscriptionScheduleUpdateParams.Phase.Duration.Interval.YEAR
+                        : SubscriptionScheduleUpdateParams.Phase.Duration.Interval.MONTH;
+                stripe().subscriptionSchedules().update(schedule.getId(), SubscriptionScheduleUpdateParams.builder()
+                        .setEndBehavior(SubscriptionScheduleUpdateParams.EndBehavior.RELEASE)
+                        .addPhase(SubscriptionScheduleUpdateParams.Phase.builder()
+                                          .setStartDate(current.getStartDate())
+                                          .setEndDate(at.getEpochSecond())
+                                          .addItem(phaseItem(current.getItems().getFirst().getPrice()))
+                                          .addAllDiscount(discounts)
+                                          .setProrationBehavior(SubscriptionScheduleUpdateParams.Phase.ProrationBehavior.NONE)
+                                          .build())
+                        .addPhase(SubscriptionScheduleUpdateParams.Phase.builder()
+                                          .addItem(phaseItem(price.getId()))
+                                          .addAllDiscount(discounts)
+                                          .setDuration(SubscriptionScheduleUpdateParams.Phase.Duration.builder()
+                                                                                                      .setInterval(interval)
+                                                                                                      .setIntervalCount(1L)
+                                                                                                      .build())
+                                          .setProrationBehavior(SubscriptionScheduleUpdateParams.Phase.ProrationBehavior.NONE)
+                                          .build())
+                        .build());
+                log.info("The subscription {} moves to {} at {}", subscriptionId, next.lookupKey(), at);
+                return null;
+            }));
+        });
+    }
+
+    /**
+     * Ends the license's subscription at {@code at}, its anniversary, from which the license continues as Free.
+     */
+    public Future<Void> endSubscriptionAt(License license, Instant at) {
+        String subscriptionId = license.getStripeSubscriptionId();
+        return oneAtATime(subscriptionId, () -> blocking(() -> {
+            Subscription subscription = stripe().subscriptions().retrieve(subscriptionId);
+            // a schedule controls its subscription's end, so the subscription is released from it first
+            if (subscription.getSchedule() != null) {
+                stripe().subscriptionSchedules().release(subscription.getSchedule());
+            }
+            stripe().subscriptions().update(subscriptionId, SubscriptionUpdateParams.builder().setCancelAt(at.getEpochSecond()).build());
+            log.info("The subscription {} ends at {}, when its license continues as Free", subscriptionId, at);
+            return null;
         }));
     }
 
@@ -390,8 +459,23 @@ public class StripeBillingService {
                                                                                                         .build()));
     }
 
-    // writes the subscription as Stripe has it onto its license
+    // Writes the subscription as Stripe has it onto its license. A subscription that ended at the anniversary for which
+    // the customer confirmed figures that set Free leaves the license on Free rather than cancelled.
     private Future<License> sync(License license, Subscription subscription) {
+        Future<License> ret;
+        if (statusOf(subscription.getStatus()) == LicenseStatus.CANCELED && license.getPlan() != Plan.FREE
+                && !Instant.now().isBefore(license.getTermEnd().minus(ANNIVERSARY_SLACK))) {
+            ret = confirmationRepository.find(license.getId(), license.getTermEnd()).compose(confirmed ->
+                    confirmed != null && confirmed.getPlan() == Plan.FREE
+                            ? licenseRepository.moveToFree(license.getId()).map(moved -> moved != null ? moved : license)
+                            : writeSubscription(license, subscription));
+        } else {
+            ret = writeSubscription(license, subscription);
+        }
+        return ret;
+    }
+
+    private Future<License> writeSubscription(License license, Subscription subscription) {
         SubscriptionItem item = subscription.getItems().getData().getFirst();
         Optional<PriceLookupKey> price = Optional.ofNullable(PriceLookupKey.parse(item.getPrice().getLookupKey()));
         Plan plan = price.map(PriceLookupKey::plan).orElse(license.getPlan());
@@ -489,6 +573,44 @@ public class StripeBillingService {
                                    .max()
                                    .orElse(0);
         return new PriceCatalog(current, Map.copyOf(prices), Instant.now());
+    }
+
+    // the subscription's schedule, created from the subscription when it has none
+    private SubscriptionSchedule scheduleOf(Subscription subscription) throws Exception {
+        return subscription.getSchedule() != null
+                ? stripe().subscriptionSchedules().retrieve(subscription.getSchedule())
+                : stripe().subscriptionSchedules().create(SubscriptionScheduleCreateParams.builder()
+                                                                                         .setFromSubscription(subscription.getId())
+                                                                                         .build());
+    }
+
+    // the phase running now, which a schedule made from a subscription starts with
+    private static SubscriptionSchedule.Phase currentPhase(SubscriptionSchedule schedule) {
+        Long start = schedule.getCurrentPhase() != null ? schedule.getCurrentPhase().getStartDate() : null;
+        return schedule.getPhases().stream()
+                       .filter(phase -> start == null || start.equals(phase.getStartDate()))
+                       .findFirst()
+                       .orElse(schedule.getPhases().getFirst());
+    }
+
+    private static List<SubscriptionScheduleUpdateParams.Phase.Discount> discountsOf(SubscriptionSchedule.Phase phase) {
+        List<SubscriptionScheduleUpdateParams.Phase.Discount> ret = new ArrayList<>();
+        if (phase.getDiscounts() != null) {
+            for (SubscriptionSchedule.Phase.Discount discount : phase.getDiscounts()) {
+                SubscriptionScheduleUpdateParams.Phase.Discount.Builder builder = SubscriptionScheduleUpdateParams.Phase.Discount.builder();
+                if (discount.getDiscount() != null) {
+                    builder.setDiscount(discount.getDiscount());
+                } else {
+                    builder.setCoupon(discount.getCoupon());
+                }
+                ret.add(builder.build());
+            }
+        }
+        return ret;
+    }
+
+    private static SubscriptionScheduleUpdateParams.Phase.Item phaseItem(String priceId) {
+        return SubscriptionScheduleUpdateParams.Phase.Item.builder().setPrice(priceId).setQuantity(1L).build();
     }
 
     // the customer's active free license, which a purchase moves onto the subscription; null when it holds none

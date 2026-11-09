@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory, type RouteRecordRaw, type Router } from 'vue-router'
-import { Building2, Gift } from '@lucide/vue'
+import { Building2, Gift, TriangleAlert } from '@lucide/vue'
 import type { SidebarItemMeta } from '@kinotic-ai/frontend-common'
 import type { Site } from '@/api/model'
 
@@ -42,6 +42,11 @@ const STAFF_ROUTES: RouteRecordRaw[] = [
                 component: () => import('./pages/staff/CustomerPage.vue'),
                 props: true,
                 meta: { sidebarGroup: 'dashboard' }
+            },
+            {
+                path: 'unconfirmed-revenue',
+                component: () => import('./pages/staff/UnconfirmedRevenuePage.vue'),
+                meta: { sidebar: dashboardItem('Unconfirmed revenue', TriangleAlert, 30) }
             },
             {
                 path: 'free-requests',

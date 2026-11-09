@@ -1,0 +1,7 @@
+Your Kinotic Enterprise license for {{organization}} on the {{planName}} plan reaches its anniversary on {{anniversaryOn}}. Before then, please confirm your company's {{figuresAsked}} in your account:
+
+{{accountUrl}}
+
+Your plan is set by these figures. If they now set another plan, your license moves to it at the anniversary, priced on the price list your license keeps. Your license and its keys carry on as they are while you confirm.
+
+— Minds Ignited, makers of Kinotic

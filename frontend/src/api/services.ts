@@ -11,7 +11,8 @@ import type {
     Plan,
     PlanPrice,
     CheckoutRequest,
-    CompanyFigures
+    CompanyFigures,
+    RevenueConfirmation
 } from './model'
 
 /** The published services, addressed in their zones as the gateway routes them. */
@@ -52,7 +53,12 @@ export class CustomerAccountService {
         return this.proxy.invoke('findCheckoutKey', [checkoutSessionId])
     }
 
-    /** Requests a free license, or the renewal of the one the account holds. */
+    /** Confirms the company's figures for the anniversary the license's figures are due for. */
+    confirmRevenue(licenseId: string, figures: CompanyFigures): Promise<RevenueConfirmation> {
+        return this.proxy.invoke('confirmRevenue', [licenseId, figures])
+    }
+
+    /** Requests a free license; one the account holds renews with its yearly confirmation. */
     requestFreeLicense(certification: FreeLicenseCertification, termsVersion: string): Promise<FreeLicenseRequest> {
         return this.proxy.invoke('requestFreeLicense', [certification, termsVersion])
     }
@@ -63,6 +69,11 @@ export class StaffCustomerService {
 
     findCustomerSummaries(): Promise<CustomerSummary[]> {
         return this.proxy.invoke('findCustomerSummaries', [])
+    }
+
+    /** The customers whose license reached its anniversary with its figures unconfirmed. */
+    findRevenueUnconfirmed(): Promise<CustomerSummary[]> {
+        return this.proxy.invoke('findRevenueUnconfirmed', [])
     }
 
     getCustomerDetail(customerId: string): Promise<CustomerDetail> {

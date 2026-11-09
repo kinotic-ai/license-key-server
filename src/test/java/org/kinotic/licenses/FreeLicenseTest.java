@@ -93,15 +93,21 @@ class FreeLicenseTest extends ServerTest {
         assertThatThrownBy(() -> asStaff(() -> staffRequests.approve(requestId)))
                 .hasCauseInstanceOf(IllegalStateException.class);
 
-        // the customer certifies again, and staff approve the renewal
+        // a free license renews with its yearly confirmation, not with another request
         CustomerContact contact = await(contactRepository.findByEmail(email)).getFirst();
-        FreeLicenseRequest renewal = asCustomer(contact, () -> customerAccount.requestFreeLicense(
-                new FreeLicenseCertification().setIntendedUse("Still running our internal tools").setFigures(new CompanyFigures().setAnnualRevenue(new BigDecimal("400000")).setCapitalRaised(BigDecimal.ZERO)), AgreementTerms.VERSION));
+        assertThatThrownBy(() -> asCustomer(contact, () -> customerAccount.requestFreeLicense(certification("Asking again"), AgreementTerms.VERSION)))
+                .hasCauseInstanceOf(IllegalStateException.class);
+        sql("UPDATE license SET term_end = now() + interval '10 days' WHERE id = $1", license.getId());
+        License due = await(licenseRepository.findById(license.getId()));
+        asCustomer(contact, () -> customerAccount.confirmRevenue(due.getId(), new CompanyFigures().setAnnualRevenue(new BigDecimal("400000"))
+                                                                                                .setCapitalRaised(BigDecimal.ZERO)));
+        FreeLicenseRequest renewal = await(requestRepository.findByCustomerId(request.getCustomerId())).getFirst();
         assertThat(renewal.getStatus()).isEqualTo(FreeLicenseRequestStatus.PENDING);
+        assertThat(renewal.getCertification().getIntendedUse()).isEqualTo("Internal tools for a five-person team");
         asStaff(() -> staffRequests.approve(renewal.getId()));
         License renewed = await(licenseRepository.findById(license.getId()));
-        assertThat(renewed.getTermStart()).isEqualTo(license.getTermEnd());
-        assertThat(renewed.getTermEnd()).isEqualTo(LicenseService.termEnd(license.getTermEnd()));
+        assertThat(renewed.getTermStart()).isEqualTo(due.getTermEnd());
+        assertThat(renewed.getTermEnd()).isEqualTo(LicenseService.termEnd(due.getTermEnd()));
         assertThat(await(licenseService.keysOf(license.getId()))).hasSize(2);
 
         CustomerAccount account = asCustomer(contact, customerAccount::getAccount);
@@ -111,7 +117,8 @@ class FreeLicenseTest extends ServerTest {
         assertThat(account.getFreeLicenseRequests()).hasSize(2);
 
         var detail = asStaff(() -> staffCustomers.getCustomerDetail(request.getCustomerId()));
-        assertThat(detail.getAcceptances()).hasSize(2);
+        assertThat(detail.getAcceptances()).hasSize(1);
+        assertThat(detail.getLicenses().getFirst().getConfirmations()).hasSize(1);
         assertThat(detail.getLicenses().getFirst().getKeys()).hasSize(2);
         assertThat(asStaff(staffCustomers::findCustomerSummaries))
                 .anySatisfy(summary -> {
@@ -162,19 +169,20 @@ class FreeLicenseTest extends ServerTest {
     }
 
     @Test
-    void aLapsedFreeLicenseRenewsFromToday(CapturedOutput output) throws Exception {
+    void aLateRenewalKeepsTheLicensesAnniversary(CapturedOutput output) throws Exception {
         String requestId = requestAsNewCustomer(output, "lapsed-" + UUID.randomUUID() + "@tiny.example").getId();
         FreeLicenseRequest approved = asStaff(() -> staffRequests.approve(requestId));
         License license = await(licenseRepository.findFreeLicense(approved.getCustomerId()));
         sql("UPDATE license SET term_end = now() - interval '90 days' WHERE id = $1", license.getId());
+        License late = await(licenseRepository.findById(license.getId()));
 
-        FreeLicenseRequest renewal = await(freeLicenseService.request(approved.getCustomerId(),
-                new FreeLicenseCertification().setIntendedUse("Still small").setFigures(new CompanyFigures().setAnnualRevenue(BigDecimal.ONE).setCapitalRaised(BigDecimal.ZERO))));
-        Instant before = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        await(freeLicenseService.requestRenewal(approved.getCustomerId(), new CompanyFigures().setAnnualRevenue(BigDecimal.ONE).setCapitalRaised(BigDecimal.ZERO)));
+        FreeLicenseRequest renewal = await(requestRepository.findByCustomerId(approved.getCustomerId())).getFirst();
         asStaff(() -> staffRequests.approve(renewal.getId()));
 
         License renewed = await(licenseRepository.findById(license.getId()));
-        assertThat(renewed.getTermStart()).isAfterOrEqualTo(before);
+        assertThat(renewed.getTermStart()).isEqualTo(late.getTermEnd());
+        assertThat(renewed.getTermEnd()).isEqualTo(LicenseService.termEnd(late.getTermEnd()));
         assertThat(await(licenseService.keysOf(license.getId())).getFirst().getExpiresAt())
                 .isEqualTo(LicenseService.keyExpiry(renewed.getTermEnd()));
     }

@@ -41,7 +41,9 @@ public class StripeStandIn {
     public static final int OLDER_PRICE_LIST = 1;
 
     private static final String SUBSCRIPTIONS_PATH = "/v1/subscriptions/";
+    private static final String SCHEDULES_PATH = "/v1/subscription_schedules";
     private static final Map<String, JsonObject> SUBSCRIPTIONS = new ConcurrentHashMap<>();
+    private static final Map<String, JsonObject> SCHEDULES = new ConcurrentHashMap<>();
     private static final List<JsonObject> PRICES = seedPrices();
     private static final List<StripeRequest> REQUESTS = Collections.synchronizedList(new ArrayList<>());
 
@@ -93,7 +95,9 @@ public class StripeStandIn {
         REQUESTS.add(new StripeRequest(method, path, params));
         JsonObject response;
         if (path.startsWith(SUBSCRIPTIONS_PATH)) {
-            response = subscriptionRequest(method, path.substring(SUBSCRIPTIONS_PATH.length()));
+            response = subscriptionRequest(method, path.substring(SUBSCRIPTIONS_PATH.length()), params);
+        } else if (path.startsWith(SCHEDULES_PATH)) {
+            response = scheduleRequest(path.substring(SCHEDULES_PATH.length()), params);
         } else if (path.equals("/v1/prices")) {
             response = new JsonObject().put("object", "list").put("url", "/v1/prices").put("has_more", false)
                                        .put("data", new JsonArray(new ArrayList<>(PRICES)));
@@ -109,11 +113,39 @@ public class StripeStandIn {
         respond(exchange, response);
     }
 
-    private static JsonObject subscriptionRequest(String method, String id) {
+    private static JsonObject subscriptionRequest(String method, String id, Map<String, String> params) {
         JsonObject ret = SUBSCRIPTIONS.get(id);
         if (ret != null && method.equals("DELETE")) {
             ret = ret.copy().put("status", "canceled");
             SUBSCRIPTIONS.put(id, ret);
+        } else if (ret != null && method.equals("POST") && params.containsKey("cancel_at")) {
+            ret = ret.copy().put("cancel_at", Long.parseLong(params.get("cancel_at")));
+            SUBSCRIPTIONS.put(id, ret);
+        }
+        return ret;
+    }
+
+    // a schedule is created from a subscription, with one phase billing the subscription's price and discounts from its
+    // period start; an update or release answers with the schedule as it was, the request being what a test reads
+    private static JsonObject scheduleRequest(String rest, Map<String, String> params) {
+        JsonObject ret;
+        if (rest.isEmpty()) {
+            JsonObject subscription = SUBSCRIPTIONS.get(params.get("from_subscription"));
+            JsonObject item = subscription.getJsonObject("items").getJsonArray("data").getJsonObject(0);
+            long start = item.getLong("current_period_end") - 30L * 24 * 3600;
+            JsonObject phase = new JsonObject().put("start_date", start).put("end_date", item.getLong("current_period_end"))
+                                               .put("items", new JsonArray().add(new JsonObject().put("price", item.getJsonObject("price").getString("id"))
+                                                                                                 .put("quantity", 1)))
+                                               .put("discounts", subscription.getJsonArray("discounts", new JsonArray()).stream()
+                                                                             .map(discount -> new JsonObject().put("discount", discount))
+                                                                             .collect(JsonArray::new, JsonArray::add, JsonArray::addAll));
+            ret = new JsonObject().put("id", "sub_sched_" + id()).put("object", "subscription_schedule").put("subscription", subscription.getString("id"))
+                                  .put("current_phase", new JsonObject().put("start_date", start).put("end_date", item.getLong("current_period_end")))
+                                  .put("phases", new JsonArray().add(phase));
+            SCHEDULES.put(ret.getString("id"), ret);
+            SUBSCRIPTIONS.put(subscription.getString("id"), subscription.copy().put("schedule", ret.getString("id")));
+        } else {
+            ret = SCHEDULES.get(rest.substring(1).replace("/release", ""));
         }
         return ret;
     }

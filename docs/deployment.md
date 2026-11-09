@@ -33,7 +33,8 @@ whatever it likes to the left of it. A second proxy in the chain would make ever
   event only tells the server which subscription changed: the server reads that subscription, with its price and
   latest invoice, from Stripe and brings the license to it. A restricted secret key therefore needs read access to
   prices, products and invoices, and write access to customers, subscriptions (a lapsed license's subscription is
-  cancelled) and Checkout and Customer Portal sessions. A card
+  cancelled, and one whose figures set Free ends at its anniversary), subscription schedules (plan moves) and Checkout
+  and Customer Portal sessions. A card
   payment gets its key from `checkout.session.completed`; a bank debit through Link completes Checkout unpaid, and
   its key is issued and emailed once Stripe reports the first invoice paid. A subscription the customer cancels in
   the Customer Portal keeps its key until it expires and is not renewed.
@@ -76,6 +77,31 @@ than six active Prices is ignored, so a new list can be built up one Price at a 
 
 A license past due for more than 30 days lapses: a daily job marks it `LAPSED` and cancels its Stripe subscription,
 unless Stripe reports the payment settled by then.
+
+## Yearly confirmation and plan moves
+
+A license's anniversary falls every twelve months from its start, for both billing periods. Thirty days before it, a
+daily job emails the contacts once to confirm the company's annual revenue in their account (a Free license confirms
+its capital raised too); each confirmation is a row of `revenue_confirmation`. When the confirmed figures set another
+plan:
+
+- **Another paid plan:** the subscription moves to that plan's Price on the license's **own** price list, for the
+  same billing period, at the anniversary. The server does this with a **Stripe Subscription Schedule**: it creates
+  one from the subscription (or reads the one it has) and sets two phases, the current Price until the anniversary and
+  the new Price from it, with `end_behavior: release` and no proration, copying the current phase's discounts to both
+  phases so a design partner's coupon follows the move. Stripe's `customer.subscription.updated` then brings the
+  license to the new plan.
+- **Free** (under $1M revenue and under $5M raised): the subscription's `cancel_at` is set to the anniversary, after
+  releasing any schedule. When Stripe ends it, the license continues as Free with the same price list and terms, and
+  the job starts its next year with a Free key.
+- **A Free license whose figures set a paid plan:** the customer must buy that plan by the anniversary; buying it
+  moves the free license onto the subscription at the price list it keeps. Otherwise the license is not renewed.
+- **A Free license that still qualifies:** a renewal request goes to the staff queue, and approving it starts the
+  next year.
+
+A license whose anniversary passes unconfirmed goes on exactly as it was, keys included, and is flagged
+`REVENUE_UNCONFIRMED` in the staff dashboard's Unconfirmed revenue queue. The customer can still confirm the missed
+anniversary, which clears the flag; a plan move it sets takes effect at the next anniversary.
 
 ## Configuration
 
