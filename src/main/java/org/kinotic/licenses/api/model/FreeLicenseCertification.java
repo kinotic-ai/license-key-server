@@ -4,18 +4,14 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
 
-import java.math.BigDecimal;
-
 /**
- * What an organization certifies about itself when it requests a free license or its renewal.
+ * What an organization certifies about itself when it requests a free license: its figures, annual revenue and
+ * capital raised, which must match {@link Plan#FREE}, and what it uses Kinotic for.
  */
 @Data
 @Accessors(chain = true)
 @NoArgsConstructor
 public class FreeLicenseCertification {
-    /** Self-reported annual revenue, in US dollars. */
-    private BigDecimal annualRevenue;
-    /** Self-reported capital raised, in US dollars. */
-    private BigDecimal capitalRaised;
+    private CompanyFigures figures;
     private String intendedUse;
 }

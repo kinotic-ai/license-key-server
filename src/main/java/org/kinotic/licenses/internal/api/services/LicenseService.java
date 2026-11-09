@@ -3,6 +3,7 @@ package org.kinotic.licenses.internal.api.services;
 import io.vertx.core.Future;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.kinotic.licenses.api.model.AgreementTerms;
 import org.kinotic.licenses.api.model.Customer;
 import org.kinotic.licenses.api.model.CustomerContact;
 import org.kinotic.licenses.api.model.IssuedKey;
@@ -11,6 +12,8 @@ import org.kinotic.licenses.api.model.LicenseKeyClaims;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.internal.api.model.NewLicense;
+import org.kinotic.licenses.internal.api.model.PaidSubscription;
+import org.kinotic.licenses.internal.api.model.PriceLookupKey;
 import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.kinotic.licenses.internal.api.repositories.IssuedKeyRepository;
@@ -52,21 +55,26 @@ public class LicenseService {
     private final EmailService emailService;
 
     /**
-     * Creates a paid or free license whose term starts now and issues its first key. The caller emails the key, with
-     * the message that fits how the license came about.
+     * Creates a paid license whose first payment has cleared, its year starting now on the subscription's price list
+     * and the current terms, and issues its first key. The caller emails the key.
      *
-     * @param customer             the licensee
-     * @param plan                 the plan
-     * @param stripeSubscriptionId the Stripe Subscription billing it, or {@code null} for a free license
-     * @param checkoutSessionId    the Stripe Checkout Session that bought it, or {@code null} for a free license
-     * @param currentPeriodEnd     the end of the first billing period, or {@code null} for a free license
      * @return the license and its key
      */
-    public Future<NewLicense> createLicense(Customer customer, Plan plan, String stripeSubscriptionId, String checkoutSessionId,
-                                            Instant currentPeriodEnd) {
-        License license = newLicense(customer, plan, stripeSubscriptionId, checkoutSessionId, currentPeriodEnd)
-                .setStatus(LicenseStatus.ACTIVE)
-                .setLastPaymentAt(stripeSubscriptionId != null ? Instant.now() : null);
+    public Future<NewLicense> createLicense(Customer customer, PaidSubscription subscription) {
+        License license = paidLicense(customer, subscription).setStatus(LicenseStatus.ACTIVE).setLastPaymentAt(Instant.now());
+        return licenseRepository.save(license)
+                                .compose(saved -> issueKey(saved, saved.getTermEnd()).map(key -> new NewLicense(saved, key)));
+    }
+
+    /**
+     * Creates a free license, its year starting now on the given price list and the current terms, and issues its first
+     * key. The caller emails the key.
+     *
+     * @param priceList the current price list, which the license keeps should it move to a paid plan
+     * @return the license and its key
+     */
+    public Future<NewLicense> createFreeLicense(Customer customer, int priceList) {
+        License license = newLicense(customer).setPlan(Plan.FREE).setPriceList(priceList).setStatus(LicenseStatus.ACTIVE);
         return licenseRepository.save(license)
                                 .compose(saved -> issueKey(saved, saved.getTermEnd()).map(key -> new NewLicense(saved, key)));
     }
@@ -77,10 +85,8 @@ public class LicenseService {
      *
      * @return the license
      */
-    public Future<License> createAwaitingPayment(Customer customer, Plan plan, String stripeSubscriptionId, String checkoutSessionId,
-                                                 Instant currentPeriodEnd) {
-        return licenseRepository.save(newLicense(customer, plan, stripeSubscriptionId, checkoutSessionId, currentPeriodEnd)
-                                              .setStatus(LicenseStatus.PAST_DUE));
+    public Future<License> createAwaitingPayment(Customer customer, PaidSubscription subscription) {
+        return licenseRepository.save(paidLicense(customer, subscription).setStatus(LicenseStatus.PAST_DUE));
     }
 
     /**
@@ -164,23 +170,6 @@ public class LicenseService {
     }
 
     /**
-     * Records a successful payment as the license's last, unless a later one is recorded already.
-     */
-    public Future<License> recordPayment(License license, Instant paidAt) {
-        return licenseRepository.recordPayment(license.getId(), paidAt);
-    }
-
-    /**
-     * Writes what Stripe reports about the subscription: its plan, whether it is in good standing, the end of the
-     * current billing period, and when it ends if the customer cancelled it. A license staff revoked stays revoked, and
-     * one whose subscription ended stays canceled.
-     */
-    public Future<License> syncSubscription(License license, Plan plan, LicenseStatus status, Instant currentPeriodEnd,
-                                            Instant cancelsAt) {
-        return licenseRepository.syncSubscription(license.getId(), plan, status, currentPeriodEnd, cancelsAt);
-    }
-
-    /**
      * The license's keys, newest first.
      */
     public Future<List<IssuedKey>> keysOf(String licenseId) {
@@ -194,16 +183,23 @@ public class LicenseService {
         return start.atZone(ZoneOffset.UTC).plus(TERM).toInstant();
     }
 
-    private static License newLicense(Customer customer, Plan plan, String stripeSubscriptionId, String checkoutSessionId,
-                                      Instant currentPeriodEnd) {
+    private static License paidLicense(Customer customer, PaidSubscription subscription) {
+        PriceLookupKey price = subscription.price();
+        return newLicense(customer)
+                .setPlan(price.plan())
+                .setBillingPeriod(price.period())
+                .setPriceList(price.priceList())
+                .setStripeSubscriptionId(subscription.stripeSubscriptionId())
+                .setCheckoutSessionId(subscription.checkoutSessionId())
+                .setCurrentPeriodEnd(subscription.currentPeriodEnd());
+    }
+
+    private static License newLicense(Customer customer) {
         Instant now = Instant.now();
         return new License()
                 .setId(UUID.randomUUID().toString())
                 .setCustomerId(customer.getId())
-                .setPlan(plan)
-                .setStripeSubscriptionId(stripeSubscriptionId)
-                .setCheckoutSessionId(checkoutSessionId)
-                .setCurrentPeriodEnd(currentPeriodEnd)
+                .setTermsVersion(AgreementTerms.VERSION)
                 .setTermStart(now)
                 .setTermEnd(termEnd(now));
     }

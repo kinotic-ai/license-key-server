@@ -5,6 +5,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.kinotic.core.api.exceptions.AlreadyExistsException;
 import org.kinotic.licenses.api.model.AgreementAcceptance;
 import org.kinotic.licenses.api.model.AgreementTerms;
+import org.kinotic.licenses.api.model.CompanyFigures;
 import org.kinotic.licenses.api.model.CustomerAccount;
 import org.kinotic.licenses.api.model.CustomerContact;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
@@ -22,6 +23,7 @@ import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.kinotic.licenses.internal.api.services.FreeLicenseService;
 import org.kinotic.licenses.internal.api.services.LicenseService;
 import org.kinotic.licenses.support.ServerTest;
+import org.kinotic.licenses.support.StripeStandIn;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
@@ -69,7 +71,7 @@ class FreeLicenseTest extends ServerTest {
         assertThat(request.getStatus()).isEqualTo(FreeLicenseRequestStatus.PENDING);
         assertThat(request.getOrganization()).isEqualTo("Tiny Startup LLC");
         assertThat(request.getContactEmail()).isEqualTo(email);
-        assertThat(request.getCertification().getAnnualRevenue()).isEqualByComparingTo(new BigDecimal("250000.00"));
+        assertThat(request.getCertification().getFigures().getAnnualRevenue()).isEqualByComparingTo(new BigDecimal("250000.00"));
         assertThat(request.getCertification().getIntendedUse()).isEqualTo("Internal tools for a five-person team");
         List<AgreementAcceptance> acceptances = await(acceptanceRepository.findByCustomerId(request.getCustomerId()));
         assertThat(acceptances).hasSize(1);
@@ -94,8 +96,7 @@ class FreeLicenseTest extends ServerTest {
         // the customer certifies again, and staff approve the renewal
         CustomerContact contact = await(contactRepository.findByEmail(email)).getFirst();
         FreeLicenseRequest renewal = asCustomer(contact, () -> customerAccount.requestFreeLicense(
-                new FreeLicenseCertification().setAnnualRevenue(new BigDecimal("400000")).setCapitalRaised(BigDecimal.ZERO)
-                                              .setIntendedUse("Still running our internal tools"), AgreementTerms.VERSION));
+                new FreeLicenseCertification().setIntendedUse("Still running our internal tools").setFigures(new CompanyFigures().setAnnualRevenue(new BigDecimal("400000")).setCapitalRaised(BigDecimal.ZERO)), AgreementTerms.VERSION));
         assertThat(renewal.getStatus()).isEqualTo(FreeLicenseRequestStatus.PENDING);
         asStaff(() -> staffRequests.approve(renewal.getId()));
         License renewed = await(licenseRepository.findById(license.getId()));
@@ -161,23 +162,6 @@ class FreeLicenseTest extends ServerTest {
     }
 
     @Test
-    void aCustomerHoldingAPaidSubscriptionIsNotSoldAnother() throws Exception {
-        CustomerContact contact = await(contactRepository.findByCustomerId(seedCustomer().getId())).getFirst();
-        await(licenseService.createLicense(await(customerRepository.findById(contact.getCustomerId())), Plan.STARTUP, "sub_" + UUID.randomUUID(),
-                                           "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30))));
-
-        // it changes plans in the Customer Portal
-        assertThatThrownBy(() -> asCustomer(contact, () -> customerAccount.startCheckout(Plan.BUSINESS, AgreementTerms.VERSION)))
-                .hasCauseInstanceOf(AlreadyExistsException.class)
-                .hasMessageContaining("already has a subscription");
-        assertThatThrownBy(() -> asCustomer(contact, () -> customerAccount.startCheckout(Plan.FREE, AgreementTerms.VERSION)))
-                .hasCauseInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> asCustomer(contact, () -> customerAccount.startCheckout(Plan.BUSINESS, "2000-01-01")))
-                .hasCauseInstanceOf(IllegalArgumentException.class);
-        assertThat(await(acceptanceRepository.findByCustomerId(contact.getCustomerId()))).isEmpty();
-    }
-
-    @Test
     void aLapsedFreeLicenseRenewsFromToday(CapturedOutput output) throws Exception {
         String requestId = requestAsNewCustomer(output, "lapsed-" + UUID.randomUUID() + "@tiny.example").getId();
         FreeLicenseRequest approved = asStaff(() -> staffRequests.approve(requestId));
@@ -185,7 +169,7 @@ class FreeLicenseTest extends ServerTest {
         sql("UPDATE license SET term_end = now() - interval '90 days' WHERE id = $1", license.getId());
 
         FreeLicenseRequest renewal = await(freeLicenseService.request(approved.getCustomerId(),
-                new FreeLicenseCertification().setAnnualRevenue(BigDecimal.ONE).setCapitalRaised(BigDecimal.ZERO).setIntendedUse("Still small")));
+                new FreeLicenseCertification().setIntendedUse("Still small").setFigures(new CompanyFigures().setAnnualRevenue(BigDecimal.ONE).setCapitalRaised(BigDecimal.ZERO))));
         Instant before = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         asStaff(() -> staffRequests.approve(renewal.getId()));
 
@@ -200,8 +184,8 @@ class FreeLicenseTest extends ServerTest {
         String requestId = requestAsNewCustomer(output, "keyless-" + UUID.randomUUID() + "@tiny.example").getId();
         String customerId = await(requestRepository.findById(requestId)).getCustomerId();
         // what an earlier approval leaves when signing failed after the license was saved
-        License keyless = await(licenseService.createAwaitingPayment(await(customerRepository.findById(customerId)), Plan.FREE, null, null, null));
-        sql("UPDATE license SET status = 'ACTIVE' WHERE id = $1", keyless.getId());
+        License keyless = await(licenseService.createFreeLicense(await(customerRepository.findById(customerId)), StripeStandIn.CURRENT_PRICE_LIST)).license();
+        sql("DELETE FROM issued_key WHERE license_id = $1", keyless.getId());
 
         Instant before = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         asStaff(() -> staffRequests.approve(requestId));
@@ -237,7 +221,7 @@ class FreeLicenseTest extends ServerTest {
         sql("UPDATE free_license_request SET status = 'APPROVED', reviewed_by = 'staff@mindsignited.com', reviewed_at = now() - interval '10 minutes',"
                     + " claimed_at = now() - interval '10 minutes' WHERE id = $1", requestId);
         // the stopped approval got as far as issuing the key, after it was approved
-        License license = await(licenseService.createLicense(await(customerRepository.findById(customerId)), Plan.FREE, null, null, null)).license();
+        License license = await(licenseService.createFreeLicense(await(customerRepository.findById(customerId)), StripeStandIn.CURRENT_PRICE_LIST)).license();
 
         asStaff(() -> staffRequests.approve(requestId));
 
@@ -249,7 +233,7 @@ class FreeLicenseTest extends ServerTest {
     void aCustomerOnlySeesItself() throws Exception {
         CustomerContact first = await(contactRepository.findByCustomerId(seedCustomer().getId())).getFirst();
         CustomerContact second = await(contactRepository.findByCustomerId(seedCustomer().getId())).getFirst();
-        await(licenseService.createLicense(await(customerRepository.findById(second.getCustomerId())), Plan.FREE, null, null, null));
+        await(licenseService.createFreeLicense(await(customerRepository.findById(second.getCustomerId())), StripeStandIn.CURRENT_PRICE_LIST));
         CustomerAccount account = asCustomer(first, customerAccount::getAccount);
         assertThat(account.getCustomer().getId()).isEqualTo(first.getCustomerId());
         assertThat(account.getLicenses()).isEmpty();
@@ -264,7 +248,6 @@ class FreeLicenseTest extends ServerTest {
     }
 
     private static FreeLicenseCertification certification(String intendedUse) {
-        return new FreeLicenseCertification().setAnnualRevenue(new BigDecimal("250000")).setCapitalRaised(new BigDecimal("1000000"))
-                                             .setIntendedUse(intendedUse);
+        return new FreeLicenseCertification().setIntendedUse(intendedUse).setFigures(new CompanyFigures().setAnnualRevenue(new BigDecimal("250000")).setCapitalRaised(new BigDecimal("1000000")));
     }
 }

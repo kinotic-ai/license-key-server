@@ -5,6 +5,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import lombok.RequiredArgsConstructor;
+import org.kinotic.licenses.api.model.BillingPeriod;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseStatus;
@@ -24,23 +25,29 @@ import java.util.List;
 @RequiredArgsConstructor
 public class LicenseRepository {
 
-    private static final String COLUMNS = "id, customer_id, plan, status, stripe_subscription_id, checkout_session_id,"
-            + " current_period_end, cancels_at, term_start, term_end, last_payment_at, created_at";
-    // the status a billing change sets, unless staff revoked the license or its subscription ended; Stripe never
-    // reopens a canceled subscription, so a later write is an event delivered out of order
-    private static final String STATUS_UNLESS_ENDED = "status = CASE WHEN status IN ('REVOKED', 'CANCELED') THEN status ELSE %s END";
+    private static final String COLUMNS = "id, customer_id, plan, status, billing_period, price_list, terms_version, stripe_subscription_id,"
+            + " checkout_session_id, current_period_end, cancels_at, past_due_since, term_start, term_end, last_payment_at, created_at";
+    // the statuses a billing change never moves a license out of
+    private static final String ENDED = "('REVOKED', 'CANCELED', 'LAPSED')";
+    // The status a billing change sets, unless staff revoked the license or its subscription ended; Stripe never
+    // reopens a canceled subscription, so a later write is an event delivered out of order. A license entering
+    // PAST_DUE records when, and keeps that time through further failures until it leaves PAST_DUE.
+    private static final String STATUS_UNLESS_ENDED = "status = CASE WHEN status IN " + ENDED + " THEN status ELSE %1$s END,"
+            + " past_due_since = CASE WHEN status IN " + ENDED + " THEN past_due_since"
+            + " WHEN %1$s = 'PAST_DUE' THEN COALESCE(past_due_since, now()) END";
 
     private final Pool pool;
 
     public Future<License> save(License license) {
-        return pool.preparedQuery("INSERT INTO license (id, customer_id, plan, status, stripe_subscription_id,"
-                                          + " checkout_session_id, current_period_end, term_start, term_end, last_payment_at)"
-                                          + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING " + COLUMNS)
-                   .execute(Tuple.of(license.getId(), license.getCustomerId(), PgValues.name(license.getPlan()),
-                                     PgValues.name(license.getStatus()),
-                                     license.getStripeSubscriptionId(), license.getCheckoutSessionId(),
-                                     PgValues.timestamp(license.getCurrentPeriodEnd()), PgValues.timestamp(license.getTermStart()),
-                                     PgValues.timestamp(license.getTermEnd()), PgValues.timestamp(license.getLastPaymentAt())))
+        return pool.preparedQuery("INSERT INTO license (id, customer_id, plan, status, billing_period, price_list, terms_version,"
+                                          + " stripe_subscription_id, checkout_session_id, current_period_end, term_start, term_end,"
+                                          + " last_payment_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING " + COLUMNS)
+                   .execute(Tuple.from(Arrays.asList(license.getId(), license.getCustomerId(), PgValues.name(license.getPlan()),
+                                                     PgValues.name(license.getStatus()), PgValues.name(license.getBillingPeriod()),
+                                                     license.getPriceList(), license.getTermsVersion(),
+                                                     license.getStripeSubscriptionId(), license.getCheckoutSessionId(),
+                                                     PgValues.timestamp(license.getCurrentPeriodEnd()), PgValues.timestamp(license.getTermStart()),
+                                                     PgValues.timestamp(license.getTermEnd()), PgValues.timestamp(license.getLastPaymentAt()))))
                    .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
     }
 
@@ -63,15 +70,55 @@ public class LicenseRepository {
     }
 
     /**
-     * Writes what Stripe reports about the subscription: its plan, the end of the billing period, when it
-     * is set to end, and its status, unless the license is revoked or canceled.
+     * Writes what Stripe reports about the subscription: its plan and billing period, the end of the billing period,
+     * when it is set to end, and its status, unless the license is revoked, lapsed or canceled.
      *
      * @return the license as stored, or {@code null} when none has the id
      */
-    public Future<License> syncSubscription(String id, Plan plan, LicenseStatus status, Instant currentPeriodEnd, Instant cancelsAt) {
-        return updateOne("plan = $2, current_period_end = $3, cancels_at = $4, " + STATUS_UNLESS_ENDED.formatted("$5"),
-                         id, PgValues.name(plan), PgValues.timestamp(currentPeriodEnd),
+    public Future<License> syncSubscription(String id, Plan plan, BillingPeriod billingPeriod, LicenseStatus status,
+                                            Instant currentPeriodEnd, Instant cancelsAt) {
+        return updateOne("plan = $2, billing_period = $3, current_period_end = $4, cancels_at = $5, "
+                                 + STATUS_UNLESS_ENDED.formatted("$6::text"),
+                         id, PgValues.name(plan), PgValues.name(billingPeriod), PgValues.timestamp(currentPeriodEnd),
                          PgValues.timestamp(cancelsAt), PgValues.name(status));
+    }
+
+    /**
+     * Moves an active free license onto the paid subscription its customer bought, keeping its price list, terms and
+     * license year.
+     *
+     * @return the license as stored, or {@code null} when it is no longer an active free license
+     */
+    public Future<License> attachSubscription(String id, Plan plan, BillingPeriod billingPeriod, String stripeSubscriptionId,
+                                              String checkoutSessionId, Instant currentPeriodEnd) {
+        return pool.preparedQuery("UPDATE license SET plan = $2, billing_period = $3, stripe_subscription_id = $4,"
+                                          + " checkout_session_id = $5, current_period_end = $6"
+                                          + " WHERE id = $1 AND plan = 'FREE' AND status = 'ACTIVE' RETURNING " + COLUMNS)
+                   .execute(Tuple.of(id, PgValues.name(plan), PgValues.name(billingPeriod), stripeSubscriptionId,
+                                     checkoutSessionId, PgValues.timestamp(currentPeriodEnd)))
+                   .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
+    }
+
+    /**
+     * Lapses a license that is still past due.
+     *
+     * @return the license as stored, or {@code null} when it is not past due
+     */
+    public Future<License> lapse(String id) {
+        return pool.preparedQuery("UPDATE license SET status = 'LAPSED', past_due_since = NULL WHERE id = $1 AND status = 'PAST_DUE'"
+                                          + " RETURNING " + COLUMNS)
+                   .execute(Tuple.of(id))
+                   .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
+    }
+
+    /**
+     * The licenses past due since before {@code pastDueBefore}, oldest first.
+     */
+    public Future<List<License>> findPastDueSince(Instant pastDueBefore) {
+        return pool.preparedQuery("SELECT " + COLUMNS + " FROM license WHERE status = 'PAST_DUE' AND past_due_since < $1"
+                                          + " ORDER BY past_due_since")
+                   .execute(Tuple.of(PgValues.timestamp(pastDueBefore)))
+                   .map(rows -> PgValues.map(rows, LicenseRepository::toLicense));
     }
 
     /**
@@ -159,10 +206,14 @@ public class LicenseRepository {
                 .setCustomerId(row.getString("customer_id"))
                 .setPlan(PgValues.enumValue(row, "plan", Plan.class))
                 .setStatus(PgValues.enumValue(row, "status", LicenseStatus.class))
+                .setBillingPeriod(PgValues.enumValue(row, "billing_period", BillingPeriod.class))
+                .setPriceList(row.getInteger("price_list"))
+                .setTermsVersion(row.getString("terms_version"))
                 .setStripeSubscriptionId(row.getString("stripe_subscription_id"))
                 .setCheckoutSessionId(row.getString("checkout_session_id"))
                 .setCurrentPeriodEnd(PgValues.instant(row, "current_period_end"))
                 .setCancelsAt(PgValues.instant(row, "cancels_at"))
+                .setPastDueSince(PgValues.instant(row, "past_due_since"))
                 .setTermStart(PgValues.instant(row, "term_start"))
                 .setTermEnd(PgValues.instant(row, "term_end"))
                 .setLastPaymentAt(PgValues.instant(row, "last_payment_at"))

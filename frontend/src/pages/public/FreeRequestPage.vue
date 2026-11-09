@@ -30,8 +30,7 @@ async function submit() {
   submitting.value = true
   try {
     await customerAccountService.requestFreeLicense({
-      annualRevenue: annualRevenue.value ?? 0,
-      capitalRaised: capitalRaised.value ?? 0,
+      figures: { annualRevenue: annualRevenue.value ?? 0, capitalRaised: capitalRaised.value ?? 0 },
       intendedUse: intendedUse.value.trim()
     }, SITE.termsVersion)
     submitted.value = true

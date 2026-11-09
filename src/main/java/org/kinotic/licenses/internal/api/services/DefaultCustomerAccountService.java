@@ -13,7 +13,9 @@ import org.kinotic.licenses.api.model.FreeLicenseRequest;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseWithKeys;
 import org.kinotic.licenses.api.model.Plan;
-import org.kinotic.licenses.api.model.PlanInfo;
+import org.kinotic.licenses.api.model.PlanPrice;
+import org.kinotic.licenses.api.model.CheckoutRequest;
+import org.kinotic.licenses.api.model.CompanyFigures;
 import org.kinotic.licenses.api.security.LicenseParticipant;
 import org.kinotic.licenses.api.services.CustomerAccountService;
 import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
@@ -80,16 +82,21 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
     }
 
     @Override
-    public Future<List<PlanInfo>> findPlans() {
-        return billingService.listPlans();
+    public Future<List<PlanPrice>> findPrices() {
+        return customerRepository.findById(callingCustomerId()).compose(billingService::findPrices);
     }
 
     @Override
-    public Future<String> startCheckout(Plan plan, String termsVersion) {
+    public Future<Plan> findPlanFor(CompanyFigures figures) {
+        return Future.succeededFuture(Plan.matching(figures));
+    }
+
+    @Override
+    public Future<String> startCheckout(CheckoutRequest request, String termsVersion) {
         LicenseParticipant caller = caller();
         requireCurrentTerms(termsVersion);
         return customerRepository.findById(caller.getCustomerId())
-                                 .compose(customer -> billingService.startCheckout(customer, caller.getName(), caller.getEmail(), plan))
+                                 .compose(customer -> billingService.startCheckout(customer, caller.getName(), caller.getEmail(), request))
                                  .compose(url -> recordAcceptance(caller).map(url));
     }
 

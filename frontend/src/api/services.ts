@@ -9,7 +9,9 @@ import type {
     IssuedKey,
     License,
     Plan,
-    PlanInfo
+    PlanPrice,
+    CheckoutRequest,
+    CompanyFigures
 } from './model'
 
 /** The published services, addressed in their zones as the gateway routes them. */
@@ -27,8 +29,14 @@ export class CustomerAccountService {
         return this.proxy.invoke('getAccount', [])
     }
 
-    findPlans(): Promise<PlanInfo[]> {
-        return this.proxy.invoke('findPlans', [])
+    /** The prices the account buys at, for every paid plan and billing period. */
+    findPrices(): Promise<PlanPrice[]> {
+        return this.proxy.invoke('findPrices', [])
+    }
+
+    /** The plan a company with these figures is on. */
+    findPlanFor(figures: CompanyFigures): Promise<Plan> {
+        return this.proxy.invoke('findPlanFor', [figures])
     }
 
     createPortalSession(): Promise<string> {
@@ -36,8 +44,8 @@ export class CustomerAccountService {
     }
 
     /** Starts the purchase; resolves to the Stripe Checkout URL to send the browser to. */
-    startCheckout(plan: Plan, termsVersion: string): Promise<string> {
-        return this.proxy.invoke('startCheckout', [plan, termsVersion])
+    startCheckout(request: CheckoutRequest, termsVersion: string): Promise<string> {
+        return this.proxy.invoke('startCheckout', [request, termsVersion])
     }
 
     findCheckoutKey(checkoutSessionId: string): Promise<CheckoutKey> {

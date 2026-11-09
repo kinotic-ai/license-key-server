@@ -75,8 +75,8 @@ async function decide(approve: boolean) {
     <CrudTable ref="crudTable" :headers="headers" :data-source="dataSource" :search="tableSearch" :is-show-add-new="false"
                empty-state-text="No requests waiting" @update:search="tableSearch = $event" @on-row-click="reviewing = $event">
       <template #item.contact="{ item }">{{ item.contactName }} <span class="app-muted-text">&lt;{{ item.contactEmail }}&gt;</span></template>
-      <template #item.annualRevenue="{ item }">{{ formatMoney(item.certification.annualRevenue, 'usd') }}</template>
-      <template #item.capitalRaised="{ item }">{{ formatMoney(item.certification.capitalRaised, 'usd') }}</template>
+      <template #item.annualRevenue="{ item }">{{ formatMoney(item.certification.figures.annualRevenue, 'usd') }}</template>
+      <template #item.capitalRaised="{ item }">{{ formatMoney(item.certification.figures.capitalRaised, 'usd') }}</template>
       <template #item.createdAt="{ item }"><TimePill :date="item.createdAt" /></template>
     </CrudTable>
 
@@ -84,8 +84,8 @@ async function decide(approve: boolean) {
       <dl v-if="reviewing" class="flex flex-col gap-4 text-sm">
         <div><dt class="app-muted-text">Contact</dt><dd class="app-heading-text mt-1">{{ reviewing.contactName }} &lt;{{ reviewing.contactEmail }}&gt;</dd></div>
         <div class="grid grid-cols-2 gap-4">
-          <div><dt class="app-muted-text">Annual revenue</dt><dd class="app-heading-text mt-1 tabular-nums">{{ formatMoney(reviewing.certification.annualRevenue, 'usd') }}</dd></div>
-          <div><dt class="app-muted-text">Capital raised</dt><dd class="app-heading-text mt-1 tabular-nums">{{ formatMoney(reviewing.certification.capitalRaised, 'usd') }}</dd></div>
+          <div><dt class="app-muted-text">Annual revenue</dt><dd class="app-heading-text mt-1 tabular-nums">{{ formatMoney(reviewing.certification.figures.annualRevenue, 'usd') }}</dd></div>
+          <div><dt class="app-muted-text">Capital raised</dt><dd class="app-heading-text mt-1 tabular-nums">{{ formatMoney(reviewing.certification.figures.capitalRaised, 'usd') }}</dd></div>
         </div>
         <div><dt class="app-muted-text">Intended use</dt><dd class="app-heading-text mt-1 whitespace-pre-wrap">{{ reviewing.certification.intendedUse }}</dd></div>
         <div><dt class="app-muted-text">Requested</dt><dd class="app-heading-text mt-1">{{ formatDate(reviewing.createdAt) }}</dd></div>

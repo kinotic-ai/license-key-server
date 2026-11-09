@@ -7,6 +7,7 @@ import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import lombok.RequiredArgsConstructor;
 import org.kinotic.core.api.exceptions.AlreadyExistsException;
+import org.kinotic.licenses.api.model.CompanyFigures;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.FreeLicenseRequest;
 import org.kinotic.licenses.api.model.FreeLicenseRequestStatus;
@@ -51,8 +52,8 @@ public class FreeLicenseRequestRepository {
     public Future<FreeLicenseRequest> save(FreeLicenseRequest request) {
         return changeOne("INSERT INTO free_license_request (id, customer_id, annual_revenue, capital_raised, intended_use, status)"
                                  + " VALUES ($1, $2, $3, $4, $5, $6)",
-                         Tuple.of(request.getId(), request.getCustomerId(), request.getCertification().getAnnualRevenue(),
-                                  request.getCertification().getCapitalRaised(), request.getCertification().getIntendedUse(),
+                         Tuple.of(request.getId(), request.getCustomerId(), request.getCertification().getFigures().getAnnualRevenue(),
+                                  request.getCertification().getFigures().getCapitalRaised(), request.getCertification().getIntendedUse(),
                                   PgValues.name(request.getStatus())))
                 .recover(t -> Future.failedFuture(t instanceof PgException pg && UNIQUE_VIOLATION.equals(pg.getSqlState())
                                                           ? new AlreadyExistsException(ALREADY_OPEN, t)
@@ -152,8 +153,8 @@ public class FreeLicenseRequestRepository {
                 .setContactName(row.getString("contact_name"))
                 .setContactEmail(row.getString("contact_email"))
                 .setCertification(new FreeLicenseCertification()
-                                          .setAnnualRevenue(row.getBigDecimal("annual_revenue"))
-                                          .setCapitalRaised(row.getBigDecimal("capital_raised"))
+                                          .setFigures(new CompanyFigures().setAnnualRevenue(row.getBigDecimal("annual_revenue"))
+                                                                          .setCapitalRaised(row.getBigDecimal("capital_raised")))
                                           .setIntendedUse(row.getString("intended_use")))
                 .setStatus(PgValues.enumValue(row, "status", FreeLicenseRequestStatus.class))
                 .setReviewedBy(row.getString("reviewed_by"))

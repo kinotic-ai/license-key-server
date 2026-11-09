@@ -1,19 +1,34 @@
 /** The wire types of the license key server, as its services and routes return them. */
 
-export type Plan = 'FREE' | 'STARTUP' | 'BUSINESS' | 'ENTERPRISE'
-export type LicenseStatus = 'ACTIVE' | 'PAST_DUE' | 'CANCELED' | 'REVOKED'
+export type Plan = 'FREE' | 'SMALL' | 'MEDIUM' | 'LARGE'
+export type BillingPeriod = 'MONTHLY' | 'ANNUAL'
+export type LicenseStatus = 'ACTIVE' | 'PAST_DUE' | 'LAPSED' | 'CANCELED' | 'REVOKED'
 export type ContactRole = 'BILLING' | 'TECHNICAL'
 export type FreeLicenseRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
 export type ParticipantType = 'STAFF' | 'CUSTOMER'
 export type Site = 'PUBLIC' | 'STAFF'
 
-export interface PlanInfo {
-    id: Plan
-    name: string
-    monthlyPrice: number
+/** What a customer reports about its company, which sets its plan. */
+export interface CompanyFigures {
+    annualRevenue: number
+    /** Required when the annual revenue is under $1M, where it decides between Free and Small. */
+    capitalRaised: number | null
+}
+
+/** The price of a paid plan for one billing period on one price list. */
+export interface PlanPrice {
+    plan: Plan
+    billingPeriod: BillingPeriod
+    priceList: number
+    /** What one billing period costs. */
+    amount: number
     currency: string
-    highlights: string[]
-    requiresApproval: boolean
+}
+
+export interface CheckoutRequest {
+    plan: Plan
+    billingPeriod: BillingPeriod
+    figures: CompanyFigures
 }
 
 export interface Customer {
@@ -45,11 +60,19 @@ export interface License {
     customerId: string
     plan: Plan
     status: LicenseStatus
+    /** Null for a free license. */
+    billingPeriod: BillingPeriod | null
+    /** The price list the license keeps while it stays active. */
+    priceList: number
+    /** The terms the license keeps while it stays active. */
+    termsVersion: string
     stripeSubscriptionId: string | null
     checkoutSessionId: string | null
     currentPeriodEnd: string | null
     /** When the subscription ends because the customer cancelled it; null while it renews. */
     cancelsAt: string | null
+    /** When the license fell past due; it lapses 30 days on. */
+    pastDueSince: string | null
     termStart: string
     termEnd: string
     lastPaymentAt: string | null
@@ -83,8 +106,7 @@ export interface FreeLicenseRequest {
 }
 
 export interface FreeLicenseCertification {
-    annualRevenue: number
-    capitalRaised: number
+    figures: CompanyFigures
     intendedUse: string
 }
 

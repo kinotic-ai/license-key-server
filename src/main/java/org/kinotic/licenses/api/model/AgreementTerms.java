@@ -7,7 +7,7 @@ package org.kinotic.licenses.api.model;
 public final class AgreementTerms {
 
     /** The version of the terms the site shows and the server records. */
-    public static final String VERSION = "2026-10";
+    public static final String VERSION = "2026-11";
 
     private AgreementTerms() {}
 }

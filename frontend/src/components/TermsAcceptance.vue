@@ -22,9 +22,20 @@ const accepted = defineModel<boolean>({ required: true })
           it.
         </p>
         <p>
-          Paid plans bill monthly through Stripe until canceled. Canceling stops new keys from being issued; a key
-          already issued works until it expires. Prices are those shown at purchase. A free license is granted at the
-          discretion of Minds Ignited to organizations that certify they qualify, and renews on re-certification.
+          Your plan is set by your organization's annual revenue, including any companies it owns, and for the free
+          plan also by the capital it has raised. You confirm these figures when you buy and once a year after, 30 days
+          before each anniversary of your license; when they set another plan, your license moves to it at that
+          anniversary.
+        </p>
+        <p>
+          Paid plans bill monthly or annually through Stripe until cancelled. Your license keeps the price list and
+          these terms in effect the day it starts for as long as it stays active: never cancelled, with every failed
+          payment settled within 30 days. A license whose failed payment goes unsettled for 30 days lapses and its
+          subscription is cancelled; buying again starts on the price list and terms then in effect. No new key is issued
+          for a license that is past due, lapsed, cancelled or revoked; a key already issued works until it expires.
+        </p>
+        <p>
+          A free license is granted at the discretion of Minds Ignited to organizations that certify they qualify.
         </p>
         <p>
           The full text of the Kinotic Enterprise License is published with Kinotic at

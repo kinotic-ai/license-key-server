@@ -45,8 +45,7 @@ class LicenseKeyTest extends ServerTest {
     @Test
     void aKeyIsAJwtKinoticsVerifierAccepts() throws Exception {
         Customer customer = seedCustomer();
-        License license = await(licenseService.createLicense(customer, Plan.STARTUP, "sub_" + UUID.randomUUID(),
-                                                             "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30)))).license();
+        License license = await(licenseService.createLicense(customer, subscription(Plan.SMALL, "sub_" + UUID.randomUUID(), "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30))))).license();
         assertThat(license.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
         IssuedKey key = await(licenseService.keysOf(license.getId())).getFirst();
 
@@ -70,8 +69,7 @@ class LicenseKeyTest extends ServerTest {
 
     @Test
     void aKeyWhosePayloadChangedDoesNotVerify() throws Exception {
-        License license = await(licenseService.createLicense(seedCustomer(), Plan.STARTUP, "sub_" + UUID.randomUUID(),
-                                                             "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30)))).license();
+        License license = await(licenseService.createLicense(seedCustomer(), subscription(Plan.SMALL, "sub_" + UUID.randomUUID(), "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30))))).license();
         String[] parts = await(licenseService.keysOf(license.getId())).getFirst().getKey().split("\\.");
         JsonObject payload = new JsonObject(new String(BASE64URL.decode(parts[1]), StandardCharsets.UTF_8)).put("sub", "Someone Else Inc");
         String forged = parts[0] + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(payload.encode().getBytes(StandardCharsets.UTF_8))

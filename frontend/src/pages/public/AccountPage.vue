@@ -61,8 +61,7 @@ async function submitRecertification() {
   submitting.value = true
   try {
     await customerAccountService.requestFreeLicense({
-      annualRevenue: annualRevenue.value ?? 0,
-      capitalRaised: capitalRaised.value ?? 0,
+      figures: { annualRevenue: annualRevenue.value ?? 0, capitalRaised: capitalRaised.value ?? 0 },
       intendedUse: intendedUse.value.trim()
     }, SITE.termsVersion)
     toast.add({ severity: 'success', summary: 'Renewal requested', detail: 'We will email you once it is reviewed.', life: 6000 })

@@ -5,7 +5,6 @@ import com.stripe.exception.EventDataObjectDeserializationException;
 import com.stripe.model.Event;
 import com.stripe.model.Invoice;
 import com.stripe.model.Price;
-import com.stripe.model.Product;
 import com.stripe.model.StripeObject;
 import com.stripe.model.Subscription;
 import com.stripe.model.SubscriptionItem;
@@ -16,6 +15,7 @@ import com.stripe.param.PriceListParams;
 import com.stripe.param.SubscriptionRetrieveParams;
 import com.stripe.param.checkout.SessionCreateParams;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import lombok.RequiredArgsConstructor;
 import org.kinotic.core.api.exceptions.AlreadyExistsException;
@@ -25,9 +25,13 @@ import org.kinotic.licenses.api.config.KinoticLicensesProperties;
 import org.kinotic.licenses.api.model.Customer;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseStatus;
+import org.kinotic.licenses.api.model.BillingPeriod;
+import org.kinotic.licenses.api.model.CheckoutRequest;
 import org.kinotic.licenses.api.model.Plan;
-import org.kinotic.licenses.api.model.PlanInfo;
-import org.kinotic.licenses.internal.api.model.PlanCatalog;
+import org.kinotic.licenses.api.model.PlanPrice;
+import org.kinotic.licenses.internal.api.model.PaidSubscription;
+import org.kinotic.licenses.internal.api.model.PriceCatalog;
+import org.kinotic.licenses.internal.api.model.PriceLookupKey;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.springframework.beans.factory.ObjectProvider;
@@ -37,33 +41,37 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
-import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
 /**
- * Everything the server does with Stripe Billing. Customers pay through a monthly subscription started in Stripe
- * Checkout and managed in the Stripe Customer Portal; the server stores Stripe ids only and never sees payment
- * details. Prices live on the Stripe Prices with the plans' lookup keys. Stripe's webhook events drive the license:
- * a completed Checkout creates it and issues its first key once the first invoice is paid, and every event about the
- * subscription brings the license's plan, status, billing period and scheduled cancellation to what Stripe has now.
+ * Everything the server does with Stripe Billing. Customers pay through a monthly or annual subscription started in
+ * Stripe Checkout and managed in the Stripe Customer Portal; the server stores Stripe ids only and never sees payment
+ * details. Prices live on Stripe Prices named by {@link PriceLookupKey}: a price list is the set of Prices with one
+ * version, and the current price list is the highest version with an active Price for every paid plan and billing
+ * period. Stripe's webhook events drive the license: a completed Checkout creates it, or moves the customer's free
+ * license onto the subscription, and issues its first key once the first invoice is paid, and every event about the
+ * subscription brings the license's plan, billing period, status and scheduled cancellation to what Stripe has now.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class StripeBillingService {
 
-    private static final Duration PLAN_CACHE_LIFETIME = Duration.ofMinutes(10);
+    private static final Duration PRICE_CACHE_LIFETIME = Duration.ofMinutes(10);
     private static final String SUCCESS_PATH = "/buy/success?session_id={CHECKOUT_SESSION_ID}";
-    private static final String CANCEL_PATH = "/buy?plan=";
+    private static final String CANCEL_PATH = "/buy?plan=%s&billing=%s";
     private static final String ACCOUNT_PATH = "/account";
     private static final String CUSTOMER_ID_METADATA = "kinoticCustomerId";
-    private static final String PLAN_METADATA = "kinoticPlan";
+    // the free license a purchase moves onto the subscription it buys
+    private static final String LICENSE_ID_METADATA = "kinoticLicenseId";
     private static final String SUBSCRIPTION_MODE = "subscription";
     private static final BigDecimal MINOR_UNITS = BigDecimal.valueOf(100);
     private static final String PAID = "paid";
@@ -78,57 +86,108 @@ public class StripeBillingService {
 
     // the work under way for each subscription, which the next event for it waits for
     private final Map<String, Future<Void>> reconciling = new ConcurrentHashMap<>();
-    private volatile PlanCatalog catalog;
+    private volatile PriceCatalog catalog;
 
     /**
-     * The plans with their current prices, read from Stripe and cached for a few minutes.
+     * The prices the customer buys at: those of the price list its active free license keeps, or of the current price
+     * list. Read from Stripe and cached for a few minutes.
      */
-    public Future<List<PlanInfo>> listPlans() {
-        return catalog().map(PlanCatalog::plans);
+    public Future<List<PlanPrice>> findPrices(Customer customer) {
+        return freeLicenseOf(customer).compose(free -> catalog().map(prices -> {
+            int priceList = priceListFor(free, prices);
+            List<PlanPrice> ret = new ArrayList<>();
+            prices.prices().forEach((key, price) -> {
+                if (key.priceList() == priceList) {
+                    ret.add(new PlanPrice().setPlan(key.plan())
+                                           .setBillingPeriod(key.period())
+                                           .setPriceList(priceList)
+                                           .setAmount(price.getUnitAmountDecimal().divide(MINOR_UNITS))
+                                           .setCurrency(price.getCurrency()));
+                }
+            });
+            ret.sort(Comparator.comparing(PlanPrice::getPlan).thenComparing(PlanPrice::getBillingPeriod));
+            return ret;
+        }));
     }
 
     /**
-     * Starts a purchase: creates the customer's Stripe customer if it has none and a Checkout Session for a monthly
-     * subscription to the plan, which returns to the success page with the session id.
+     * The current price list, which a new license starts on.
+     *
+     * @return the version, or a failure with {@link IllegalStateException} when Stripe holds no complete price list
+     */
+    public Future<Integer> currentPriceList() {
+        return catalog().map(prices -> {
+            Validate.validState(prices.currentPriceList() > 0, "Stripe has no price list with an active Price for every paid plan and billing period");
+            return prices.currentPriceList();
+        });
+    }
+
+    /**
+     * Starts a purchase: creates the customer's Stripe customer if it has none and a Checkout Session for a
+     * subscription to the plan, billed for the period chosen, at the price list the customer buys at (see
+     * {@link #findPrices(Customer)}). It returns to the success page with the session id.
      *
      * @param customer     the buyer
      * @param contactName  the billing contact's name, shown on the Stripe customer
      * @param contactEmail the billing contact's email, which Stripe sends receipts to
-     * @param plan         the paid plan
+     * @param request      the plan, billing period and the company's figures, which must match the plan
      * @return the Checkout Session URL to send the browser to, or a failure with {@link AlreadyExistsException} when
-     *         the customer already holds a paid subscription, which it changes in the Customer Portal instead
+     *         the customer already holds a paid subscription, or with {@link IllegalArgumentException} when the request
+     *         is not valid or the figures set another plan
      */
-    public Future<String> startCheckout(Customer customer, String contactName, String contactEmail, Plan plan) {
-        Validate.isTrue(plan != Plan.FREE, "The free plan is requested, not bought");
+    public Future<String> startCheckout(Customer customer, String contactName, String contactEmail, CheckoutRequest request) {
+        validate(request);
         String publicBaseUrl = properties.getLicenses().getPublicBaseUrl();
         return licenseRepository.findByCustomerId(customer.getId()).compose(licenses -> {
             boolean subscribed = licenses.stream().anyMatch(license -> license.getPlan() != Plan.FREE
                     && (license.getStatus() == LicenseStatus.ACTIVE || license.getStatus() == LicenseStatus.PAST_DUE));
             return subscribed
-                    ? Future.failedFuture(new AlreadyExistsException(ALREADY_SUBSCRIBED))
-                    : catalog();
-        }).compose(plans -> {
-            String priceId = plans.priceIds().get(plan);
-            Validate.validState(priceId != null, "Stripe has no active Price with the lookup key %s", plan.lookupKey());
+                    ? Future.<License>failedFuture(new AlreadyExistsException(ALREADY_SUBSCRIBED))
+                    : freeLicenseOf(customer);
+        }).compose(free -> catalog().compose(prices -> {
+            PriceLookupKey key = new PriceLookupKey(priceListFor(free, prices), request.getPlan(), request.getBillingPeriod());
+            Price price = prices.prices().get(key);
+            Validate.validState(price != null, "Stripe has no active Price with the lookup key %s", key.lookupKey());
             return ensureStripeCustomer(customer, contactName, contactEmail).compose(stripeCustomerId -> blocking(() -> {
+                Map<String, String> metadata = new HashMap<>();
+                metadata.put(CUSTOMER_ID_METADATA, customer.getId());
+                if (free != null) {
+                    metadata.put(LICENSE_ID_METADATA, free.getId());
+                }
+                String cancelPath = CANCEL_PATH.formatted(request.getPlan().name().toLowerCase(Locale.ROOT),
+                                                          request.getBillingPeriod().name().toLowerCase(Locale.ROOT));
                 SessionCreateParams params = SessionCreateParams.builder()
                         .setMode(SessionCreateParams.Mode.SUBSCRIPTION)
                         .setCustomer(stripeCustomerId)
                         .setClientReferenceId(customer.getId())
-                        .addLineItem(SessionCreateParams.LineItem.builder().setPrice(priceId).setQuantity(1L).build())
+                        .addLineItem(SessionCreateParams.LineItem.builder().setPrice(price.getId()).setQuantity(1L).build())
                         .setSuccessUrl(publicBaseUrl + SUCCESS_PATH)
-                        .setCancelUrl(publicBaseUrl + CANCEL_PATH + plan.name())
+                        .setCancelUrl(publicBaseUrl + cancelPath)
                         .setBillingAddressCollection(SessionCreateParams.BillingAddressCollection.REQUIRED)
-                        .putMetadata(CUSTOMER_ID_METADATA, customer.getId())
-                        .putMetadata(PLAN_METADATA, plan.name())
-                        .setSubscriptionData(SessionCreateParams.SubscriptionData.builder()
-                                                                                 .putMetadata(CUSTOMER_ID_METADATA, customer.getId())
-                                                                                 .putMetadata(PLAN_METADATA, plan.name())
-                                                                                 .build())
+                        .putAllMetadata(metadata)
+                        .setSubscriptionData(SessionCreateParams.SubscriptionData.builder().putAllMetadata(metadata).build())
                         .build();
                 return stripe().checkout().sessions().create(params).getUrl();
             }));
-        });
+        }));
+    }
+
+    /**
+     * Cancels the license's Stripe subscription at once if Stripe still has it unpaid, as when the license lapses.
+     *
+     * @return whether it was cancelled; {@code false} when Stripe has it in good standing or ended by now
+     */
+    public Future<Boolean> cancelIfUnpaid(License license) {
+        String subscriptionId = license.getStripeSubscriptionId();
+        return oneAtATime(subscriptionId, () -> currentSubscription(subscriptionId).compose(subscription -> {
+            Future<Boolean> ret;
+            if (statusOf(subscription.getStatus()) == LicenseStatus.PAST_DUE) {
+                ret = blocking(() -> stripe().subscriptions().cancel(subscriptionId)).map(true);
+            } else {
+                ret = Future.succeededFuture(false);
+            }
+            return ret;
+        }));
     }
 
     /**
@@ -178,6 +237,8 @@ public class StripeBillingService {
                         // email failed
                         if (existing != null) {
                             fulfilled = sync(existing, subscription).compose(synced -> finishFulfillment(synced, isPaid(subscription)));
+                        } else if (session.getMetadata() != null && session.getMetadata().get(LICENSE_ID_METADATA) != null) {
+                            fulfilled = moveFreeLicense(session.getMetadata().get(LICENSE_ID_METADATA), session, subscription);
                         } else {
                             fulfilled = customerRepository.findById(session.getClientReferenceId())
                                                           .compose(customer -> createLicenseFor(customer, session, subscription));
@@ -191,18 +252,43 @@ public class StripeBillingService {
     private Future<Void> createLicenseFor(Customer customer, Session session, Subscription subscription) {
         Validate.validState(customer != null, "The Checkout Session %s names no customer of this server", session.getId());
         SubscriptionItem item = subscription.getItems().getData().getFirst();
-        Plan plan = Plan.fromLookupKey(item.getPrice().getLookupKey());
-        Instant periodEnd = Instant.ofEpochSecond(item.getCurrentPeriodEnd());
+        PriceLookupKey price = PriceLookupKey.parse(item.getPrice().getLookupKey());
+        Validate.validState(price != null, "The subscription %s bills the Price %s, which is no paid plan's", subscription.getId(),
+                            item.getPrice().getId());
+        PaidSubscription paid = new PaidSubscription(price, subscription.getId(), session.getId(),
+                                                     Instant.ofEpochSecond(item.getCurrentPeriodEnd()));
         Future<Void> ret;
         if (isPaid(subscription)) {
-            ret = licenseService.createLicense(customer, plan, subscription.getId(), session.getId(), periodEnd)
+            ret = licenseService.createLicense(customer, paid)
                                 .compose(created -> sync(created.license(), subscription)
                                         .compose(synced -> licenseService.emailNewKey(synced, created.key())));
         } else {
             // a payment that clears later, as a bank debit does, gets its key from invoice.paid
-            ret = licenseService.createAwaitingPayment(customer, plan, subscription.getId(), session.getId(), periodEnd).mapEmpty();
+            ret = licenseService.createAwaitingPayment(customer, paid).mapEmpty();
         }
         return ret.onSuccess(v -> log.info("The Checkout Session {} bought a license for customer {}", session.getId(), customer.getId()));
+    }
+
+    // The free license the purchase was started from moves onto the subscription, keeping its price list and terms. One
+    // that is no longer an active free license by now, as when staff revoked it, leaves the purchase a license of its own.
+    private Future<Void> moveFreeLicense(String licenseId, Session session, Subscription subscription) {
+        SubscriptionItem item = subscription.getItems().getData().getFirst();
+        PriceLookupKey price = PriceLookupKey.parse(item.getPrice().getLookupKey());
+        Validate.validState(price != null, "The subscription %s bills the Price %s, which is no paid plan's", subscription.getId(),
+                            item.getPrice().getId());
+        return licenseRepository.attachSubscription(licenseId, price.plan(), price.period(), subscription.getId(), session.getId(),
+                                                    Instant.ofEpochSecond(item.getCurrentPeriodEnd()))
+                                .compose(moved -> {
+                                    Future<Void> ret;
+                                    if (moved != null) {
+                                        log.info("The Checkout Session {} moved the free license {} onto a paid plan", session.getId(), licenseId);
+                                        ret = sync(moved, subscription).mapEmpty();
+                                    } else {
+                                        ret = customerRepository.findById(session.getClientReferenceId())
+                                                                .compose(customer -> createLicenseFor(customer, session, subscription));
+                                    }
+                                    return ret;
+                                });
     }
 
     // issues the key a failed first attempt never got to, or emails again the one it issued but never sent; a payment
@@ -225,7 +311,7 @@ public class StripeBillingService {
         Instant paidAt = invoice.getStatusTransitions() != null && invoice.getStatusTransitions().getPaidAt() != null
                 ? Instant.ofEpochSecond(invoice.getStatusTransitions().getPaidAt())
                 : Instant.now();
-        return withLicenseOf(subscriptionOf(invoice), (license, subscription) -> licenseService.recordPayment(license, paidAt)
+        return withLicenseOf(subscriptionOf(invoice), (license, subscription) -> licenseRepository.recordPayment(license.getId(), paidAt)
                 .compose(paid -> sync(paid, subscription))
                 .compose(synced -> synced.getStatus() == LicenseStatus.ACTIVE
                         ? issueFirstKeyIfNone(synced)
@@ -271,12 +357,16 @@ public class StripeBillingService {
 
     // Stripe delivers events in no set order and several at once, so the work for one subscription, from reading it to
     // writing its license, runs after the work already started for it: a newer read is never written over by an older
-    private Future<Void> oneAtATime(String subscriptionId, Supplier<Future<Void>> work) {
-        Future<Void> ret = reconciling.compute(subscriptionId, (id, previous) -> (previous == null
-                ? Future.<Void>succeededFuture()
-                : previous.<Void>transform(done -> Future.succeededFuture())).compose(v -> work.get()));
-        ret.onComplete(done -> reconciling.remove(subscriptionId, ret));
-        return ret;
+    private <T> Future<T> oneAtATime(String subscriptionId, Supplier<Future<T>> work) {
+        Promise<T> ret = Promise.promise();
+        Future<Void> slot = reconciling.compute(subscriptionId, (id, previous) -> {
+            Future<T> run = (previous == null ? Future.<Void>succeededFuture() : previous.<Void>transform(done -> Future.succeededFuture()))
+                    .compose(v -> work.get());
+            run.onComplete(ret);
+            return run.transform(done -> Future.succeededFuture());
+        });
+        slot.onComplete(done -> reconciling.remove(subscriptionId, slot));
+        return ret.future();
     }
 
     private Future<Subscription> currentSubscription(String subscriptionId) {
@@ -289,9 +379,12 @@ public class StripeBillingService {
     // writes the subscription as Stripe has it onto its license
     private Future<License> sync(License license, Subscription subscription) {
         SubscriptionItem item = subscription.getItems().getData().getFirst();
-        Plan plan = item.getPrice().getLookupKey() != null ? Plan.fromLookupKey(item.getPrice().getLookupKey()) : license.getPlan();
+        Optional<PriceLookupKey> price = Optional.ofNullable(PriceLookupKey.parse(item.getPrice().getLookupKey()));
+        Plan plan = price.map(PriceLookupKey::plan).orElse(license.getPlan());
+        BillingPeriod period = price.map(PriceLookupKey::period).orElse(license.getBillingPeriod());
         Instant periodEnd = item.getCurrentPeriodEnd() != null ? Instant.ofEpochSecond(item.getCurrentPeriodEnd()) : license.getCurrentPeriodEnd();
-        return licenseService.syncSubscription(license, plan, statusOf(subscription.getStatus()), periodEnd, cancelsAt(subscription, periodEnd));
+        return licenseRepository.syncSubscription(license.getId(), plan, period, statusOf(subscription.getStatus()), periodEnd,
+                                                  cancelsAt(subscription, periodEnd));
     }
 
     // the subscription's latest invoice is paid, by card at Checkout or by a bank debit that has cleared since
@@ -353,10 +446,10 @@ public class StripeBillingService {
         return ret;
     }
 
-    private Future<PlanCatalog> catalog() {
-        PlanCatalog current = catalog;
-        Future<PlanCatalog> ret;
-        if (current != null && current.fetchedAt().plus(PLAN_CACHE_LIFETIME).isAfter(Instant.now())) {
+    private Future<PriceCatalog> catalog() {
+        PriceCatalog current = catalog;
+        Future<PriceCatalog> ret;
+        if (current != null && current.fetchedAt().plus(PRICE_CACHE_LIFETIME).isAfter(Instant.now())) {
             ret = Future.succeededFuture(current);
         } else {
             ret = blocking(this::readCatalog).onSuccess(read -> catalog = read);
@@ -364,40 +457,45 @@ public class StripeBillingService {
         return ret;
     }
 
-    private PlanCatalog readCatalog() throws Exception {
-        List<String> lookupKeys = Arrays.stream(Plan.values()).filter(plan -> plan != Plan.FREE).map(Plan::lookupKey).toList();
-        List<Price> prices = stripe().prices().list(PriceListParams.builder()
-                                                                 .setActive(true)
-                                                                 .addAllLookupKey(lookupKeys)
-                                                                 .addExpand("data.product")
-                                                                 .build()).getData();
-        List<PlanInfo> plans = new ArrayList<>();
-        Map<Plan, String> priceIds = new EnumMap<>(Plan.class);
-        String currency = "usd";
-        for (Price price : prices) {
-            Plan plan = Plan.fromLookupKey(price.getLookupKey());
-            Product product = price.getProductObject();
-            currency = price.getCurrency();
-            priceIds.put(plan, price.getId());
-            plans.add(new PlanInfo()
-                              .setId(plan)
-                              .setName(product != null ? product.getName() : plan.name())
-                              .setMonthlyPrice(price.getUnitAmountDecimal().divide(MINOR_UNITS))
-                              .setCurrency(price.getCurrency())
-                              .setHighlights(product != null && product.getMarketingFeatures() != null
-                                                     ? product.getMarketingFeatures().stream().map(Product.MarketingFeature::getName).toList()
-                                                     : List.of())
-                              .setRequiresApproval(false));
+    private PriceCatalog readCatalog() throws Exception {
+        Map<PriceLookupKey, Price> prices = new HashMap<>();
+        Map<Integer, Integer> pricesPerList = new HashMap<>();
+        for (Price price : stripe().prices().list(PriceListParams.builder().setActive(true).setLimit(100L).build()).autoPagingIterable()) {
+            PriceLookupKey key = PriceLookupKey.parse(price.getLookupKey());
+            if (key != null) {
+                prices.put(key, price);
+                pricesPerList.merge(key.priceList(), 1, Integer::sum);
+            }
         }
-        plans.add(new PlanInfo()
-                          .setId(Plan.FREE)
-                          .setName("Free")
-                          .setMonthlyPrice(BigDecimal.ZERO)
-                          .setCurrency(currency)
-                          .setHighlights(List.of())
-                          .setRequiresApproval(true));
-        plans.sort(Comparator.comparing(PlanInfo::getId));
-        return new PlanCatalog(List.copyOf(plans), priceIds, Instant.now());
+        // a lookup key names one Price at a time, so a version with a Price per paid plan and period is complete
+        int complete = (Plan.values().length - 1) * BillingPeriod.values().length;
+        int current = pricesPerList.entrySet().stream()
+                                   .filter(entry -> entry.getValue() == complete)
+                                   .mapToInt(Map.Entry::getKey)
+                                   .max()
+                                   .orElse(0);
+        return new PriceCatalog(current, Map.copyOf(prices), Instant.now());
+    }
+
+    // the customer's active free license, which a purchase moves onto the subscription; null when it holds none
+    private Future<License> freeLicenseOf(Customer customer) {
+        return licenseRepository.findFreeLicense(customer.getId())
+                                .map(free -> free != null && free.getStatus() == LicenseStatus.ACTIVE ? free : null);
+    }
+
+    // the price list a purchase buys at: the one the free license keeps, else the current one
+    private static int priceListFor(License free, PriceCatalog prices) {
+        int ret = free != null ? free.getPriceList() : prices.currentPriceList();
+        Validate.validState(ret > 0, "Stripe has no price list with an active Price for every paid plan and billing period");
+        return ret;
+    }
+
+    private static void validate(CheckoutRequest request) {
+        Validate.isTrue(request != null, "The purchase is required");
+        Validate.isTrue(request.getPlan() != null && request.getPlan() != Plan.FREE, "A paid plan is required; the free plan is requested, not bought");
+        Validate.isTrue(request.getBillingPeriod() != null, "The billing period is required");
+        Plan matching = Plan.matching(request.getFigures());
+        Validate.isTrue(matching == request.getPlan(), "Your company's figures fit the %s plan, not %s", matching, request.getPlan());
     }
 
     private V1Services stripe() {

@@ -22,18 +22,18 @@ whatever it likes to the left of it. A second proxy in the chain would make ever
   HSM-protected key (`--kty EC-HSM`) works the same way and keeps the private key in the HSM.
 - **Azure Communication Services** email with a verified sender on the kinotic.ai domain. The same identity needs the
   `Contributor` role on the Communication Services resource to send.
-- **Stripe**: a Price per paid plan with the lookup keys `kinotic-startup`, `kinotic-business` and
-  `kinotic-enterprise` (monthly recurring, one currency); Link enabled under payment methods; the Kinotic logo and
-  brand colour under branding, which Checkout and the Customer Portal use; the Customer Portal enabled with payment
-  method updates and invoice history. Prices live only in Stripe.
+- **Stripe**: the price lists described under [Price lists](#price-lists); Link enabled under payment methods; the
+  Kinotic logo and brand colour under branding, which Checkout and the Customer Portal use; the Customer Portal
+  enabled with payment method updates, invoice history and cancellation, and with **subscription updates (switching
+  plans) turned off**: a license changes plan only at its yearly confirmation. Prices live only in Stripe.
 - **Stripe webhook**: an endpoint at `https://licenses.kinotic.ai/api/stripe/webhook` delivering
   `checkout.session.completed`, `invoice.paid`, `invoice.payment_failed`, `customer.subscription.updated` and
   `customer.subscription.deleted`, pinned to the API version of the `stripe-java` release in `gradle.properties`.
   Its signing secret is `KINOTIC_LICENSES_STRIPE_WEBHOOKSECRET`. Stripe delivers events in no set order, so an
   event only tells the server which subscription changed: the server reads that subscription, with its price and
   latest invoice, from Stripe and brings the license to it. A restricted secret key therefore needs read access to
-  prices, products, subscriptions and invoices, and write access to customers and to Checkout and Customer Portal
-  sessions. A card
+  prices, products and invoices, and write access to customers, subscriptions (a lapsed license's subscription is
+  cancelled) and Checkout and Customer Portal sessions. A card
   payment gets its key from `checkout.session.completed`; a bank debit through Link completes Checkout unpaid, and
   its key is issued and emailed once Stripe reports the first invoice paid. A subscription the customer cancels in
   the Customer Portal keeps its key until it expires and is not renewed.
@@ -41,6 +41,31 @@ whatever it likes to the left of it. A second proxy in the chain would make ever
   `https://<staff host>/api/auth/staff/callback`, scopes `openid email profile`. With Entra, add `email` as an
   optional ID token claim: Entra sends no `email_verified`, so the server takes the tenant's own address for
   verified, and accepts only accounts on `KINOTIC_LICENSES_STAFFOIDC_ALLOWEDEMAILDOMAIN`.
+
+## Price lists
+
+The plans and their eligibility are set by the kinotic.ai pricing page; what each costs lives only in Stripe, as
+Prices named by lookup key:
+
+```
+kinotic-<priceList>-<plan>-<period>      e.g. kinotic-1-small-annual
+```
+
+`<plan>` is `small`, `medium` or `large` and `<period>` is `monthly` or `annual`, so a price list is six recurring
+Prices in one currency: a monthly Price at the plan's monthly price, and an annual Price at twelve months less 10%.
+Free has no Price. The **current price list** is the highest version that has an active Price for all six; a new
+license starts on it, and the server reads it again every ten minutes. A license records its price list and the
+terms version in effect when it starts, and keeps both for as long as it stays active (never cancelled, with every
+failed payment settled within 30 days): its plan moves are priced on its own list. A customer holding an active free
+license buys at the free license's price list, and the free license moves onto the subscription. A customer whose
+license lapsed or was cancelled buys on the current list.
+
+To change prices, create a **new** price list: six new Prices with the next version in their lookup keys. Never edit,
+archive or reuse a Price a price list holds, since licenses on that list are billed with it. A version with fewer
+than six active Prices is ignored, so a new list can be built up one Price at a time and goes live with the sixth.
+
+A license past due for more than 30 days lapses: a daily job marks it `LAPSED` and cancels its Stripe subscription,
+unless Stripe reports the payment settled by then.
 
 ## Configuration
 

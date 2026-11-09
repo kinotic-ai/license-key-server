@@ -9,7 +9,9 @@ import org.kinotic.licenses.api.model.CustomerAccount;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.FreeLicenseRequest;
 import org.kinotic.licenses.api.model.Plan;
-import org.kinotic.licenses.api.model.PlanInfo;
+import org.kinotic.licenses.api.model.PlanPrice;
+import org.kinotic.licenses.api.model.CheckoutRequest;
+import org.kinotic.licenses.api.model.CompanyFigures;
 import org.kinotic.licenses.api.security.LicenseZones;
 
 import java.util.List;
@@ -37,22 +39,33 @@ public interface CustomerAccountService {
     Future<String> createPortalSession();
 
     /**
-     * The plans, with the monthly price of each paid plan as Stripe has it.
+     * The prices the calling customer buys at, for every paid plan and billing period: those of the price list its
+     * active free license keeps, or of the current price list.
      */
-    Future<List<PlanInfo>> findPlans();
+    Future<List<PlanPrice>> findPrices();
+
+    /**
+     * The plan a company with these figures is on.
+     *
+     * @throws IllegalArgumentException when the annual revenue is missing or negative, or the capital raised is when the
+     *                                  revenue is under $1M
+     */
+    Future<Plan> findPlanFor(CompanyFigures figures);
 
     /**
      * Starts the purchase of a paid plan by the calling customer, and records that the calling contact accepted the
-     * terms.
+     * terms. A customer holding an active free license moves it onto the plan bought, with the price list and terms it
+     * keeps.
      *
-     * @param plan         the plan to buy
+     * @param request      the plan, billing period and the company's figures, which must match the plan
      * @param termsVersion the version of the terms the contact accepted, which must be the current version
      * @return the Stripe Checkout URL to send the browser to
-     * @throws IllegalArgumentException when the plan is the free plan, or the terms version is not the current one
-     * @throws org.kinotic.core.api.exceptions.AlreadyExistsException when the customer holds a paid subscription; it
-     *                                                                changes plans in the Customer Portal
+     * @throws IllegalArgumentException when the plan is the free plan, the figures set another plan, or the terms
+     *                                  version is not the current one
+     * @throws org.kinotic.core.api.exceptions.AlreadyExistsException when the customer holds a paid subscription; its
+     *                                                                plan moves at its yearly confirmation
      */
-    Future<String> startCheckout(Plan plan, String termsVersion);
+    Future<String> startCheckout(CheckoutRequest request, String termsVersion);
 
     /**
      * What the success page of a purchase by the calling customer is told about the key the purchase bought: the key

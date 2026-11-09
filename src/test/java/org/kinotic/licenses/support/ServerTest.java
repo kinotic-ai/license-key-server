@@ -14,19 +14,25 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.Tuple;
 import org.springframework.boot.test.system.CapturedOutput;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import static org.assertj.core.api.Assertions.assertThat;
+import org.kinotic.licenses.api.model.BillingPeriod;
 import org.kinotic.licenses.api.model.ContactRole;
 import org.kinotic.licenses.api.model.Customer;
 import org.kinotic.licenses.api.model.CustomerContact;
+import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.security.LicenseParticipant;
 import org.kinotic.licenses.api.security.ParticipantType;
 import org.kinotic.core.api.security.SecurityContext;
 import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
+import org.kinotic.licenses.internal.api.model.PaidSubscription;
+import org.kinotic.licenses.internal.api.model.PriceLookupKey;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
+import org.kinotic.licenses.internal.api.rest.StripeWebhookRoutes;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -112,6 +118,15 @@ public abstract class ServerTest {
         return await(request.send());
     }
 
+    /** Delivers a Stripe webhook event as Stripe does, signed with the test webhook secret. */
+    protected static HttpResponse<Buffer> deliver(JsonObject event) throws Exception {
+        String payload = event.encode();
+        return await(client.post(StripeWebhookRoutes.PATH)
+                           .putHeader("Stripe-Signature", StripeEvents.signature(payload))
+                           .putHeader("Content-Type", "application/json")
+                           .sendBuffer(Buffer.buffer(payload)));
+    }
+
     /** Runs a statement against the suite's database, for arranging state no public interface sets, such as a past date. */
     protected void sql(String statement, Object... values) throws Exception {
         await(pool.preparedQuery(statement).execute(Tuple.from(values)));
@@ -184,6 +199,12 @@ public abstract class ServerTest {
     // the services read the caller from the Vert.x context, as they do for an RPC the gateway dispatches
     private <T> T callAs(LicenseParticipant participant, Supplier<Future<T>> call) throws Exception {
         return securityContext.callAs(participant, () -> (CompletionStage<T>) call.get().toCompletionStage()).get();
+    }
+
+    /** A monthly subscription to the plan on the current price list, as a Checkout Session would have bought it. */
+    protected static PaidSubscription subscription(Plan plan, String stripeSubscriptionId, String checkoutSessionId, Instant currentPeriodEnd) {
+        return new PaidSubscription(new PriceLookupKey(StripeStandIn.CURRENT_PRICE_LIST, plan, BillingPeriod.MONTHLY),
+                                    stripeSubscriptionId, checkoutSessionId, currentPeriodEnd);
     }
 
     /** A customer with one billing contact whose email is unique to the test. */

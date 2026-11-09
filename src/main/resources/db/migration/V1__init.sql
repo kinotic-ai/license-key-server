@@ -34,12 +34,19 @@ CREATE TABLE license (
     customer_id            TEXT        NOT NULL REFERENCES customer (id),
     plan                   TEXT        NOT NULL,
     status                 TEXT        NOT NULL,
+    -- MONTHLY or ANNUAL for a paid plan, NULL for a free license
+    billing_period         TEXT,
+    -- the price list and terms in effect when the license started, which it keeps while it stays active
+    price_list             INTEGER     NOT NULL,
+    terms_version          TEXT        NOT NULL,
     stripe_subscription_id TEXT UNIQUE,
     -- the Checkout Session that bought it, which the success page shows the first key for
     checkout_session_id    TEXT UNIQUE,
     current_period_end     TIMESTAMPTZ,
     -- when the subscription is set to end, as the customer scheduled it in the Customer Portal
     cancels_at             TIMESTAMPTZ,
+    -- when the payment that left the license PAST_DUE failed; 30 days on, the license lapses
+    past_due_since         TIMESTAMPTZ,
     term_start             TIMESTAMPTZ NOT NULL,
     term_end               TIMESTAMPTZ NOT NULL,
     last_payment_at        TIMESTAMPTZ,

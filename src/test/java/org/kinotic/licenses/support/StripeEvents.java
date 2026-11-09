@@ -53,6 +53,21 @@ public final class StripeEvents {
                 .put("payment_status", paymentStatus);
     }
 
+    /**
+     * The Checkout Session the server created with the request, completed in subscription mode: it carries the
+     * client reference and metadata the server set.
+     */
+    public static JsonObject completedSession(StripeRequest created, String subscriptionId, String paymentStatus) {
+        JsonObject metadata = new JsonObject();
+        created.params().forEach((key, value) -> {
+            if (key.startsWith("metadata[")) {
+                metadata.put(key.substring("metadata[".length(), key.length() - 1), value);
+            }
+        });
+        return checkoutSession("cs_" + UUID.randomUUID().toString().replace("-", ""), subscriptionId,
+                               created.params().get("client_reference_id"), paymentStatus).put("metadata", metadata);
+    }
+
     public static JsonObject invoice(String subscriptionId, Instant paidAt) {
         JsonObject ret = new JsonObject()
                 .put("id", "in_" + UUID.randomUUID().toString().replace("-", ""))

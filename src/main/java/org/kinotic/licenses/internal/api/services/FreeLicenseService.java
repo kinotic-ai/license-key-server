@@ -5,11 +5,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.Validate;
 import org.kinotic.core.api.exceptions.AlreadyExistsException;
-import org.kinotic.licenses.api.model.Customer;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.FreeLicenseRequest;
 import org.kinotic.licenses.api.model.FreeLicenseRequestStatus;
-import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.internal.api.model.NewLicense;
 import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
@@ -18,8 +16,6 @@ import org.kinotic.licenses.internal.api.repositories.FreeLicenseRequestReposito
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.springframework.stereotype.Component;
 
-import java.math.BigDecimal;
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -39,6 +35,7 @@ public class FreeLicenseService {
     private final LicenseRepository licenseRepository;
     private final LicenseService licenseService;
     private final EmailService emailService;
+    private final StripeBillingService billingService;
 
     /**
      * Records a free license request of the customer: its first, or the renewal of the free license it holds.
@@ -124,7 +121,8 @@ public class FreeLicenseService {
             Future<NewLicense> ret;
             if (license == null) {
                 ret = customerRepository.findById(request.getCustomerId())
-                                        .compose(customer -> licenseService.createLicense(customer, Plan.FREE, null, null, null));
+                                        .compose(customer -> billingService.currentPriceList()
+                                                                           .compose(priceList -> licenseService.createFreeLicense(customer, priceList)));
             } else {
                 ret = licenseService.keysOf(license.getId()).compose(keys -> {
                     Future<NewLicense> issued;
@@ -154,12 +152,9 @@ public class FreeLicenseService {
 
     private static void validate(FreeLicenseCertification certification) {
         Validate.notNull(certification, "The certification is required");
-        Validate.isTrue(isAmount(certification.getAnnualRevenue()), "The annual revenue must be zero or more");
-        Validate.isTrue(isAmount(certification.getCapitalRaised()), "The capital raised must be zero or more");
+        Plan.validate(certification.getFigures());
+        Validate.isTrue(certification.getFigures().getCapitalRaised() != null && certification.getFigures().getCapitalRaised().signum() >= 0,
+                        "The capital raised must be zero or more");
         Validate.notBlank(certification.getIntendedUse(), "The intended use is required");
-    }
-
-    private static boolean isAmount(BigDecimal value) {
-        return value != null && value.signum() >= 0;
     }
 }
