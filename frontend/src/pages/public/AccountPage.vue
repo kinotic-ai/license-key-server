@@ -13,8 +13,9 @@ import { billingPeriodName, formatDate, formatMoney, planName } from '@/util/for
 
 /**
  * The customer account: each license's status, plan, billing period, paid-through date and next anniversary, the
- * yearly confirmation of the company's figures when it is due, every key issued with copy and download, and the Stripe
- * Customer Portal for payment details and receipts.
+ * yearly confirmation of the company's figures when it is due, the design partner discount, every key issued with copy
+ * and download and how to install it on the system console's License page, and the Stripe Customer Portal for payment
+ * details and receipts.
  */
 const toast = useToast()
 const account = ref<CustomerAccount | null>(null)
@@ -30,6 +31,7 @@ const submitting = ref(false)
 const subscribed = computed(() => account.value?.licenses.some(l => l.license.plan !== 'FREE'
     && (l.license.status === 'ACTIVE' || l.license.status === 'PAST_DUE')) ?? false)
 const hasFreeLicense = computed(() => account.value?.licenses.some(l => l.license.plan === 'FREE' && l.license.status === 'ACTIVE') ?? false)
+const pendingApplication = computed(() => account.value?.designPartnerApplications.some(a => a.status === 'PENDING') ?? false)
 const pendingRequest = computed(() => account.value?.freeLicenseRequests.some(r => r.status === 'PENDING') ?? false)
 const confirmingFree = computed(() => confirming.value?.license.plan === 'FREE')
 // the capital raised decides between Free and Small, so a free license and any revenue under $1M give it
@@ -113,6 +115,22 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
         </p>
       </section>
 
+      <section v-if="account.designPartner" class="app-card-surface rounded-xl border p-5 text-sm">
+        <h2 class="app-heading-text font-medium">Design partner</h2>
+        <p v-if="account.designPartner.discountEndsAt" class="app-muted-text mt-2">
+          Your subscription is half off until {{ formatDate(account.designPartner.discountEndsAt) }}. After that you pay your
+          locked price, on the same terms, for as long as your license stays active.
+        </p>
+        <p v-else class="app-muted-text mt-2">
+          You are approved as a design partner.
+          <RouterLink :to="`/design-partner/checkout?application=${account.designPartner.applicationId}`" class="font-medium underline">
+            Start your subscription at half off</RouterLink>.
+        </p>
+      </section>
+      <section v-else-if="pendingApplication" class="app-card-surface rounded-xl border p-5 text-sm">
+        <p class="app-heading-text">Your design partner application is being reviewed.</p>
+      </section>
+
       <section v-for="entry in account.licenses" :key="entry.license.id" class="flex flex-col gap-4">
         <div class="app-card-surface rounded-xl border p-5">
           <div class="flex flex-wrap items-center justify-between gap-3">
@@ -163,6 +181,19 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
         </div>
         <h3 class="app-heading-text text-sm font-medium">Keys</h3>
         <KeyBlock v-for="(key, index) in entry.keys" :key="key.jti" :issued-key="key" :collapsed="index > 0" />
+      </section>
+
+      <section v-if="account.licenses.some(l => l.keys.length)" class="app-card-surface rounded-xl border p-5 text-sm">
+        <h3 class="app-heading-text font-medium">Installing a key</h3>
+        <ol class="app-muted-text mt-2 list-decimal space-y-1 pl-5">
+          <li>Copy the newest key above, or download it.</li>
+          <li>Sign in to your Kinotic system console as a system user and open its <strong>License</strong> page.</li>
+          <li>Paste the key and install it. Kinotic shows your organization as the licensee and turns on every Enterprise feature.</li>
+        </ol>
+        <p class="app-muted-text mt-2">
+          Each key expires seven days after the date your license is paid through, and a new one is emailed with every
+          payment. Kinotic keeps its Enterprise features on for 14 days after a key expires.
+        </p>
       </section>
 
       <section v-if="account.freeLicenseRequests.length && !hasFreeLicense" class="app-card-surface rounded-xl border p-5 text-sm">

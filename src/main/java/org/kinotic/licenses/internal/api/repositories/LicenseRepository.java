@@ -181,6 +181,26 @@ public class LicenseRepository {
     }
 
     /**
+     * The licenses past due since before {@code pastDueBefore} whose contacts were not yet warned they lapse, oldest
+     * first.
+     */
+    public Future<List<License>> findLapseWarningsDue(Instant pastDueBefore) {
+        return pool.preparedQuery("SELECT " + COLUMNS + " FROM license WHERE status = 'PAST_DUE' AND past_due_since < $1"
+                                          + " AND (lapse_warned_at IS NULL OR lapse_warned_at < past_due_since) ORDER BY past_due_since")
+                   .execute(Tuple.of(PgValues.timestamp(pastDueBefore)))
+                   .map(rows -> PgValues.map(rows, LicenseRepository::toLicense));
+    }
+
+    /**
+     * Records that the license's contacts were warned it lapses.
+     */
+    public Future<Void> markLapseWarned(String id) {
+        return pool.preparedQuery("UPDATE license SET lapse_warned_at = now() WHERE id = $1")
+                   .execute(Tuple.of(id))
+                   .mapEmpty();
+    }
+
+    /**
      * Lapses a license that is still past due.
      *
      * @return the license as stored, or {@code null} when it is not past due

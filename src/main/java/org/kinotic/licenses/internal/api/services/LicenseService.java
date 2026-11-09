@@ -175,6 +175,20 @@ public class LicenseService {
     }
 
     /**
+     * Warns the licensee's contacts that the past-due license lapses at {@code lapsesAt}.
+     */
+    public Future<Void> emailLapseWarning(License license, Instant lapsesAt) {
+        return emailContacts(license, (contact, organization) -> emailService.sendLapseWarning(contact, organization, license, lapsesAt));
+    }
+
+    /**
+     * Tells the licensee's contacts the license lapsed.
+     */
+    public Future<Void> emailLapsed(License license) {
+        return emailContacts(license, (contact, organization) -> emailService.sendLapsed(contact, organization));
+    }
+
+    /**
      * Warns the licensee's contacts that the license's newest key expires with no newer one issued.
      */
     public Future<Void> emailKeyExpiring(License license, IssuedKey key) {
@@ -283,7 +297,14 @@ public class LicenseService {
      * its license year for Free.
      */
     public static Instant paidThrough(License license) {
-        return license.getPlan() == Plan.FREE ? license.getTermEnd() : license.getCurrentPeriodEnd();
+        return paidThrough(license.getPlan(), license.getTermEnd(), license.getCurrentPeriodEnd());
+    }
+
+    /**
+     * The date a license on the plan is paid through, given the end of its license year and of its billing period.
+     */
+    public static Instant paidThrough(Plan plan, Instant termEnd, Instant currentPeriodEnd) {
+        return plan == Plan.FREE ? termEnd : currentPeriodEnd;
     }
 
     /**

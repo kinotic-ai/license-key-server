@@ -9,9 +9,13 @@ import type { CustomerDetail, LicenseWithKeys } from '@/api/model'
 import { staffCustomerService } from '@/api/services'
 import KeyBlock from '@/components/KeyBlock.vue'
 import LicenseStatusTag from '@/components/LicenseStatusTag.vue'
-import { formatDate, planName, publicityLabel } from '@/util/format'
+import FlagTags from '@/components/FlagTags.vue'
+import { billingPeriodName, formatDate, formatMoney, planName, publicityLabel } from '@/util/format'
 
-/** One customer: its contacts, each license with its keys and the actions on it, and its agreement acceptances. */
+/**
+ * One customer: its contacts, each license with its billing, price list, paid-through date, flags, yearly confirmations,
+ * keys and the actions on it, and its agreement acceptances with their publicity consent.
+ */
 const props = defineProps<{
   customerId: string
 }>()
@@ -108,12 +112,33 @@ function resend(entry: LicenseWithKeys) {
             </div>
           </div>
           <dl class="mt-4 grid gap-4 text-sm sm:grid-cols-4">
-            <div><dt class="app-muted-text">Period ends</dt><dd class="mt-1"><TimePill :date="entry.license.currentPeriodEnd" /></dd></div>
-            <div><dt class="app-muted-text">Term</dt><dd class="app-heading-text mt-1">{{ formatDate(entry.license.termStart) }} – {{ formatDate(entry.license.termEnd) }}</dd></div>
+            <div><dt class="app-muted-text">Billing</dt><dd class="app-heading-text mt-1">{{ billingPeriodName(entry.license.billingPeriod) }}</dd></div>
+            <div><dt class="app-muted-text">Price list · terms</dt><dd class="app-heading-text mt-1">{{ entry.license.priceList }} · {{ entry.license.termsVersion }}</dd></div>
+            <div><dt class="app-muted-text">Paid through</dt><dd class="mt-1"><TimePill :date="entry.paidThrough" /></dd></div>
+            <div><dt class="app-muted-text">License year</dt><dd class="app-heading-text mt-1">{{ formatDate(entry.license.termStart) }} – {{ formatDate(entry.license.termEnd) }}</dd></div>
             <div><dt class="app-muted-text">Last payment</dt><dd class="mt-1"><TimePill :date="entry.license.lastPaymentAt" /></dd></div>
             <div><dt class="app-muted-text">Stripe subscription</dt><dd class="mt-1 font-mono text-xs">{{ entry.license.stripeSubscriptionId ?? '—' }}</dd></div>
             <div v-if="entry.license.cancelsAt"><dt class="app-muted-text">Cancels</dt><dd class="app-heading-text mt-1">{{ formatDate(entry.license.cancelsAt) }}</dd></div>
+            <div v-if="entry.license.pastDueSince"><dt class="app-muted-text">Past due since</dt><dd class="app-heading-text mt-1">{{ formatDate(entry.license.pastDueSince) }}</dd></div>
+            <div v-if="entry.license.flags.length"><dt class="app-muted-text">Flags</dt><dd class="mt-1"><FlagTags :flags="entry.license.flags" /></dd></div>
           </dl>
+          <div v-if="entry.confirmations.length" class="mt-4">
+            <h3 class="app-heading-text text-sm font-medium">Yearly confirmations</h3>
+            <table class="mt-2 w-full text-left text-sm">
+              <thead class="app-muted-text">
+                <tr><th class="py-1 pr-4 font-medium">Anniversary</th><th class="py-1 pr-4 font-medium">Annual revenue</th><th class="py-1 pr-4 font-medium">Capital raised</th><th class="py-1 pr-4 font-medium">Plan</th><th class="py-1 font-medium">Confirmed by</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="confirmation in entry.confirmations" :key="confirmation.id" class="app-surface-divider border-t">
+                  <td class="py-2 pr-4">{{ formatDate(confirmation.anniversary) }}</td>
+                  <td class="py-2 pr-4 tabular-nums">{{ formatMoney(confirmation.figures.annualRevenue, 'usd') }}</td>
+                  <td class="py-2 pr-4 tabular-nums">{{ formatMoney(confirmation.figures.capitalRaised, 'usd') }}</td>
+                  <td class="py-2 pr-4">{{ planName(confirmation.licensePlan) }} → {{ planName(confirmation.plan) }}</td>
+                  <td class="py-2">{{ confirmation.confirmedByName }}, {{ formatDate(confirmation.confirmedAt) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
         <KeyBlock v-for="(key, index) in entry.keys" :key="key.jti" :issued-key="key" :collapsed="index > 0" />
       </section>

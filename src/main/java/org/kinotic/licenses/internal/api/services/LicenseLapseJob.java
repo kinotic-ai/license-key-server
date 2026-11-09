@@ -15,8 +15,9 @@ import java.util.List;
 
 /**
  * Lapses every license that has been past due for longer than {@link #LAPSE_AFTER}: marks it
- * {@link org.kinotic.licenses.api.model.LicenseStatus#LAPSED}, which ends the price list and terms it kept, and cancels
- * its Stripe subscription. It runs daily, and once shortly after startup.
+ * {@link org.kinotic.licenses.api.model.LicenseStatus#LAPSED}, which ends the price list and terms it kept, cancels its
+ * Stripe subscription and tells its contacts. Past due for {@link #WARN_AFTER}, the contacts are warned once. It runs
+ * daily, and once shortly after startup.
  */
 @Slf4j
 @Component
@@ -25,12 +26,15 @@ public class LicenseLapseJob {
 
     /** How long a failed payment may stay unsettled before the license lapses. */
     public static final Duration LAPSE_AFTER = Duration.ofDays(30);
+    /** How long a failed payment stays unsettled before the contacts are warned the license lapses. */
+    public static final Duration WARN_AFTER = Duration.ofDays(20);
 
     private static final Duration INITIAL_DELAY = Duration.ofMinutes(2);
     private static final Duration INTERVAL = Duration.ofDays(1);
 
     private final LicenseRepository licenseRepository;
     private final StripeBillingService billingService;
+    private final LicenseService licenseService;
     private final Vertx vertx;
 
     @PostConstruct
@@ -39,15 +43,32 @@ public class LicenseLapseJob {
     }
 
     /**
-     * Lapses the licenses past due for longer than {@link #LAPSE_AFTER}.
+     * Warns the contacts of the licenses past due for {@link #WARN_AFTER}, then lapses the licenses past due for longer
+     * than {@link #LAPSE_AFTER}.
      *
      * @return how many licenses lapsed
      */
     public Future<Integer> run() {
-        return licenseRepository.findPastDueSince(Instant.now().minus(LAPSE_AFTER))
+        return licenseRepository.findLapseWarningsDue(Instant.now().minus(WARN_AFTER))
+                                .compose(this::warnAll)
+                                .compose(v -> licenseRepository.findPastDueSince(Instant.now().minus(LAPSE_AFTER)))
                                 .compose(this::lapseAll)
                                 .onSuccess(count -> log.info("The lapse job lapsed {} license(s)", count))
                                 .onFailure(t -> log.error("The lapse job failed", t));
+    }
+
+    // one license at a time, each on its own: a warning that fails is logged and sent on the next run
+    private Future<Void> warnAll(List<License> due) {
+        Future<Void> ret = Future.succeededFuture();
+        for (License license : due) {
+            ret = ret.compose(v -> licenseService.emailLapseWarning(license, license.getPastDueSince().plus(LAPSE_AFTER))
+                                                 .compose(sent -> licenseRepository.markLapseWarned(license.getId()))
+                                                 .recover(t -> {
+                                                     log.error("The lapse warning of license {} failed; the next run tries again", license.getId(), t);
+                                                     return Future.succeededFuture();
+                                                 }));
+        }
+        return ret;
     }
 
     // one license at a time, each on its own: a failure is logged and the run goes on to the next license
@@ -69,9 +90,16 @@ public class LicenseLapseJob {
         return billingService.cancelIfUnpaid(license).compose(cancelled -> {
             Future<Boolean> ret;
             if (cancelled) {
-                ret = licenseRepository.lapse(license.getId()).map(lapsed -> {
+                // the lapse stands once recorded; a notice that fails is logged
+                ret = licenseRepository.lapse(license.getId()).compose(lapsed -> {
                     log.info("The license {} lapsed after {} past due", license.getId(), LAPSE_AFTER);
-                    return lapsed != null;
+                    Future<Void> told = lapsed != null
+                            ? licenseService.emailLapsed(lapsed).recover(t -> {
+                                log.error("The license {} lapsed but its contacts could not be told", license.getId(), t);
+                                return Future.succeededFuture();
+                            })
+                            : Future.succeededFuture();
+                    return told.map(lapsed != null);
                 });
             } else {
                 ret = Future.succeededFuture(false);

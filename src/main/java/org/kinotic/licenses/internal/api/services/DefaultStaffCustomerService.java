@@ -39,12 +39,16 @@ public class DefaultStaffCustomerService implements StaffCustomerService {
 
     @Override
     public Future<List<CustomerSummary>> findCustomerSummaries() {
-        return customerRepository.findSummaries();
+        return customerRepository.findSummaries()
+                                 .map(summaries -> summaries.stream()
+                                                            .map(summary -> summary.setPaidThrough(summary.getPlan() == null ? null
+                                                                    : LicenseService.paidThrough(summary.getPlan(), summary.getTermEnd(), summary.getCurrentPeriodEnd())))
+                                                            .toList());
     }
 
     @Override
     public Future<List<CustomerSummary>> findRevenueUnconfirmed() {
-        return customerRepository.findSummaries()
+        return findCustomerSummaries()
                                  .map(summaries -> summaries.stream()
                                                             .filter(summary -> summary.getFlags().contains(LicenseFlag.REVENUE_UNCONFIRMED))
                                                             .sorted(Comparator.comparing(CustomerSummary::getTermEnd))

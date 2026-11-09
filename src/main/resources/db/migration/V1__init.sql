@@ -49,6 +49,8 @@ CREATE TABLE license (
     cancels_at             TIMESTAMPTZ,
     -- when the payment that left the license PAST_DUE failed; 30 days on, the license lapses
     past_due_since         TIMESTAMPTZ,
+    -- when the contacts were warned the license lapses; once per time it falls past due
+    lapse_warned_at        TIMESTAMPTZ,
     -- what staff should look at, as LicenseFlag names
     flags                  TEXT[]      NOT NULL DEFAULT '{}',
     -- when the contacts were last asked to confirm the figures; once per license year

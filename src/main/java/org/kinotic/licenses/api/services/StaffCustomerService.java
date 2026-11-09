@@ -21,7 +21,8 @@ import java.util.List;
 public interface StaffCustomerService {
 
     /**
-     * Every customer with the state of its newest license and that license's newest key, newest customer first.
+     * Every customer with the state of its newest license (plan, billing period, price list, paid-through date, next
+     * anniversary and flags) and that license's newest key, newest customer first.
      */
     Future<List<CustomerSummary>> findCustomerSummaries();
 

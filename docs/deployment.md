@@ -123,6 +123,23 @@ Under Design partners, staff record each publication the customer approves (`des
 `USE_DESCRIPTION`, `CASE_STUDY`, with who approved it and when), and the case study's status: `NOT_STARTED`,
 `IN_PROGRESS` or `PUBLISHED`, which the server refuses until the `CASE_STUDY` publication is approved.
 
+## Emails
+
+Every email is a Handlebars template under `src/main/resources/templates/email/` (HTML and text), sent to each contact
+of the customer through Azure Communication Services:
+
+| Template | When |
+|---|---|
+| `sign-in-code` | a sign-in or sign-up code is requested |
+| `new-key`, `renewal-key` | a license's first key, and each key a payment extends it with |
+| `past-due` | a payment fails and the license leaves good standing |
+| `lapse-warning`, `lapsed` | a license past due for 20 days, and once it lapses at 30 |
+| `key-expiring` | the newest key expires within 14 days with no newer one coming by itself |
+| `confirmation-due` | 30 days before an anniversary, to confirm the figures |
+| `plan-changed` | the confirmed figures move the plan, end the subscription for Free, or require a free license to buy one |
+| `free-request-approved`, `free-request-rejected` | staff decide a free license request |
+| `design-partner-approved`, `design-partner-rejected` | staff decide a design partner application |
+
 ## Configuration
 
 Every setting is a Spring property, set through the environment:

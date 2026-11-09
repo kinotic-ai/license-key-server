@@ -2,6 +2,7 @@ package org.kinotic.licenses;
 
 import io.vertx.core.json.JsonObject;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
@@ -12,6 +13,8 @@ import org.kinotic.licenses.support.ServerTest;
 import org.kinotic.licenses.support.StripeEvents;
 import org.kinotic.licenses.support.StripeStandIn;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -21,9 +24,11 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * A license past due records when it fell past due, clears it once paid, and lapses after 30 days unpaid: the lapse job
- * cancels its subscription, and Stripe's later report of the cancellation leaves it lapsed.
+ * A license past due records when it fell past due, clears it once paid, warns its contacts once after 20 days, and
+ * lapses after 30 days unpaid: the lapse job cancels its subscription and tells the contacts, and Stripe's later report
+ * of the cancellation leaves it lapsed.
  */
+@ExtendWith(OutputCaptureExtension.class)
 class LapseTest extends ServerTest {
 
     @Autowired
@@ -55,7 +60,19 @@ class LapseTest extends ServerTest {
     }
 
     @Test
-    void aLicensePastDueForThirtyDaysLapsesAndItsSubscriptionIsCancelled() throws Exception {
+    void aLicensePastDueForTwentyDaysIsWarnedOnce(CapturedOutput output) throws Exception {
+        String subscriptionId = "sub_" + UUID.randomUUID();
+        License license = pastDue(subscriptionId, 21);
+        int before = count(output.getAll(), "Action needed: your Kinotic license lapses on");
+        await(lapseJob.run());
+        assertThat(count(output.getAll(), "Action needed: your Kinotic license lapses on")).isEqualTo(before + 1);
+        await(lapseJob.run());
+        assertThat(count(output.getAll(), "Action needed: your Kinotic license lapses on")).isEqualTo(before + 1);
+        assertThat(await(licenseRepository.findById(license.getId())).getStatus()).isEqualTo(LicenseStatus.PAST_DUE);
+    }
+
+    @Test
+    void aLicensePastDueForThirtyDaysLapsesAndItsSubscriptionIsCancelled(CapturedOutput output) throws Exception {
         String overdueSubscription = "sub_" + UUID.randomUUID();
         License overdue = pastDue(overdueSubscription, 31);
         String recentSubscription = "sub_" + UUID.randomUUID();
@@ -69,6 +86,7 @@ class LapseTest extends ServerTest {
 
         assertThat(await(licenseRepository.findById(overdue.getId())).getStatus()).isEqualTo(LicenseStatus.LAPSED);
         assertThat(StripeStandIn.subscription(overdueSubscription).getString("status")).isEqualTo("canceled");
+        assertThat(output.getAll()).contains("Your Kinotic license has lapsed");
         assertThat(await(licenseRepository.findById(recent.getId())).getStatus()).isEqualTo(LicenseStatus.PAST_DUE);
         assertThat(StripeStandIn.subscription(recentSubscription).getString("status")).isEqualTo("past_due");
         assertThat(await(licenseRepository.findById(settled.getId())).getStatus()).isEqualTo(LicenseStatus.PAST_DUE);
@@ -79,6 +97,10 @@ class LapseTest extends ServerTest {
         assertThat(deliver(StripeEvents.event("customer.subscription.deleted", canceled)).statusCode()).isEqualTo(200);
         assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(overdueSubscription, Instant.now()))).statusCode()).isEqualTo(200);
         assertThat(await(licenseRepository.findById(overdue.getId())).getStatus()).isEqualTo(LicenseStatus.LAPSED);
+    }
+
+    private static int count(String text, String needle) {
+        return (text.length() - text.replace(needle, "").length()) / needle.length();
     }
 
     private License pastDue(String subscriptionId, int days) throws Exception {

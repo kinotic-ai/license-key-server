@@ -22,7 +22,13 @@ public class CustomerSummary {
     private String licenseId;
     private Plan plan;
     private LicenseStatus status;
+    private BillingPeriod billingPeriod;
+    /** The price list the license keeps. */
+    private Integer priceList;
+    /** The date the license is paid through, which its keys follow. */
+    private Instant paidThrough;
     private Instant currentPeriodEnd;
+    /** The license's next anniversary. */
     private Instant termEnd;
     private Instant lastPaymentAt;
     /** What staff should look at on the license; empty when nothing or when the customer has no license. */

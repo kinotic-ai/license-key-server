@@ -2,7 +2,7 @@
 
 export type Plan = 'FREE' | 'SMALL' | 'MEDIUM' | 'LARGE'
 export type BillingPeriod = 'MONTHLY' | 'ANNUAL'
-export type LicenseFlag = 'REVENUE_UNCONFIRMED'
+export type LicenseFlag = 'REVENUE_UNCONFIRMED' | 'POSSIBLY_COPIED'
 export type LicenseStatus = 'ACTIVE' | 'PAST_DUE' | 'LAPSED' | 'CANCELED' | 'REVOKED'
 export type ContactRole = 'BILLING' | 'TECHNICAL'
 export type FreeLicenseRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
@@ -154,7 +154,12 @@ export interface CustomerSummary {
     licenseId: string | null
     plan: Plan | null
     status: LicenseStatus | null
+    billingPeriod: BillingPeriod | null
+    priceList: number | null
+    /** The date the license is paid through. */
+    paidThrough: string | null
     currentPeriodEnd: string | null
+    /** The license's next anniversary. */
     termEnd: string | null
     lastPaymentAt: string | null
     flags: LicenseFlag[]

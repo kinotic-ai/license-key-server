@@ -18,9 +18,13 @@ import {
 import type { CustomerSummary } from '@/api/model'
 import { staffCustomerService } from '@/api/services'
 import LicenseStatusTag from '@/components/LicenseStatusTag.vue'
-import { formatDate, planName } from '@/util/format'
+import FlagTags from '@/components/FlagTags.vue'
+import { billingPeriodName, formatDate, planName } from '@/util/format'
 
-/** Every customer with its plan, status, billing period, term, last payment and latest key; and the signing public key. */
+/**
+ * Every customer with its newest license's plan, billing period, status, price list, paid-through date, next anniversary,
+ * last payment, latest key and flags; and the signing public key.
+ */
 const router = useRouter()
 const toast = useToast()
 
@@ -28,10 +32,12 @@ const headers: CrudHeader[] = [
   { field: 'legalName', header: 'Customer', sortable: true },
   { field: 'plan', header: 'Plan' },
   { field: 'status', header: 'Status' },
-  { field: 'currentPeriodEnd', header: 'Period ends' },
-  { field: 'termEnd', header: 'Term ends' },
+  { field: 'priceList', header: 'Price list' },
+  { field: 'paidThrough', header: 'Paid through' },
+  { field: 'termEnd', header: 'Next anniversary' },
   { field: 'lastPaymentAt', header: 'Last payment' },
-  { field: 'latestKey', header: 'Latest key' }
+  { field: 'latestKey', header: 'Latest key' },
+  { field: 'flags', header: 'Flags' }
 ]
 
 type Row = DescriptiveIdentifiable & CustomerSummary
@@ -75,9 +81,11 @@ async function showSigningKey() {
     <CrudTable ref="crudTable" :headers="headers" :data-source="dataSource" :search="tableSearch" :is-show-add-new="false"
                empty-state-text="No customers yet" @update:search="tableSearch = $event"
                @on-row-click="router.push(`/customers/${$event.id}`)">
-      <template #item.plan="{ item }">{{ planName(item.plan) }}</template>
+      <template #item.plan="{ item }">{{ planName(item.plan) }}<span v-if="item.billingPeriod" class="app-muted-text"> · {{ billingPeriodName(item.billingPeriod) }}</span></template>
+      <template #item.priceList="{ item }">{{ item.priceList ?? '—' }}</template>
+      <template #item.paidThrough="{ item }"><TimePill :date="item.paidThrough" /></template>
+      <template #item.flags="{ item }"><FlagTags :flags="item.flags ?? []" /></template>
       <template #item.status="{ item }"><LicenseStatusTag :status="item.status" /></template>
-      <template #item.currentPeriodEnd="{ item }"><TimePill :date="item.currentPeriodEnd" /></template>
       <template #item.termEnd="{ item }"><TimePill :date="item.termEnd" /></template>
       <template #item.lastPaymentAt="{ item }"><TimePill :date="item.lastPaymentAt" /></template>
       <template #item.latestKey="{ item }">

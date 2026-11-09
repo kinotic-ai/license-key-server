@@ -73,6 +73,10 @@ public class EmailService {
     private static final Template PARTNER_APPROVED_TEXT = compile(TEXT_TEMPLATES, "design-partner-approved");
     private static final Template PARTNER_REJECTED_HTML = compile(HTML_TEMPLATES, "design-partner-rejected");
     private static final Template PARTNER_REJECTED_TEXT = compile(TEXT_TEMPLATES, "design-partner-rejected");
+    private static final Template LAPSE_WARNING_HTML = compile(HTML_TEMPLATES, "lapse-warning");
+    private static final Template LAPSE_WARNING_TEXT = compile(TEXT_TEMPLATES, "lapse-warning");
+    private static final Template LAPSED_HTML = compile(HTML_TEMPLATES, "lapsed");
+    private static final Template LAPSED_TEXT = compile(TEXT_TEMPLATES, "lapsed");
     private static final Template FREE_APPROVED_HTML = compile(HTML_TEMPLATES, "free-request-approved");
     private static final Template FREE_APPROVED_TEXT = compile(TEXT_TEMPLATES, "free-request-approved");
     private static final Template FREE_REJECTED_HTML = compile(HTML_TEMPLATES, "free-request-rejected");
@@ -168,6 +172,28 @@ public class EmailService {
         variables.put("accountUrl", accountUrl());
         return send(contact.getEmail(), contact.getName(), "Action needed: your Kinotic payment didn't go through",
                     PAST_DUE_HTML, PAST_DUE_TEXT, variables);
+    }
+
+    /**
+     * Warns a contact that the past-due license lapses at {@code lapsesAt} unless its payment is settled.
+     */
+    public Future<Void> sendLapseWarning(CustomerContact contact, String organization, License license, Instant lapsesAt) {
+        Map<String, Object> variables = new HashMap<>();
+        variables.put("organization", organization);
+        variables.put("planName", planName(license.getPlan()));
+        variables.put("pastDueSince", DATE.format(license.getPastDueSince()));
+        variables.put("lapsesOn", DATE.format(lapsesAt));
+        variables.put("accountUrl", accountUrl());
+        return send(contact.getEmail(), contact.getName(), "Action needed: your Kinotic license lapses on " + DATE.format(lapsesAt),
+                    LAPSE_WARNING_HTML, LAPSE_WARNING_TEXT, variables);
+    }
+
+    /**
+     * Tells a contact the license lapsed and its subscription was cancelled.
+     */
+    public Future<Void> sendLapsed(CustomerContact contact, String organization) {
+        Map<String, Object> variables = Map.of("organization", organization, "accountUrl", accountUrl());
+        return send(contact.getEmail(), contact.getName(), "Your Kinotic license has lapsed", LAPSED_HTML, LAPSED_TEXT, variables);
     }
 
     /**

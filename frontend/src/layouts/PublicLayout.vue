@@ -30,8 +30,9 @@ async function logout() {
           <span class="app-heading-text text-sm font-medium">Kinotic <span class="app-muted-text">Licenses</span></span>
         </RouterLink>
         <nav class="flex items-center gap-1 md:gap-2">
-          <RouterLink to="/buy" class="app-muted-text px-3 py-2 text-sm hover:text-primary-500">Buy</RouterLink>
+          <RouterLink to="/buy?plan=small&billing=monthly" class="app-muted-text px-3 py-2 text-sm hover:text-primary-500">Buy</RouterLink>
           <RouterLink to="/free" class="app-muted-text px-3 py-2 text-sm hover:text-primary-500">Free license</RouterLink>
+          <RouterLink to="/design-partner" class="app-muted-text hidden px-3 py-2 text-sm hover:text-primary-500 sm:inline">Design partners</RouterLink>
           <RouterLink to="/account" class="app-muted-text px-3 py-2 text-sm hover:text-primary-500">Account</RouterLink>
           <ThemeToggleButton />
           <Button v-if="signedIn" label="Sign out" severity="secondary" text size="small" @click="logout" />

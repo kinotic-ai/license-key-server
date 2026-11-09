@@ -1,0 +1,7 @@
+A failed payment for the Kinotic Enterprise license of {{organization}} went unsettled for 30 days, so the license has lapsed and its subscription is cancelled. No new key is issued for it; the key you hold works until it expires.
+
+You can buy a plan again from your account at any time. A new license starts on the price list and terms in effect when you buy:
+
+{{accountUrl}}
+
+— Minds Ignited, makers of Kinotic
