@@ -101,7 +101,9 @@ plan:
 
 A license whose anniversary passes unconfirmed goes on exactly as it was, keys included, and is flagged
 `REVENUE_UNCONFIRMED` in the staff dashboard's Unconfirmed revenue queue. The customer can still confirm the missed
-anniversary, which clears the flag; a plan move it sets takes effect at the next anniversary.
+anniversary, which clears the flag; a plan move it sets takes effect at the next anniversary
+(`revenue_confirmation.applies_at`). A move to Free is matched to the ending subscription by its `cancel_at`, so it
+holds whichever of Stripe's `customer.subscription.deleted` and the anniversary job comes first.
 
 ## Design partners
 

@@ -84,25 +84,21 @@ public class LicenseLapseJob {
         return ret;
     }
 
-    // The subscription is cancelled first, so a cancellation that fails leaves the license past due for the next run. One
-    // whose payment Stripe has settled by now is left to the webhook event that reports it, and does not lapse.
+    // A license whose payment Stripe has settled by now is left to the webhook event that reports it, and does not lapse.
+    // The lapse stands once recorded; a notice that fails is logged.
     private Future<Boolean> lapse(License license) {
-        return billingService.cancelIfUnpaid(license).compose(cancelled -> {
+        return billingService.lapseIfUnpaid(license).compose(lapsed -> {
             Future<Boolean> ret;
-            if (cancelled) {
-                // the lapse stands once recorded; a notice that fails is logged
-                ret = licenseRepository.lapse(license.getId()).compose(lapsed -> {
-                    log.info("The license {} lapsed after {} past due", license.getId(), LAPSE_AFTER);
-                    Future<Void> told = lapsed != null
-                            ? licenseService.emailLapsed(lapsed).recover(t -> {
-                                log.error("The license {} lapsed but its contacts could not be told", license.getId(), t);
-                                return Future.succeededFuture();
-                            })
-                            : Future.succeededFuture();
-                    return told.map(lapsed != null);
-                });
-            } else {
+            if (lapsed == null) {
                 ret = Future.succeededFuture(false);
+            } else {
+                log.info("The license {} lapsed after {} past due", license.getId(), LAPSE_AFTER);
+                ret = licenseService.emailLapsed(lapsed)
+                                    .recover(t -> {
+                                        log.error("The license {} lapsed but its contacts could not be told", license.getId(), t);
+                                        return Future.succeededFuture();
+                                    })
+                                    .map(true);
             }
             return ret;
         });

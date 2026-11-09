@@ -64,6 +64,8 @@ public class RevenueConfirmationService {
                                                         .setCapitalRaised(license.getPlan() == Plan.FREE ? figures.getCapitalRaised() : null))
                         .setPlan(plan)
                         .setLicensePlan(license.getPlan())
+                        // a late confirmation's plan waits for the next anniversary, as on-time ones do for theirs
+                        .setAppliesAt(license.getTermEnd())
                         .setConfirmedByName(caller.getName())
                         .setConfirmedByEmail(caller.getEmail());
                 // the move is applied first, so a Stripe failure leaves the figures unconfirmed for another attempt

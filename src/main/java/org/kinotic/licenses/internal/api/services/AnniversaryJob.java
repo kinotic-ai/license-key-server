@@ -62,23 +62,31 @@ public class AnniversaryJob {
                                      .compose(v -> licenseRepository.markConfirmationRequested(license.getId()));
     }
 
+    // Whether this anniversary was confirmed and what applies at it are separate: a confirmation made late, for the
+    // anniversary before, decides what applies at this one, which still needs its own confirmation.
     private Future<Void> anniversary(License license) {
-        return confirmationRepository.find(license.getId(), license.getTermEnd()).compose(confirmed -> {
-            Future<Void> ret;
-            if (confirmed == null) {
-                ret = licenseRepository.addFlag(license.getId(), LicenseFlag.REVENUE_UNCONFIRMED)
-                                       .compose(flagged -> nextYear(flagged))
-                                       .onSuccess(v -> log.info("The license {} reached its anniversary with its figures unconfirmed", license.getId()));
-            } else if (endsAsFree(license, confirmed)) {
-                ret = continueAsFree(license);
-            } else if (license.getPlan() != Plan.FREE) {
-                ret = nextYear(license);
-            } else {
-                // a confirmed free license waits for staff to approve its next year, or for its paid plan to be bought
-                ret = Future.succeededFuture();
-            }
-            return ret;
-        });
+        return confirmationRepository.find(license.getId(), license.getTermEnd()).compose(confirmed ->
+                confirmationRepository.findApplyingAt(license.getId(), license.getTermEnd()).compose(decided -> {
+                    Future<License> current = confirmed != null
+                            ? Future.succeededFuture(license)
+                            : licenseRepository.addFlag(license.getId(), LicenseFlag.REVENUE_UNCONFIRMED)
+                                               .onSuccess(flagged -> log.info("The license {} reached its anniversary with its figures unconfirmed",
+                                                                              license.getId()));
+                    return current.compose(flagged -> {
+                        Future<Void> ret;
+                        if (decided != null && endsAsFree(decided)) {
+                            ret = continueAsFree(flagged);
+                        } else if (flagged.getPlan() != Plan.FREE || decided == null) {
+                            // a paid license's year moves on its own, and an unconfirmed free license goes on as it was
+                            ret = nextYear(flagged);
+                        } else {
+                            // a free license waits for staff to approve its next year, or for the paid plan its figures set
+                            // to be bought
+                            ret = Future.succeededFuture();
+                        }
+                        return ret;
+                    });
+                }));
     }
 
     // the subscription ended at the anniversary, and the license goes on as Free, whether or not Stripe's event of the
@@ -104,8 +112,8 @@ public class AnniversaryJob {
         return ret;
     }
 
-    private static boolean endsAsFree(License license, RevenueConfirmation confirmed) {
-        return confirmed.getPlan() == Plan.FREE && confirmed.getLicensePlan() != Plan.FREE;
+    private static boolean endsAsFree(RevenueConfirmation decided) {
+        return decided.getPlan() == Plan.FREE && decided.getLicensePlan() != Plan.FREE;
     }
 
     // one license at a time, each on its own: a failure is logged and the run goes on to the next license

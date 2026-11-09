@@ -63,7 +63,8 @@ CREATE TABLE license (
 CREATE INDEX license_customer_idx ON license (customer_id);
 
 -- The figures a customer confirms once a year for its license's anniversary; capital_raised only where it decides
--- between Free and Small. plan is the plan the figures set, license_plan the plan the license was on.
+-- between Free and Small. plan is the plan the figures set, license_plan the plan the license was on, and applies_at
+-- the anniversary the plan takes effect at: the one confirmed, or the next for a confirmation made late.
 CREATE TABLE revenue_confirmation (
     id                 TEXT PRIMARY KEY,
     license_id         TEXT           NOT NULL REFERENCES license (id),
@@ -72,6 +73,7 @@ CREATE TABLE revenue_confirmation (
     capital_raised     NUMERIC(16, 2),
     plan               TEXT           NOT NULL,
     license_plan       TEXT           NOT NULL,
+    applies_at         TIMESTAMPTZ    NOT NULL,
     confirmed_by_name  TEXT           NOT NULL,
     confirmed_by_email TEXT           NOT NULL,
     confirmed_at       TIMESTAMPTZ    NOT NULL DEFAULT now(),

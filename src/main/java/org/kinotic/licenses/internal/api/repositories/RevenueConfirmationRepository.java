@@ -13,6 +13,7 @@ import org.kinotic.licenses.api.model.RevenueConfirmation;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.List;
 
@@ -26,7 +27,7 @@ public class RevenueConfirmationRepository {
     /** Answers a second confirmation for the same anniversary. */
     public static final String ALREADY_CONFIRMED = "Your figures are already confirmed for this anniversary";
 
-    private static final String COLUMNS = "id, license_id, anniversary, annual_revenue, capital_raised, plan, license_plan,"
+    private static final String COLUMNS = "id, license_id, anniversary, annual_revenue, capital_raised, plan, license_plan, applies_at,"
             + " confirmed_by_name, confirmed_by_email, confirmed_at";
     private static final String UNIQUE_VIOLATION = "23505";
 
@@ -40,12 +41,13 @@ public class RevenueConfirmationRepository {
      */
     public Future<RevenueConfirmation> save(RevenueConfirmation confirmation) {
         return pool.preparedQuery("INSERT INTO revenue_confirmation (id, license_id, anniversary, annual_revenue, capital_raised, plan,"
-                                          + " license_plan, confirmed_by_name, confirmed_by_email) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+                                          + " license_plan, applies_at, confirmed_by_name, confirmed_by_email) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
                                           + " RETURNING " + COLUMNS)
                    .execute(Tuple.from(Arrays.asList(confirmation.getId(), confirmation.getLicenseId(),
                                                      PgValues.timestamp(confirmation.getAnniversary()),
                                                      confirmation.getFigures().getAnnualRevenue(), confirmation.getFigures().getCapitalRaised(),
                                                      PgValues.name(confirmation.getPlan()), PgValues.name(confirmation.getLicensePlan()),
+                                                     PgValues.timestamp(confirmation.getAppliesAt()),
                                                      confirmation.getConfirmedByName(), confirmation.getConfirmedByEmail())))
                    .map(rows -> PgValues.first(rows, RevenueConfirmationRepository::toConfirmation))
                    .recover(t -> Future.failedFuture(t instanceof PgException pg && UNIQUE_VIOLATION.equals(pg.getSqlState())
@@ -59,6 +61,19 @@ public class RevenueConfirmationRepository {
     public Future<RevenueConfirmation> find(String licenseId, Instant anniversary) {
         return pool.preparedQuery("SELECT " + COLUMNS + " FROM revenue_confirmation WHERE license_id = $1 AND anniversary = $2")
                    .execute(Tuple.of(licenseId, PgValues.timestamp(anniversary)))
+                   .map(rows -> PgValues.first(rows, RevenueConfirmationRepository::toConfirmation));
+    }
+
+    /**
+     * The newest confirmation of the license whose plan takes effect at the anniversary {@code at}, to the second, or
+     * {@code null} when none does.
+     */
+    public Future<RevenueConfirmation> findApplyingAt(String licenseId, Instant at) {
+        // to the second, as Stripe reports the cancel_at a move to Free set to the anniversary
+        Instant second = at.truncatedTo(ChronoUnit.SECONDS);
+        return pool.preparedQuery("SELECT " + COLUMNS + " FROM revenue_confirmation WHERE license_id = $1"
+                                          + " AND applies_at >= $2 AND applies_at < $3 ORDER BY confirmed_at DESC LIMIT 1")
+                   .execute(Tuple.of(licenseId, PgValues.timestamp(second), PgValues.timestamp(second.plusSeconds(1))))
                    .map(rows -> PgValues.first(rows, RevenueConfirmationRepository::toConfirmation));
     }
 
@@ -80,6 +95,7 @@ public class RevenueConfirmationRepository {
                                                 .setCapitalRaised(row.getBigDecimal("capital_raised")))
                 .setPlan(PgValues.enumValue(row, "plan", Plan.class))
                 .setLicensePlan(PgValues.enumValue(row, "license_plan", Plan.class))
+                .setAppliesAt(PgValues.instant(row, "applies_at"))
                 .setConfirmedByName(row.getString("confirmed_by_name"))
                 .setConfirmedByEmail(row.getString("confirmed_by_email"))
                 .setConfirmedAt(PgValues.instant(row, "confirmed_at"));

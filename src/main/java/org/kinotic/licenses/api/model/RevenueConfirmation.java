@@ -23,6 +23,11 @@ public class RevenueConfirmation {
     private Plan plan;
     /** The plan the license was on when they were confirmed. */
     private Plan licensePlan;
+    /**
+     * The anniversary the plan the figures set takes effect at: the one confirmed, or the license's next for figures
+     * confirmed after the anniversary they were for.
+     */
+    private Instant appliesAt;
     private String confirmedByName;
     private String confirmedByEmail;
     private Instant confirmedAt;

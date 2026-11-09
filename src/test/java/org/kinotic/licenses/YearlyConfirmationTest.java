@@ -1,5 +1,6 @@
 package org.kinotic.licenses;
 
+import io.vertx.core.json.JsonObject;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.kinotic.core.api.exceptions.AlreadyExistsException;
@@ -134,10 +135,8 @@ class YearlyConfirmationTest extends ServerTest {
         assertThat(confirmed.getPlan()).isEqualTo(Plan.FREE);
         assertThat(StripeStandIn.subscription(subscriptionId).getLong("cancel_at")).isEqualTo(due.getTermEnd().getEpochSecond());
 
-        // Stripe ends the subscription at the anniversary
-        assertThat(deliver(StripeEvents.event("customer.subscription.deleted",
-                                              StripeStandIn.report(StripeEvents.subscription(subscriptionId, "canceled", StripeStandIn.monthly(Plan.SMALL), periodEnd()))))
-                           .statusCode()).isEqualTo(200);
+        // Stripe ends the subscription at the anniversary, the cancel_at it was given
+        assertThat(deliver(StripeEvents.event("customer.subscription.deleted", endAt(subscriptionId))).statusCode()).isEqualTo(200);
         License free = await(licenseRepository.findById(license.getId()));
         assertThat(free.getPlan()).isEqualTo(Plan.FREE);
         assertThat(free.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
@@ -228,12 +227,74 @@ class YearlyConfirmationTest extends ServerTest {
         assertThat(asStaff(staffCustomers::findRevenueUnconfirmed)).extracting(CustomerSummary::getId).doesNotContain(customer.getId());
     }
 
-    // moves the license's anniversary, and the confirmation for it, to just past
+    @Test
+    void aLateConfirmationThatSetsFreeEndsTheSubscriptionAtTheNextAnniversaryWhicheverComesFirst() throws Exception {
+        for (boolean webhookFirst : new boolean[]{true, false}) {
+            String subscriptionId = "sub_" + UUID.randomUUID();
+            License license = paidLicense(seedCustomer(), subscriptionId);
+            // the anniversary passed unconfirmed, so the license was flagged and its next year started
+            sql("UPDATE license SET term_end = now() - interval '1 minute' WHERE id = $1", license.getId());
+            await(anniversaryJob.run());
+            License flagged = await(licenseRepository.findById(license.getId()));
+            assertThat(flagged.getFlags()).contains(LicenseFlag.REVENUE_UNCONFIRMED);
+
+            RevenueConfirmation late = confirm(contactOf(license), flagged, figures("400000", "1000000"));
+            assertThat(late.getAnniversary()).isEqualTo(flagged.getTermStart());
+            assertThat(late.getAppliesAt()).isEqualTo(flagged.getTermEnd());
+            assertThat(StripeStandIn.subscription(subscriptionId).getLong("cancel_at")).isEqualTo(flagged.getTermEnd().getEpochSecond());
+
+            // the next anniversary arrives, and with it the end of the subscription
+            shiftAnniversary(license.getId());
+            if (webhookFirst) {
+                assertThat(deliver(StripeEvents.event("customer.subscription.deleted", endAt(subscriptionId))).statusCode()).isEqualTo(200);
+                await(anniversaryJob.run());
+            } else {
+                await(anniversaryJob.run());
+                assertThat(deliver(StripeEvents.event("customer.subscription.deleted", endAt(subscriptionId))).statusCode()).isEqualTo(200);
+            }
+            License free = await(licenseRepository.findById(license.getId()));
+            assertThat(free.getPlan()).as("webhook first: %s", webhookFirst).isEqualTo(Plan.FREE);
+            assertThat(free.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
+            assertThat(free.getTermEnd()).isAfter(Instant.now().plus(Duration.ofDays(300)));
+        }
+    }
+
+    @Test
+    void aLateConfirmationThatSetsAPaidPlanLeavesAFreeLicenseToBuyItByTheNextAnniversary() throws Exception {
+        License license = freeLicense(seedCustomer());
+        sql("UPDATE license SET term_end = now() - interval '1 minute' WHERE id = $1", license.getId());
+        await(anniversaryJob.run());
+        License flagged = await(licenseRepository.findById(license.getId()));
+        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(2);
+
+        RevenueConfirmation late = confirm(contactOf(license), flagged, figures("1500000", "0"));
+        assertThat(late.getPlan()).isEqualTo(Plan.SMALL);
+
+        // the next anniversary passes with the plan not bought: no next year, though it is unconfirmed again
+        shiftAnniversary(license.getId());
+        await(anniversaryJob.run());
+        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(2);
+        assertThat(await(licenseRepository.findById(license.getId())).getTermEnd()).isBefore(Instant.now());
+    }
+
+    // Moves the license's anniversary to just past, with the confirmations for it and the plans that apply at it; a
+    // subscription set to end at it ends at the new time.
     private void shiftAnniversary(String licenseId) throws Exception {
         sql("WITH old AS (SELECT term_end FROM license WHERE id = $1),"
-                    + " moved AS (UPDATE license SET term_end = now() - interval '1 minute' WHERE id = $1 RETURNING term_end)"
-                    + " UPDATE revenue_confirmation SET anniversary = (SELECT term_end FROM moved)"
-                    + " WHERE license_id = $1 AND anniversary = (SELECT term_end FROM old)", licenseId);
+                    + " moved AS (UPDATE license SET term_end = date_trunc('second', now()) - interval '1 minute' WHERE id = $1 RETURNING term_end)"
+                    + " UPDATE revenue_confirmation SET"
+                    + " anniversary = CASE WHEN anniversary = (SELECT term_end FROM old) THEN (SELECT term_end FROM moved) ELSE anniversary END,"
+                    + " applies_at = CASE WHEN applies_at = (SELECT term_end FROM old) THEN (SELECT term_end FROM moved) ELSE applies_at END"
+                    + " WHERE license_id = $1 AND (anniversary = (SELECT term_end FROM old) OR applies_at = (SELECT term_end FROM old))", licenseId);
+        License moved = await(licenseRepository.findById(licenseId));
+        if (moved.getStripeSubscriptionId() != null && StripeStandIn.subscription(moved.getStripeSubscriptionId()).containsKey("cancel_at")) {
+            StripeStandIn.report(StripeStandIn.subscription(moved.getStripeSubscriptionId()).copy().put("cancel_at", moved.getTermEnd().getEpochSecond()));
+        }
+    }
+
+    // the subscription as Stripe has it once it ended at its cancel_at
+    private static JsonObject endAt(String subscriptionId) {
+        return StripeStandIn.report(StripeStandIn.subscription(subscriptionId).copy().put("status", "canceled"));
     }
 
     private RevenueConfirmation confirm(CustomerContact contact, License license, CompanyFigures figures) throws Exception {

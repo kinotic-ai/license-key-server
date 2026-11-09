@@ -95,8 +95,6 @@ public class StripeBillingService {
     private static final String SUBSCRIPTION_MODE = "subscription";
     private static final BigDecimal MINOR_UNITS = BigDecimal.valueOf(100);
     private static final String PAID = "paid";
-    // how long before a license's anniversary its subscription's end can be the end the customer's figures set
-    private static final Duration ANNIVERSARY_SLACK = Duration.ofDays(1);
     private static final String ALREADY_SUBSCRIBED = "This account already has a subscription. Change its plan from your account.";
 
     private final KinoticLicensesProperties properties;
@@ -315,18 +313,23 @@ public class StripeBillingService {
     }
 
     /**
-     * Cancels the license's Stripe subscription at once if Stripe still has it unpaid, as when the license lapses.
+     * Lapses the past-due license if Stripe still has its subscription unpaid: cancels the subscription at once and marks
+     * the license {@link LicenseStatus#LAPSED}.
      *
-     * @return whether it was cancelled; {@code false} when Stripe has it in good standing or ended by now
+     * @return the lapsed license, or {@code null} when Stripe has the subscription in good standing or ended by now, or
+     *         the license is no longer past due
      */
-    public Future<Boolean> cancelIfUnpaid(License license) {
+    public Future<License> lapseIfUnpaid(License license) {
         String subscriptionId = license.getStripeSubscriptionId();
+        // the cancellation and the lapse are one piece of the subscription's work, so the cancellation's own
+        // customer.subscription.deleted event, handled after it, finds the license lapsed rather than racing it
         return oneAtATime(subscriptionId, () -> currentSubscription(subscriptionId).compose(subscription -> {
-            Future<Boolean> ret;
+            Future<License> ret;
             if (statusOf(subscription.getStatus()) == LicenseStatus.PAST_DUE) {
-                ret = blocking(() -> stripe().subscriptions().cancel(subscriptionId)).map(true);
+                ret = blocking(() -> stripe().subscriptions().cancel(subscriptionId))
+                        .compose(cancelled -> licenseRepository.lapse(license.getId()));
             } else {
-                ret = Future.succeededFuture(false);
+                ret = Future.succeededFuture();
             }
             return ret;
         }));
@@ -547,14 +550,16 @@ public class StripeBillingService {
                                                                                                         .build()));
     }
 
-    // Writes the subscription as Stripe has it onto its license. A subscription that ended at the anniversary for which
-    // the customer confirmed figures that set Free leaves the license on Free rather than cancelled.
+    // Writes the subscription as Stripe has it onto its license. A subscription that ended at the cancel_at a move to
+    // Free set, for figures that set Free from that anniversary, leaves the license on Free rather than cancelled. The
+    // move is matched by the subscription's own cancel_at, so it holds whichever of this event and the anniversary job
+    // comes first, and a confirmation for another subscription's end never matches.
     private Future<License> sync(License license, Subscription subscription) {
         Future<License> ret;
         if (statusOf(subscription.getStatus()) == LicenseStatus.CANCELED && license.getPlan() != Plan.FREE
-                && !Instant.now().isBefore(license.getTermEnd().minus(ANNIVERSARY_SLACK))) {
-            ret = confirmationRepository.find(license.getId(), license.getTermEnd()).compose(confirmed ->
-                    confirmed != null && confirmed.getPlan() == Plan.FREE
+                && subscription.getCancelAt() != null) {
+            ret = confirmationRepository.findApplyingAt(license.getId(), Instant.ofEpochSecond(subscription.getCancelAt())).compose(decided ->
+                    decided != null && decided.getPlan() == Plan.FREE && decided.getLicensePlan() != Plan.FREE
                             ? licenseRepository.moveToFree(license.getId()).map(moved -> moved != null ? moved : license)
                             : writeSubscription(license, subscription));
         } else {
