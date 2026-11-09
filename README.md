@@ -6,7 +6,8 @@ account on `licenses.kinotic.ai` by confirming their email with a code, then buy
 succeeds; small organizations request a free license that staff approve. A license keeps the price list and terms it
 started on for as long as it stays active; see [Price lists](docs/deployment.md#price-lists). Once a year the customer
 confirms its figures, and the license moves to the plan they set at its anniversary; see
-[Yearly confirmation](docs/deployment.md#yearly-confirmation-and-plan-moves).
+[Yearly confirmation](docs/deployment.md#yearly-confirmation-and-plan-moves). Design partners apply for half off a paid
+plan for three years in return for publicity they approve; see [Design partners](docs/deployment.md#design-partners).
 Staff see every customer and the keys it holds on a dashboard served on a network-restricted host.
 
 The server runs on Kinotic RPC alone (`kinotic-core` and `kinotic-api-gateway`) with its own single-node Ignite and

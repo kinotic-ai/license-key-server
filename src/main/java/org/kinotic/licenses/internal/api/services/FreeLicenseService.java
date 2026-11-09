@@ -12,7 +12,6 @@ import org.kinotic.licenses.api.model.FreeLicenseRequestStatus;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.internal.api.model.NewLicense;
-import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.kinotic.licenses.internal.api.repositories.FreeLicenseRequestRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
@@ -32,7 +31,7 @@ import java.util.UUID;
 public class FreeLicenseService {
 
     private final CustomerRepository customerRepository;
-    private final CustomerContactRepository contactRepository;
+    private final CustomerService customerService;
     private final FreeLicenseRequestRepository requestRepository;
     private final LicenseRepository licenseRepository;
     private final LicenseService licenseService;
@@ -118,22 +117,13 @@ public class FreeLicenseService {
                     Validate.validState(request != null, "The free license request %s is not pending", requestId);
                     return request;
                 })
-                .compose(request -> customerRepository.findById(request.getCustomerId())
-                                                      .compose(customer -> contactRepository.findByCustomerId(customer.getId())
-                                                                                            .compose(contacts -> {
-                                                                                                Future<Void> sent = Future.succeededFuture();
-                                                                                                for (var contact : contacts) {
-                                                                                                    sent = sent.compose(x -> emailService.sendFreeRequestRejected(contact, customer.getLegalName()));
-                                                                                                }
-                                                                                                return sent;
-                                                                                            }))
-                                                      // the decision stands once recorded; a notice that fails is logged, as an
-                                                      // approval's email is
-                                                      .recover(t -> {
-                                                          log.error("The free license request {} was rejected but its contacts could not be told", requestId, t);
-                                                          return Future.succeededFuture();
-                                                      })
-                                                      .map(request))
+                // the decision stands once recorded; a notice that fails is logged, as an approval's email is
+                .compose(request -> customerService.emailContacts(request.getCustomerId(), emailService::sendFreeRequestRejected)
+                                                   .recover(t -> {
+                                                       log.error("The free license request {} was rejected but its contacts could not be told", requestId, t);
+                                                       return Future.succeededFuture();
+                                                   })
+                                                   .map(request))
                 .onSuccess(request -> log.info("{} rejected the free license request {}", reviewedBy, requestId));
     }
 

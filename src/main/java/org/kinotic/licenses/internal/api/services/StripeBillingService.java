@@ -2,6 +2,7 @@ package org.kinotic.licenses.internal.api.services;
 
 import com.stripe.StripeClient;
 import com.stripe.exception.EventDataObjectDeserializationException;
+import com.stripe.exception.InvalidRequestException;
 import com.stripe.model.Event;
 import com.stripe.model.Invoice;
 import com.stripe.model.Price;
@@ -11,6 +12,7 @@ import com.stripe.model.SubscriptionItem;
 import com.stripe.model.SubscriptionSchedule;
 import com.stripe.model.checkout.Session;
 import com.stripe.service.V1Services;
+import com.stripe.param.CouponCreateParams;
 import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.PriceListParams;
 import com.stripe.param.SubscriptionRetrieveParams;
@@ -27,6 +29,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.Validate;
 import org.kinotic.licenses.api.config.KinoticLicensesProperties;
 import org.kinotic.licenses.api.model.Customer;
+import org.kinotic.licenses.api.model.DesignPartnerApplication;
+import org.kinotic.licenses.api.security.LicenseParticipant;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.BillingPeriod;
@@ -37,6 +41,7 @@ import org.kinotic.licenses.internal.api.model.PaidSubscription;
 import org.kinotic.licenses.internal.api.model.PriceCatalog;
 import org.kinotic.licenses.internal.api.model.PriceLookupKey;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
+import org.kinotic.licenses.internal.api.repositories.DesignPartnerRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.kinotic.licenses.internal.api.repositories.RevenueConfirmationRepository;
 import org.kinotic.licenses.internal.api.repositories.UnsentKeyEmailRepository;
@@ -46,6 +51,7 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -78,6 +84,14 @@ public class StripeBillingService {
     private static final String CUSTOMER_ID_METADATA = "kinoticCustomerId";
     // the free license a purchase moves onto the subscription it buys
     private static final String LICENSE_ID_METADATA = "kinoticLicenseId";
+    // the design partner application a discounted purchase was approved on
+    private static final String APPLICATION_ID_METADATA = "kinoticDesignPartnerApplicationId";
+    /** The id of the Stripe coupon every design partner's subscription carries. */
+    public static final String DESIGN_PARTNER_COUPON = "kinotic-design-partner";
+    /** The design partner discount, in percent off. */
+    public static final int DESIGN_PARTNER_PERCENT_OFF = 50;
+    /** How many months from its start a design partner's subscription is discounted. */
+    public static final int DESIGN_PARTNER_MONTHS = 36;
     private static final String SUBSCRIPTION_MODE = "subscription";
     private static final BigDecimal MINOR_UNITS = BigDecimal.valueOf(100);
     private static final String PAID = "paid";
@@ -91,12 +105,14 @@ public class StripeBillingService {
     private final LicenseService licenseService;
     private final UnsentKeyEmailRepository unsentRepository;
     private final RevenueConfirmationRepository confirmationRepository;
+    private final DesignPartnerRepository designPartnerRepository;
     private final Vertx vertx;
     private final ObjectProvider<StripeClient> stripeClient;
 
     // the work under way for each subscription, which the next event for it waits for
     private final Map<String, Future<Void>> reconciling = new ConcurrentHashMap<>();
     private volatile PriceCatalog catalog;
+    private volatile boolean couponReady;
 
     /**
      * The prices the customer buys at: those of the price list its active free license keeps, or of the current price
@@ -137,16 +153,33 @@ public class StripeBillingService {
      * subscription to the plan, billed for the period chosen, at the price list the customer buys at (see
      * {@link #findPrices(Customer)}). It returns to the success page with the session id.
      *
-     * @param customer     the buyer
-     * @param contactName  the billing contact's name, shown on the Stripe customer
-     * @param contactEmail the billing contact's email, which Stripe sends receipts to
-     * @param request      the plan, billing period and the company's figures, which must match the plan
+     * @param customer the buyer
+     * @param buyer    the contact buying, whom Stripe sends receipts to
+     * @param request  the plan, billing period and the company's figures, which must match the plan
      * @return the Checkout Session URL to send the browser to, or a failure with {@link AlreadyExistsException} when
      *         the customer already holds a paid subscription, or with {@link IllegalArgumentException} when the request
      *         is not valid or the figures set another plan
      */
-    public Future<String> startCheckout(Customer customer, String contactName, String contactEmail, CheckoutRequest request) {
+    public Future<String> startCheckout(Customer customer, LicenseParticipant buyer, CheckoutRequest request) {
         validate(request);
+        return createCheckout(customer, buyer, request.getPlan(), request.getBillingPeriod(), null);
+    }
+
+    /**
+     * Starts the purchase of the plan and billing period of an approved design partner application, as
+     * {@link #startCheckout(Customer, LicenseParticipant, CheckoutRequest)} does, with the design partner discount on
+     * the subscription: {@value #DESIGN_PARTNER_PERCENT_OFF}% off for {@value #DESIGN_PARTNER_MONTHS} months.
+     *
+     * @return the Checkout Session URL, or a failure with {@link AlreadyExistsException} when the customer already
+     *         holds a paid subscription
+     */
+    public Future<String> startDesignPartnerCheckout(Customer customer, LicenseParticipant buyer, DesignPartnerApplication application) {
+        return createCheckout(customer, buyer, application.getPlan(), application.getBillingPeriod(), application);
+    }
+
+    // a discounted design partner purchase names its application, whose design partner the completed checkout updates
+    private Future<String> createCheckout(Customer customer, LicenseParticipant buyer, Plan plan, BillingPeriod period,
+                                          DesignPartnerApplication application) {
         String publicBaseUrl = properties.getLicenses().getPublicBaseUrl();
         return licenseRepository.findByCustomerId(customer.getId()).compose(licenses -> {
             boolean subscribed = licenses.stream().anyMatch(license -> license.getPlan() != Plan.FREE
@@ -155,18 +188,24 @@ public class StripeBillingService {
                     ? Future.<License>failedFuture(new AlreadyExistsException(ALREADY_SUBSCRIBED))
                     : freeLicenseOf(customer);
         }).compose(free -> catalog().compose(prices -> {
-            PriceLookupKey key = new PriceLookupKey(priceListFor(free, prices), request.getPlan(), request.getBillingPeriod());
+            PriceLookupKey key = new PriceLookupKey(priceListFor(free, prices), plan, period);
             Price price = prices.prices().get(key);
             Validate.validState(price != null, "Stripe has no active Price with the lookup key %s", key.lookupKey());
-            return ensureStripeCustomer(customer, contactName, contactEmail).compose(stripeCustomerId -> blocking(() -> {
+            Future<String> coupon = application != null ? designPartnerCoupon() : Future.succeededFuture();
+            return coupon.compose(couponId -> ensureStripeCustomer(customer, buyer).compose(stripeCustomerId -> blocking(() -> {
                 Map<String, String> metadata = new HashMap<>();
                 metadata.put(CUSTOMER_ID_METADATA, customer.getId());
                 if (free != null) {
                     metadata.put(LICENSE_ID_METADATA, free.getId());
                 }
-                String cancelPath = CANCEL_PATH.formatted(request.getPlan().name().toLowerCase(Locale.ROOT),
-                                                          request.getBillingPeriod().name().toLowerCase(Locale.ROOT));
-                SessionCreateParams params = SessionCreateParams.builder()
+                String cancelPath;
+                if (application != null) {
+                    metadata.put(APPLICATION_ID_METADATA, application.getId());
+                    cancelPath = ACCOUNT_PATH;
+                } else {
+                    cancelPath = CANCEL_PATH.formatted(plan.name().toLowerCase(Locale.ROOT), period.name().toLowerCase(Locale.ROOT));
+                }
+                SessionCreateParams.Builder params = SessionCreateParams.builder()
                         .setMode(SessionCreateParams.Mode.SUBSCRIPTION)
                         .setCustomer(stripeCustomerId)
                         .setClientReferenceId(customer.getId())
@@ -175,11 +214,43 @@ public class StripeBillingService {
                         .setCancelUrl(publicBaseUrl + cancelPath)
                         .setBillingAddressCollection(SessionCreateParams.BillingAddressCollection.REQUIRED)
                         .putAllMetadata(metadata)
-                        .setSubscriptionData(SessionCreateParams.SubscriptionData.builder().putAllMetadata(metadata).build())
-                        .build();
-                return stripe().checkout().sessions().create(params).getUrl();
-            }));
+                        .setSubscriptionData(SessionCreateParams.SubscriptionData.builder().putAllMetadata(metadata).build());
+                if (couponId != null) {
+                    params.addDiscount(SessionCreateParams.Discount.builder().setCoupon(couponId).build());
+                }
+                return stripe().checkout().sessions().create(params.build()).getUrl();
+            })));
         }));
+    }
+
+    // The design partner coupon, created the first time it is needed. Its id is fixed, so every design partner shares
+    // the one coupon, and a server that finds it missing creates it.
+    private Future<String> designPartnerCoupon() {
+        Future<String> ret;
+        if (couponReady) {
+            ret = Future.succeededFuture(DESIGN_PARTNER_COUPON);
+        } else {
+            ret = blocking(() -> {
+                try {
+                    stripe().coupons().retrieve(DESIGN_PARTNER_COUPON);
+                } catch (InvalidRequestException e) {
+                    if (!Integer.valueOf(404).equals(e.getStatusCode())) {
+                        throw e;
+                    }
+                    stripe().coupons().create(CouponCreateParams.builder()
+                                                                .setId(DESIGN_PARTNER_COUPON)
+                                                                .setName("Kinotic design partner")
+                                                                .setPercentOff(BigDecimal.valueOf(DESIGN_PARTNER_PERCENT_OFF))
+                                                                .setDuration(CouponCreateParams.Duration.REPEATING)
+                                                                .setDurationInMonths((long) DESIGN_PARTNER_MONTHS)
+                                                                .build());
+                    log.info("Created the Stripe coupon {}", DESIGN_PARTNER_COUPON);
+                }
+                couponReady = true;
+                return DESIGN_PARTNER_COUPON;
+            });
+        }
+        return ret;
     }
 
     /**
@@ -314,8 +385,25 @@ public class StripeBillingService {
                             fulfilled = customerRepository.findById(session.getClientReferenceId())
                                                           .compose(customer -> createLicenseFor(customer, session, subscription));
                         }
-                        return fulfilled;
+                        return fulfilled.compose(v -> recordDesignPartner(session, subscription));
                     })));
+        }
+        return ret;
+    }
+
+    // a design partner's discounted purchase gives its design partner the license and the end of the discount, which
+    // runs from the subscription's start
+    private Future<Void> recordDesignPartner(Session session, Subscription subscription) {
+        String applicationId = session.getMetadata() != null ? session.getMetadata().get(APPLICATION_ID_METADATA) : null;
+        Future<Void> ret;
+        if (applicationId == null) {
+            ret = Future.succeededFuture();
+        } else {
+            Instant start = Instant.ofEpochSecond(subscription.getStartDate());
+            Instant discountEndsAt = start.atZone(ZoneOffset.UTC).plusMonths(DESIGN_PARTNER_MONTHS).toInstant();
+            ret = licenseRepository.findByStripeSubscriptionId(subscription.getId())
+                                   .compose(license -> designPartnerRepository.attachLicense(applicationId, license.getId(), discountEndsAt))
+                                   .mapEmpty();
         }
         return ret;
     }
@@ -527,15 +615,15 @@ public class StripeBillingService {
         });
     }
 
-    private Future<String> ensureStripeCustomer(Customer customer, String contactName, String contactEmail) {
+    private Future<String> ensureStripeCustomer(Customer customer, LicenseParticipant buyer) {
         Future<String> ret;
         if (customer.getStripeCustomerId() != null) {
             ret = Future.succeededFuture(customer.getStripeCustomerId());
         } else {
             ret = blocking(() -> stripe().customers().create(CustomerCreateParams.builder()
                                                                                .setName(customer.getLegalName())
-                                                                               .setEmail(contactEmail)
-                                                                               .setDescription("Billing contact: " + contactName)
+                                                                               .setEmail(buyer.getEmail())
+                                                                               .setDescription("Billing contact: " + buyer.getName())
                                                                                .putMetadata(CUSTOMER_ID_METADATA, customer.getId())
                                                                                .build()).getId())
                     .compose(stripeCustomerId -> customerRepository.updateStripeCustomerId(customer.getId(), stripeCustomerId)

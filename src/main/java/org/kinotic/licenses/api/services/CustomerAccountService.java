@@ -6,6 +6,8 @@ import org.kinotic.core.api.annotations.Version;
 import org.kinotic.core.api.annotations.Zone;
 import org.kinotic.licenses.api.model.CheckoutKey;
 import org.kinotic.licenses.api.model.CustomerAccount;
+import org.kinotic.licenses.api.model.DesignPartnerApplication;
+import org.kinotic.licenses.api.model.DesignPartnerApplicationForm;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.FreeLicenseRequest;
 import org.kinotic.licenses.api.model.Plan;
@@ -77,6 +79,31 @@ public interface CustomerAccountService {
      *         bought nothing for the calling customer
      */
     Future<CheckoutKey> findCheckoutKey(String checkoutSessionId);
+
+    /**
+     * Applies for the calling customer to be a design partner, on the paid plan its figures set, and records that the
+     * calling contact accepted the terms with the design partner publicity they describe. Staff approve or reject it.
+     *
+     * @param form         the figures, billing period and what the customer uses Kinotic for
+     * @param termsVersion the version of the terms the contact accepted, which must be the current version
+     * @return the pending application
+     * @throws IllegalArgumentException when the form is not valid, the figures set Free, or the terms version is not
+     *                                  the current one
+     * @throws org.kinotic.core.api.exceptions.AlreadyExistsException when another application of the customer's is
+     *                                                                pending
+     */
+    Future<DesignPartnerApplication> applyAsDesignPartner(DesignPartnerApplicationForm form, String termsVersion);
+
+    /**
+     * Starts the purchase of the calling customer's approved design partner application: its plan and billing period
+     * at half off for 36 months.
+     *
+     * @return the Stripe Checkout URL to send the browser to
+     * @throws IllegalArgumentException when the customer has no approved application with the id
+     * @throws IllegalStateException    when the discounted subscription is bought already
+     * @throws org.kinotic.core.api.exceptions.AlreadyExistsException when the customer holds another paid subscription
+     */
+    Future<String> startDesignPartnerCheckout(String applicationId);
 
     /**
      * Confirms the calling customer's figures for the anniversary of its license they are due for (see

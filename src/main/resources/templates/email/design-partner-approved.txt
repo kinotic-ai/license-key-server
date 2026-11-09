@@ -1,0 +1,9 @@
+We have approved {{organization}} as a Kinotic design partner. Your {{planName}} plan, billed {{billing}}, is half off for the first 36 months of your subscription; after that you pay your locked price, on the same terms, for as long as your license stays active.
+
+Start your subscription here:
+
+{{checkoutUrl}}
+
+You approve everything we publish about you before it goes out, and we never publish your code, your data or anything you mark confidential.
+
+— Minds Ignited, makers of Kinotic

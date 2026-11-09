@@ -33,8 +33,8 @@ whatever it likes to the left of it. A second proxy in the chain would make ever
   event only tells the server which subscription changed: the server reads that subscription, with its price and
   latest invoice, from Stripe and brings the license to it. A restricted secret key therefore needs read access to
   prices, products and invoices, and write access to customers, subscriptions (a lapsed license's subscription is
-  cancelled, and one whose figures set Free ends at its anniversary), subscription schedules (plan moves) and Checkout
-  and Customer Portal sessions. A card
+  cancelled, and one whose figures set Free ends at its anniversary), subscription schedules (plan moves), coupons (the
+  design partner coupon is created on first use) and Checkout and Customer Portal sessions. A card
   payment gets its key from `checkout.session.completed`; a bank debit through Link completes Checkout unpaid, and
   its key is issued and emailed once Stripe reports the first invoice paid. A subscription the customer cancels in
   the Customer Portal keeps its key until it expires and is not renewed.
@@ -102,6 +102,26 @@ plan:
 A license whose anniversary passes unconfirmed goes on exactly as it was, keys included, and is flagged
 `REVENUE_UNCONFIRMED` in the staff dashboard's Unconfirmed revenue queue. The customer can still confirm the missed
 anniversary, which clears the flag; a plan move it sets takes effect at the next anniversary.
+
+## Design partners
+
+A company on a paid plan applies at `/design-partner` with its figures (which set the plan; a company that qualifies
+for Free is offered Free), the billing period and what it uses Kinotic for, and accepts the design partner terms and
+their publicity (`design_partner_application`). Staff approve or reject it under Design partner applications.
+Approval makes it a design partner (`design_partner`) and emails the contacts a link to
+`/design-partner/checkout?application=<id>`, which opens a fresh Stripe Checkout Session for the plan and period, so
+the link never goes stale the way a Checkout Session does after 24 hours.
+
+That Checkout Session carries the **Stripe coupon `kinotic-design-partner`**: 50% off, `duration: repeating`,
+`duration_in_months: 36`. The server creates it the first time it is needed if it does not exist; do not change it,
+since every design partner shares it. Stripe applies it to the subscription, so it follows the subscription through
+plan moves (the Subscription Schedule phases copy its discount) and ends 36 months after the subscription starts,
+which the design partner record keeps as `discount_ends_at`. After that the customer pays its locked price on the
+same terms.
+
+Under Design partners, staff record each publication the customer approves (`design_partner_publication`: `LOGO`,
+`USE_DESCRIPTION`, `CASE_STUDY`, with who approved it and when), and the case study's status: `NOT_STARTED`,
+`IN_PROGRESS` or `PUBLISHED`, which the server refuses until the `CASE_STUDY` publication is approved.
 
 ## Configuration
 

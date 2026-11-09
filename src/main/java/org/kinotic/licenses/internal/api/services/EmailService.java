@@ -20,7 +20,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.kinotic.licenses.api.config.EmailProperties;
 import org.kinotic.licenses.api.config.KinoticLicensesProperties;
+import org.kinotic.licenses.api.model.BillingPeriod;
 import org.kinotic.licenses.api.model.CustomerContact;
+import org.kinotic.licenses.api.model.DesignPartnerApplication;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.Plan;
@@ -67,6 +69,10 @@ public class EmailService {
     private static final Template CONFIRMATION_DUE_TEXT = compile(TEXT_TEMPLATES, "confirmation-due");
     private static final Template PLAN_CHANGED_HTML = compile(HTML_TEMPLATES, "plan-changed");
     private static final Template PLAN_CHANGED_TEXT = compile(TEXT_TEMPLATES, "plan-changed");
+    private static final Template PARTNER_APPROVED_HTML = compile(HTML_TEMPLATES, "design-partner-approved");
+    private static final Template PARTNER_APPROVED_TEXT = compile(TEXT_TEMPLATES, "design-partner-approved");
+    private static final Template PARTNER_REJECTED_HTML = compile(HTML_TEMPLATES, "design-partner-rejected");
+    private static final Template PARTNER_REJECTED_TEXT = compile(TEXT_TEMPLATES, "design-partner-rejected");
     private static final Template FREE_APPROVED_HTML = compile(HTML_TEMPLATES, "free-request-approved");
     private static final Template FREE_APPROVED_TEXT = compile(TEXT_TEMPLATES, "free-request-approved");
     private static final Template FREE_REJECTED_HTML = compile(HTML_TEMPLATES, "free-request-rejected");
@@ -180,6 +186,29 @@ public class EmailService {
                                                "siteUrl", properties.getLicenses().getPublicBaseUrl());
         return send(contact.getEmail(), contact.getName(), "About your Kinotic free license request",
                     FREE_REJECTED_HTML, FREE_REJECTED_TEXT, variables);
+    }
+
+    /**
+     * Tells a contact its design partner application is approved, with the link that starts its discounted subscription.
+     */
+    public Future<Void> sendDesignPartnerApproved(CustomerContact contact, String organization, DesignPartnerApplication application,
+                                                  String checkoutUrl) {
+        Map<String, Object> variables = new HashMap<>();
+        variables.put("organization", organization);
+        variables.put("planName", planName(application.getPlan()));
+        variables.put("billing", application.getBillingPeriod() == BillingPeriod.ANNUAL ? "annually" : "monthly");
+        variables.put("checkoutUrl", checkoutUrl);
+        return send(contact.getEmail(), contact.getName(), "You are a Kinotic design partner",
+                    PARTNER_APPROVED_HTML, PARTNER_APPROVED_TEXT, variables);
+    }
+
+    /**
+     * Tells a contact its design partner application was not approved.
+     */
+    public Future<Void> sendDesignPartnerRejected(CustomerContact contact, String organization) {
+        Map<String, Object> variables = Map.of("organization", organization, "accountUrl", accountUrl());
+        return send(contact.getEmail(), contact.getName(), "About your Kinotic design partner application",
+                    PARTNER_REJECTED_HTML, PARTNER_REJECTED_TEXT, variables);
     }
 
     private Map<String, Object> keyVariables(String organization, License license, IssuedKey key) {

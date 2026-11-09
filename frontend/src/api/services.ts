@@ -12,7 +12,11 @@ import type {
     PlanPrice,
     CheckoutRequest,
     CompanyFigures,
-    RevenueConfirmation
+    RevenueConfirmation,
+    CaseStudyStatus,
+    DesignPartner,
+    DesignPartnerApplication,
+    DesignPartnerApplicationForm
 } from './model'
 
 /** The published services, addressed in their zones as the gateway routes them. */
@@ -51,6 +55,16 @@ export class CustomerAccountService {
 
     findCheckoutKey(checkoutSessionId: string): Promise<CheckoutKey> {
         return this.proxy.invoke('findCheckoutKey', [checkoutSessionId])
+    }
+
+    /** Applies to be a design partner; staff approve or reject the application. */
+    applyAsDesignPartner(form: DesignPartnerApplicationForm, termsVersion: string): Promise<DesignPartnerApplication> {
+        return this.proxy.invoke('applyAsDesignPartner', [form, termsVersion])
+    }
+
+    /** Starts the discounted subscription of an approved application; resolves to the Stripe Checkout URL. */
+    startDesignPartnerCheckout(applicationId: string): Promise<string> {
+        return this.proxy.invoke('startDesignPartnerCheckout', [applicationId])
     }
 
     /** Confirms the company's figures for the anniversary the license's figures are due for. */
@@ -115,6 +129,36 @@ export class StaffFreeLicenseRequestService {
     }
 }
 
+export class StaffDesignPartnerService {
+    private readonly proxy = proxy('staff', 'StaffDesignPartnerService')
+
+    findPendingApplications(): Promise<DesignPartnerApplication[]> {
+        return this.proxy.invoke('findPendingApplications', [])
+    }
+
+    approveApplication(applicationId: string): Promise<DesignPartner> {
+        return this.proxy.invoke('approveApplication', [applicationId])
+    }
+
+    rejectApplication(applicationId: string): Promise<DesignPartnerApplication> {
+        return this.proxy.invoke('rejectApplication', [applicationId])
+    }
+
+    findDesignPartners(): Promise<DesignPartner[]> {
+        return this.proxy.invoke('findDesignPartners', [])
+    }
+
+    /** Records that the person named at the customer approved the publication. */
+    approvePublication(publicationId: string, approvedBy: string): Promise<DesignPartner> {
+        return this.proxy.invoke('approvePublication', [publicationId, approvedBy])
+    }
+
+    setCaseStudyStatus(designPartnerId: string, status: CaseStudyStatus): Promise<DesignPartner> {
+        return this.proxy.invoke('setCaseStudyStatus', [designPartnerId, status])
+    }
+}
+
 export const customerAccountService = new CustomerAccountService()
 export const staffCustomerService = new StaffCustomerService()
 export const staffFreeLicenseRequestService = new StaffFreeLicenseRequestService()
+export const staffDesignPartnerService = new StaffDesignPartnerService()

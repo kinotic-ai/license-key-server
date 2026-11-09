@@ -71,7 +71,7 @@ async function decide(approve: boolean) {
 
 <template>
   <div>
-    <PageHeader title="Free license requests" description="Requests awaiting review, oldest first. Approving issues the key; a renewal request starts the license's next term." />
+    <PageHeader title="Free license requests" description="Requests awaiting review, oldest first. Approving issues the key; a renewal, made by a yearly confirmation that still qualifies, starts the license's next year." />
     <CrudTable ref="crudTable" :headers="headers" :data-source="dataSource" :search="tableSearch" :is-show-add-new="false"
                empty-state-text="No requests waiting" @update:search="tableSearch = $event" @on-row-click="reviewing = $event">
       <template #item.contact="{ item }">{{ item.contactName }} <span class="app-muted-text">&lt;{{ item.contactEmail }}&gt;</span></template>

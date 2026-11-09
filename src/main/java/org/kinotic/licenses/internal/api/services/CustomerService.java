@@ -16,6 +16,7 @@ import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.springframework.stereotype.Component;
 
 import java.util.UUID;
+import java.util.function.BiFunction;
 
 /**
  * Brings a new customer on, the legal entity with its billing contact, and records each acceptance of the agreement in
@@ -61,6 +62,22 @@ public class CustomerService {
                                                                     // above, leaves no customer behind; the save's failure is the one reported
                                                                     .recover(t -> customerRepository.delete(customer.getId())
                                                                                                     .transform(deleted -> Future.<CustomerContact>failedFuture(t))));
+    }
+
+    /**
+     * Sends an email to each contact of the customer, one after another; the first that fails fails the result.
+     *
+     * @param send sends to one contact, given the contact and the customer's legal name
+     */
+    public Future<Void> emailContacts(String customerId, BiFunction<CustomerContact, String, Future<Void>> send) {
+        return customerRepository.findById(customerId)
+                                 .compose(customer -> contactRepository.findByCustomerId(customerId).compose(contacts -> {
+                                     Future<Void> ret = Future.succeededFuture();
+                                     for (CustomerContact contact : contacts) {
+                                         ret = ret.compose(v -> send.apply(contact, customer.getLegalName()));
+                                     }
+                                     return ret;
+                                 }));
     }
 
     /**

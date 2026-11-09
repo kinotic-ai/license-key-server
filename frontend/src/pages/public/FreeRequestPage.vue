@@ -55,7 +55,7 @@ async function submit() {
 <template>
   <div class="mx-auto max-w-2xl">
     <PageHeader title="Request a free license"
-                description="Small organizations, below about $1M in annual revenue and about $3M raised, can use Kinotic Enterprise free. Minds Ignited reviews each request; an approved license is renewed yearly by re-certifying." />
+                description="Companies under $1M in annual revenue that have raised under $5M in total can use Kinotic Enterprise free. Minds Ignited reviews each request; an approved license renews each year once you confirm your figures." />
     <div v-if="submitted" class="app-card-surface rounded-xl border p-5 text-sm">
       <p class="app-heading-text font-medium">Thank you, your request is in.</p>
       <p class="app-muted-text mt-2">

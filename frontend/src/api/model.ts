@@ -141,6 +141,9 @@ export interface CustomerAccount {
     contacts: CustomerContact[]
     licenses: LicenseWithKeys[]
     freeLicenseRequests: FreeLicenseRequest[]
+    designPartnerApplications: DesignPartnerApplication[]
+    /** Null when the customer is not a design partner. */
+    designPartner: DesignPartner | null
 }
 
 export interface CustomerSummary {
@@ -171,6 +174,56 @@ export interface CheckoutKey {
     status: 'PENDING' | 'READY' | 'SHOWN'
     key?: string
     expiresAt?: string
+}
+
+export type DesignPartnerApplicationStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
+export type PublicationType = 'LOGO' | 'USE_DESCRIPTION' | 'CASE_STUDY'
+export type CaseStudyStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'PUBLISHED'
+
+/** What a customer gives when it applies to be a design partner. */
+export interface DesignPartnerApplicationForm {
+    figures: CompanyFigures
+    billingPeriod: BillingPeriod
+    intendedUse: string
+}
+
+export interface DesignPartnerApplication {
+    id: string
+    customerId: string
+    organization: string
+    contactName: string
+    contactEmail: string
+    plan: Plan
+    billingPeriod: BillingPeriod
+    figures: CompanyFigures
+    intendedUse: string
+    status: DesignPartnerApplicationStatus
+    reviewedBy: string | null
+    reviewedAt: string | null
+    createdAt: string
+}
+
+export interface DesignPartnerPublication {
+    id: string
+    designPartnerId: string
+    type: PublicationType
+    /** The person at the customer who approved it; null until approved. */
+    approvedBy: string | null
+    approvedAt: string | null
+}
+
+export interface DesignPartner {
+    id: string
+    customerId: string
+    organization: string
+    applicationId: string
+    /** Null until the discounted subscription is bought. */
+    licenseId: string | null
+    approvedAt: string
+    /** Null until the discounted subscription is bought. */
+    discountEndsAt: string | null
+    caseStudyStatus: CaseStudyStatus
+    publications: DesignPartnerPublication[]
 }
 
 /** The site a page was served on and the terms version it shows. */

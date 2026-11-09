@@ -44,6 +44,8 @@ public class StripeStandIn {
     private static final String SCHEDULES_PATH = "/v1/subscription_schedules";
     private static final Map<String, JsonObject> SUBSCRIPTIONS = new ConcurrentHashMap<>();
     private static final Map<String, JsonObject> SCHEDULES = new ConcurrentHashMap<>();
+    private static final String COUPONS_PATH = "/v1/coupons";
+    private static final Map<String, JsonObject> COUPONS = new ConcurrentHashMap<>();
     private static final List<JsonObject> PRICES = seedPrices();
     private static final List<StripeRequest> REQUESTS = Collections.synchronizedList(new ArrayList<>());
 
@@ -98,6 +100,8 @@ public class StripeStandIn {
             response = subscriptionRequest(method, path.substring(SUBSCRIPTIONS_PATH.length()), params);
         } else if (path.startsWith(SCHEDULES_PATH)) {
             response = scheduleRequest(path.substring(SCHEDULES_PATH.length()), params);
+        } else if (path.startsWith(COUPONS_PATH)) {
+            response = couponRequest(method, path.substring(COUPONS_PATH.length()), params);
         } else if (path.equals("/v1/prices")) {
             response = new JsonObject().put("object", "list").put("url", "/v1/prices").put("has_more", false)
                                        .put("data", new JsonArray(new ArrayList<>(PRICES)));
@@ -121,6 +125,19 @@ public class StripeStandIn {
         } else if (ret != null && method.equals("POST") && params.containsKey("cancel_at")) {
             ret = ret.copy().put("cancel_at", Long.parseLong(params.get("cancel_at")));
             SUBSCRIPTIONS.put(id, ret);
+        }
+        return ret;
+    }
+
+    // a coupon exists once the server created it
+    private static JsonObject couponRequest(String method, String rest, Map<String, String> params) {
+        JsonObject ret;
+        if (method.equals("POST") && rest.isEmpty()) {
+            ret = new JsonObject().put("id", params.get("id")).put("object", "coupon").put("percent_off", Double.parseDouble(params.get("percent_off")))
+                                  .put("duration", params.get("duration")).put("duration_in_months", Long.parseLong(params.get("duration_in_months")));
+            COUPONS.put(ret.getString("id"), ret);
+        } else {
+            ret = COUPONS.get(rest.substring(1));
         }
         return ret;
     }

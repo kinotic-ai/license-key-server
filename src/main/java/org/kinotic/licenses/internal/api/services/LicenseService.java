@@ -17,7 +17,6 @@ import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.internal.api.model.NewLicense;
 import org.kinotic.licenses.internal.api.model.PaidSubscription;
 import org.kinotic.licenses.internal.api.model.PriceLookupKey;
-import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.kinotic.licenses.internal.api.repositories.IssuedKeyRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
@@ -57,7 +56,7 @@ public class LicenseService {
     private final LicenseRepository licenseRepository;
     private final IssuedKeyRepository issuedKeyRepository;
     private final CustomerRepository customerRepository;
-    private final CustomerContactRepository contactRepository;
+    private final CustomerService customerService;
     private final LicenseKeyIssuer keyIssuer;
     private final EmailService emailService;
     private final RevenueConfirmationRepository confirmationRepository;
@@ -370,17 +369,6 @@ public class LicenseService {
 
     // every contact of the licensee gets the email; a failure to send fails the caller, which retries or reports it
     private Future<Void> emailContacts(License license, BiFunction<CustomerContact, String, Future<Void>> send) {
-        return customerRepository.findById(license.getCustomerId())
-                                 .compose(customer -> contactRepository.findByCustomerId(customer.getId())
-                                                                       .compose(contacts -> sendAll(contacts, customer, send)));
-    }
-
-    private static Future<Void> sendAll(List<CustomerContact> contacts, Customer customer,
-                                        BiFunction<CustomerContact, String, Future<Void>> send) {
-        Future<Void> ret = Future.succeededFuture();
-        for (CustomerContact contact : contacts) {
-            ret = ret.compose(v -> send.apply(contact, customer.getLegalName()));
-        }
-        return ret;
+        return customerService.emailContacts(license.getCustomerId(), send);
     }
 }

@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory, type RouteRecordRaw, type Router } from 'vue-router'
-import { Building2, Gift, TriangleAlert } from '@lucide/vue'
+import { Building2, Gift, Handshake, Inbox, TriangleAlert } from '@lucide/vue'
 import type { SidebarItemMeta } from '@kinotic-ai/frontend-common'
 import type { Site } from '@/api/model'
 
@@ -7,7 +7,7 @@ function dashboardItem(label: string, icon: SidebarItemMeta['icon'], order: numb
     return { group: 'dashboard', label, icon, order }
 }
 
-/** The public site: sign-up and sign-in, and for a signed-in customer the purchase, free request and account. */
+/** The public site: sign-up and sign-in, and for a signed-in customer the purchase, free request, design partner application and account. */
 const PUBLIC_ROUTES: RouteRecordRaw[] = [
     {
         path: '/',
@@ -17,7 +17,9 @@ const PUBLIC_ROUTES: RouteRecordRaw[] = [
             { path: 'buy', component: () => import('./pages/public/BuyPage.vue') },
             { path: 'buy/success', component: () => import('./pages/public/BuySuccessPage.vue') },
             { path: 'free', component: () => import('./pages/public/FreeRequestPage.vue') },
-            { path: 'account', component: () => import('./pages/public/AccountPage.vue') }
+            { path: 'account', component: () => import('./pages/public/AccountPage.vue') },
+            { path: 'design-partner', component: () => import('./pages/public/DesignPartnerPage.vue') },
+            { path: 'design-partner/checkout', component: () => import('./pages/public/DesignPartnerCheckoutPage.vue') }
         ]
     },
     { path: '/login', component: () => import('./pages/public/LoginPage.vue'), meta: { authenticationRequired: false } },
@@ -25,7 +27,7 @@ const PUBLIC_ROUTES: RouteRecordRaw[] = [
     { path: '/:catchAll(.*)', redirect: '/' }
 ]
 
-/** The staff site: the customer list, the free request queue and sign-in through the staff provider. */
+/** The staff site: the customer list, the free request and design partner queues, and sign-in through the staff provider. */
 const STAFF_ROUTES: RouteRecordRaw[] = [
     {
         path: '/',
@@ -42,6 +44,16 @@ const STAFF_ROUTES: RouteRecordRaw[] = [
                 component: () => import('./pages/staff/CustomerPage.vue'),
                 props: true,
                 meta: { sidebarGroup: 'dashboard' }
+            },
+            {
+                path: 'design-partner-applications',
+                component: () => import('./pages/staff/DesignPartnerApplicationsPage.vue'),
+                meta: { sidebar: dashboardItem('Design partner applications', Inbox, 40) }
+            },
+            {
+                path: 'design-partners',
+                component: () => import('./pages/staff/DesignPartnersPage.vue'),
+                meta: { sidebar: dashboardItem('Design partners', Handshake, 50) }
             },
             {
                 path: 'unconfirmed-revenue',

@@ -8,6 +8,8 @@ import org.kinotic.licenses.api.model.AgreementTerms;
 import org.kinotic.licenses.api.model.CheckoutKey;
 import org.kinotic.licenses.api.model.CheckoutKeyStatus;
 import org.kinotic.licenses.api.model.CustomerAccount;
+import org.kinotic.licenses.api.model.DesignPartnerApplication;
+import org.kinotic.licenses.api.model.DesignPartnerApplicationForm;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.FreeLicenseRequest;
 import org.kinotic.licenses.api.model.Plan;
@@ -20,6 +22,8 @@ import org.kinotic.licenses.api.security.LicenseParticipant;
 import org.kinotic.licenses.api.services.CustomerAccountService;
 import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
+import org.kinotic.licenses.internal.api.repositories.DesignPartnerApplicationRepository;
+import org.kinotic.licenses.internal.api.repositories.DesignPartnerRepository;
 import org.kinotic.licenses.internal.api.repositories.FreeLicenseRequestRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.springframework.stereotype.Component;
@@ -54,6 +58,9 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
     private final FreeLicenseService freeLicenseService;
     private final CustomerService customerService;
     private final RevenueConfirmationService confirmationService;
+    private final DesignPartnerService designPartnerService;
+    private final DesignPartnerRepository designPartnerRepository;
+    private final DesignPartnerApplicationRepository applicationRepository;
 
     @Override
     public Future<CustomerAccount> getAccount() {
@@ -73,7 +80,15 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
                                      ret.setLicenses(licenses);
                                      return requestRepository.findByCustomerId(customerId);
                                  })
-                                 .map(ret::setFreeLicenseRequests);
+                                 .compose(requests -> {
+                                     ret.setFreeLicenseRequests(requests);
+                                     return applicationRepository.findByCustomerId(customerId);
+                                 })
+                                 .compose(applications -> {
+                                     ret.setDesignPartnerApplications(applications);
+                                     return designPartnerRepository.findByCustomerId(customerId);
+                                 })
+                                 .map(ret::setDesignPartner);
     }
 
     @Override
@@ -96,7 +111,7 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
         LicenseParticipant caller = caller();
         requireCurrentTerms(termsVersion);
         return customerRepository.findById(caller.getCustomerId())
-                                 .compose(customer -> billingService.startCheckout(customer, caller.getName(), caller.getEmail(), request))
+                                 .compose(customer -> billingService.startCheckout(customer, caller, request))
                                  .compose(url -> recordAcceptance(caller, null).map(url));
     }
 
@@ -128,6 +143,19 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
             }
             return ret;
         });
+    }
+
+    @Override
+    public Future<DesignPartnerApplication> applyAsDesignPartner(DesignPartnerApplicationForm form, String termsVersion) {
+        LicenseParticipant caller = caller();
+        requireCurrentTerms(termsVersion);
+        return designPartnerService.apply(caller.getCustomerId(), form)
+                                   .compose(application -> recordAcceptance(caller, PublicityConsent.DESIGN_PARTNER).map(application));
+    }
+
+    @Override
+    public Future<String> startDesignPartnerCheckout(String applicationId) {
+        return designPartnerService.startCheckout(caller(), applicationId);
     }
 
     @Override

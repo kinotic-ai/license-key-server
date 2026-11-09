@@ -96,6 +96,47 @@ CREATE INDEX free_license_request_status_idx ON free_license_request (status, cr
 CREATE UNIQUE INDEX free_license_request_open_idx ON free_license_request (customer_id)
     WHERE status = 'PENDING' OR (status = 'APPROVED' AND issued_key_jti IS NULL);
 
+-- Applications to be a design partner: the plan and billing period the figures set, and what the company uses Kinotic
+-- for. Staff approve or reject them; a customer has at most one pending.
+CREATE TABLE design_partner_application (
+    id             TEXT PRIMARY KEY,
+    customer_id    TEXT           NOT NULL REFERENCES customer (id),
+    plan           TEXT           NOT NULL,
+    billing_period TEXT           NOT NULL,
+    annual_revenue NUMERIC(16, 2) NOT NULL,
+    capital_raised NUMERIC(16, 2),
+    intended_use   TEXT           NOT NULL,
+    status         TEXT           NOT NULL,
+    reviewed_by    TEXT,
+    reviewed_at    TIMESTAMPTZ,
+    created_at     TIMESTAMPTZ    NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX design_partner_application_pending_idx ON design_partner_application (customer_id) WHERE status = 'PENDING';
+
+-- A design partner, from the approval of its application; its license and the end of its discount are set once its
+-- discounted subscription is bought.
+CREATE TABLE design_partner (
+    id                TEXT PRIMARY KEY,
+    customer_id       TEXT        NOT NULL REFERENCES customer (id),
+    application_id    TEXT        NOT NULL UNIQUE REFERENCES design_partner_application (id),
+    license_id        TEXT REFERENCES license (id),
+    approved_at       TIMESTAMPTZ NOT NULL,
+    discount_ends_at  TIMESTAMPTZ,
+    case_study_status TEXT        NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- What may be published about a design partner, one row per PublicationType, approved by the customer before it goes
+-- out.
+CREATE TABLE design_partner_publication (
+    id                TEXT PRIMARY KEY,
+    design_partner_id TEXT NOT NULL REFERENCES design_partner (id),
+    type              TEXT NOT NULL,
+    approved_by       TEXT,
+    approved_at       TIMESTAMPTZ,
+    UNIQUE (design_partner_id, type)
+);
+
 -- Every key ever issued, appended to and never updated.
 CREATE TABLE issued_key (
     jti        TEXT PRIMARY KEY,

@@ -37,6 +37,7 @@ public final class StripeEvents {
                 .put("id", id)
                 .put("object", "subscription")
                 .put("status", status)
+                .put("start_date", Instant.now().getEpochSecond())
                 .put("items", new JsonObject().put("object", "list").put("data", new JsonArray().add(item)))
                 .put("latest_invoice", new JsonObject().put("id", "in_" + UUID.randomUUID().toString().replace("-", ""))
                                                        .put("object", "invoice").put("status", "paid"));
