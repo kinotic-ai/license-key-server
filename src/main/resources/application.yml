@@ -1,0 +1,35 @@
+# Settings shared by every deployment. Secrets and hostnames come from the environment:
+# KINOTIC_LICENSES_PUBLICBASEURL, KINOTIC_LICENSES_STAFFBASEURL, KINOTIC_LICENSES_SIGNINGKEYID,
+# KINOTIC_LICENSES_DATABASE_*, KINOTIC_LICENSES_STRIPE_*, KINOTIC_LICENSES_EMAIL_*, KINOTIC_LICENSES_STAFFOIDC_*,
+# KINOTIC_CORS_ALLOWEDORIGINPATTERN.
+spring:
+  application:
+    name: license-key-server
+  main:
+    banner-mode: off
+
+kinotic:
+  # The Ignite node and the Vert.x event bus bind to the loopback interface: this server is a single node and never
+  # joins another cluster (see LicenseServerConfiguration.loopbackDiscoverySpi)
+  eventBusClusterHost: 127.0.0.1
+  ignite:
+    discoveryType: LOCAL
+    discoveryPort: 47600
+    communicationPort: 47200
+    workDirectory: /tmp/license-key-server-ignite
+  apiGateway:
+    stompPort: 58503
+    webServer:
+      # the SPA is served by SpaRoutes on the API port, so one port serves both hostnames
+      enabled: false
+  cors:
+    # browsers send Origin on every POST, their own origin's included, so the pattern admits this server's sites; a
+    # deployment adds its staff host
+    allowedOriginPattern: "https://licenses\\.kinotic\\.ai"
+    allowCredentials: true
+  maxNumberOfCoresToUse: 2
+
+logging:
+  level:
+    org.kinotic: INFO
+    org.apache.ignite: WARN

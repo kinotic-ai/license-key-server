@@ -1,0 +1,17 @@
+# A developer's machine: the vite dev server on 5173 is the public site and 5174 the staff dashboard, both proxying
+# /api to this server, and email is logged instead of sent.
+kinotic:
+  debug: true
+  cors:
+    allowedOriginPattern: "http:\\/\\/localhost:(5173|5174)"
+    allowCredentials: true
+  licenses:
+    ephemeralSigningKey: true
+    publicBaseUrl: http://localhost:5173
+    staffBaseUrl: http://localhost:5174
+    database:
+      port: 5433
+      user: postgres
+      password: postgres
+    email:
+      enabled: false

@@ -1,0 +1,9 @@
+Your license for {{organization}} on the {{planName}} plan has been renewed for another term. Here is the new key; your current key keeps working until it expires, so paste this one in before then.
+
+{{key}}
+
+This key is valid until {{expiresOn}}. Every key is always available in your account:
+
+{{accountUrl}}
+
+— Minds Ignited, makers of Kinotic

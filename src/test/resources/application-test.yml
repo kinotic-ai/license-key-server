@@ -1,0 +1,26 @@
+# The test suite's server: ports that clash with neither a development server nor a second suite's node,
+# a signing key supplied by each test, and email logged rather than sent.
+kinotic:
+  ignite:
+    discoveryPort: 47610
+    communicationPort: 47210
+    workDirectory: /tmp/license-key-server-ignite-test
+  apiGateway:
+    stompPort: 58603
+  cors:
+    allowedOriginPattern: "http:\\/\\/localhost:(5173|5174)"
+    allowCredentials: true
+  licenses:
+    ephemeralSigningKey: true
+    publicBaseUrl: http://localhost:5173
+    staffBaseUrl: http://localhost:5174
+    stripe:
+      secretKey: sk_test_placeholder
+      webhookSecret: whsec_test_placeholder
+    email:
+      enabled: false
+    staffOidc:
+      issuer: https://accounts.google.com
+      clientId: test-client
+      clientSecret: test-secret
+      allowedEmailDomain: mindsignited.com

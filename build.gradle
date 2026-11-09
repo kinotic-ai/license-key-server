@@ -1,0 +1,146 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'io.freefair.lombok' version "${lombokPluginVersion}"
+    id 'io.spring.dependency-management' version "${springDependencyManagementVersion}"
+    id 'org.springframework.boot' version "${springBootVersion}"
+}
+
+group = 'ai.mindsignited'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+// Kinotic's IDL converter reads parameter names for the service schemas of @Publish'ed interfaces
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs << '-parameters'
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        name = 'Central Portal Snapshots'
+        url = uri('https://central.sonatype.com/repository/maven-snapshots/')
+    }
+}
+
+configurations.configureEach {
+    // the Kinotic RPC snapshot moves with every publish, so a cached copy never masks a new one
+    resolutionStrategy.cacheChangingModulesFor 0, 'seconds'
+}
+
+dependencyManagement {
+    imports {
+        mavenBom("org.springframework.boot:spring-boot-dependencies:${springBootVersion}") {
+            // Vert.x 5.1 requires Netty 4.2.17, above the Boot-managed version, as Kinotic's own build pins it
+            bomProperty 'jackson-2-bom.version', jackson2Version
+            bomProperty 'jackson-bom.version', jacksonVersion
+            bomProperty 'netty.version', nettyVersion
+        }
+        mavenBom "org.testcontainers:testcontainers-bom:${testcontainersBomVersion}"
+    }
+    dependencies {
+        dependency "com.azure:azure-communication-email:${azureCommunicationEmailVersion}"
+        dependency "com.azure:azure-identity:${azureIdentityVersion}"
+        dependency "com.azure:azure-security-keyvault-keys:${azureKeyvaultKeysVersion}"
+        dependency "com.github.jknack:handlebars:${handlebarsVersion}"
+        dependency "com.ongres.scram:scram-client:${scramClientVersion}"
+        dependency "com.stripe:stripe-java:${stripeJavaVersion}"
+        dependency "io.vertx:vertx-auth-oauth2:${vertxVersion}"
+        dependency "io.vertx:vertx-core:${vertxVersion}"
+        dependency "io.vertx:vertx-pg-client:${vertxVersion}"
+        dependency "io.vertx:vertx-web:${vertxVersion}"
+        dependency "io.vertx:vertx-web-client:${vertxVersion}"
+        dependency "org.apache.commons:commons-lang3:${apacheCommonsLangVersion}"
+        dependency "org.apache.ignite:ignite-core:${igniteVersion}"
+        dependency "org.flywaydb:flyway-core:${flywayVersion}"
+        dependency "org.flywaydb:flyway-database-postgresql:${flywayVersion}"
+        dependency "org.kinotic:kinotic-api-gateway:${kinoticVersion}"
+        dependency "org.kinotic:kinotic-core:${kinoticVersion}"
+        dependency "org.postgresql:postgresql:${postgresqlVersion}"
+    }
+}
+
+dependencies {
+    annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
+
+    implementation 'org.springframework.boot:spring-boot-starter'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    // Kinotic RPC: the gateway serves the STOMP API and the REST routes, core runs the services
+    implementation('org.kinotic:kinotic-core') { changing = true }
+    implementation('org.kinotic:kinotic-api-gateway') { changing = true }
+
+    implementation 'io.vertx:vertx-core'
+    implementation 'io.vertx:vertx-web'
+    implementation 'io.vertx:vertx-auth-oauth2'
+    implementation 'io.vertx:vertx-pg-client'
+    // SCRAM-SHA-256, the password authentication Postgres uses by default
+    runtimeOnly 'com.ongres.scram:scram-client'
+
+    implementation 'org.apache.ignite:ignite-core'
+
+    // Flyway runs the migrations over JDBC at startup; the application itself queries through vertx-pg-client
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+    runtimeOnly 'org.postgresql:postgresql'
+
+    implementation 'com.stripe:stripe-java'
+
+    implementation 'com.azure:azure-identity'
+    implementation 'com.azure:azure-security-keyvault-keys'
+    implementation 'com.azure:azure-communication-email'
+
+    implementation 'com.github.jknack:handlebars'
+
+    implementation 'org.apache.commons:commons-lang3'
+    implementation 'tools.jackson.core:jackson-databind'
+    implementation 'com.fasterxml.jackson.core:jackson-annotations'
+
+    // The test suites deploy the Kinotic TypeScript client for the frontend; the Java suites call the server over HTTP
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'io.vertx:vertx-web-client'
+    testImplementation 'org.testcontainers:testcontainers-postgresql'
+    testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+}
+
+// The Vue app built in frontend/ (pnpm install && pnpm build) is served from the jar's webroot; a build without it
+// serves the API alone
+processResources {
+    from('frontend/dist') {
+        into 'webroot'
+    }
+}
+
+// Ignite 2.18 reflects into these JDK packages
+def igniteJvmArgs = [
+        '--add-opens=java.base/java.nio=ALL-UNNAMED',
+        '--add-opens=java.base/java.util=ALL-UNNAMED',
+        '--add-opens=java.base/java.lang=ALL-UNNAMED',
+        '--add-opens=java.base/java.lang.invoke=ALL-UNNAMED',
+]
+
+application {
+    applicationDefaultJvmArgs = igniteJvmArgs + ['-XX:+DisableExplicitGC']
+}
+
+tasks.named('bootRun') {
+    jvmArgs = igniteJvmArgs
+}
+
+test {
+    useJUnitPlatform()
+    // whether the suite has a database decides whether it runs or skips, so a run with one never reuses a skipped run
+    inputs.property('licensesTestDatabaseConfigured', System.getenv('LICENSES_TEST_DATABASE_URL') != null)
+    jvmArgs(igniteJvmArgs)
+    systemProperty 'junit.jupiter.execution.timeout.default', '120 s'
+    systemProperty 'junit.jupiter.execution.timeout.thread.mode.default', 'SEPARATE_THREAD'
+    testLogging {
+        exceptionFormat = 'full'
+        showCauses = true
+        showStackTraces = true
+    }
+}

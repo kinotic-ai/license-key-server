@@ -1,0 +1,9 @@
+The latest payment for {{organization}}'s Kinotic Enterprise license ({{planName}} plan) didn't go through. Stripe will retry it over the next days and email you about each attempt.
+
+Your current license key keeps working until it expires. No renewal key is issued until the payment succeeds, so please update your payment details from your account:
+
+{{accountUrl}}
+
+If the payment has gone through since, you can ignore this email.
+
+— Minds Ignited, makers of Kinotic
