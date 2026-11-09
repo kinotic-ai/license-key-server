@@ -13,6 +13,7 @@ import com.stripe.model.SubscriptionSchedule;
 import com.stripe.model.checkout.Session;
 import com.stripe.service.V1Services;
 import com.stripe.param.CouponCreateParams;
+import com.stripe.param.common.EmptyParam;
 import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.PriceListParams;
 import com.stripe.param.SubscriptionRetrieveParams;
@@ -310,6 +311,36 @@ public class StripeBillingService {
             log.info("The subscription {} ends at {}, when its license continues as Free", subscriptionId, at);
             return null;
         }));
+    }
+
+    /**
+     * Undoes the plan change set for the license's anniversary, as when newer figures for it keep the current plan:
+     * releases the subscription from its schedule and clears its {@code cancel_at}.
+     */
+    public Future<Void> cancelPlanChange(License license) {
+        String subscriptionId = license.getStripeSubscriptionId();
+        return oneAtATime(subscriptionId, () -> blocking(() -> {
+            Subscription subscription = stripe().subscriptions().retrieve(subscriptionId);
+            if (subscription.getSchedule() != null) {
+                stripe().subscriptionSchedules().release(subscription.getSchedule());
+            }
+            if (subscription.getCancelAt() != null) {
+                stripe().subscriptions().update(subscriptionId, SubscriptionUpdateParams.builder().setCancelAt(EmptyParam.EMPTY).build());
+            }
+            log.info("The plan change set for the subscription {} was undone", subscriptionId);
+            return null;
+        }));
+    }
+
+    /**
+     * Whether Stripe has the license's subscription ended, or still set to end at {@code at}, as a move to Free sets it.
+     * The customer may have resumed it since, in the Customer Portal.
+     */
+    public Future<Boolean> endsAt(License license, Instant at) {
+        String subscriptionId = license.getStripeSubscriptionId();
+        return blocking(() -> stripe().subscriptions().retrieve(subscriptionId)).map(subscription ->
+                statusOf(subscription.getStatus()) == LicenseStatus.CANCELED
+                        || Long.valueOf(at.getEpochSecond()).equals(subscription.getCancelAt()));
     }
 
     /**

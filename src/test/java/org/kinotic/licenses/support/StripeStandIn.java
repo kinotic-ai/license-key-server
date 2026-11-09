@@ -123,7 +123,10 @@ public class StripeStandIn {
             ret = ret.copy().put("status", "canceled");
             SUBSCRIPTIONS.put(id, ret);
         } else if (ret != null && method.equals("POST") && params.containsKey("cancel_at")) {
-            ret = ret.copy().put("cancel_at", Long.parseLong(params.get("cancel_at")));
+            // an empty cancel_at clears it, as Stripe's EmptyParam sends it
+            ret = params.get("cancel_at").isEmpty()
+                    ? ret.copy().putNull("cancel_at")
+                    : ret.copy().put("cancel_at", Long.parseLong(params.get("cancel_at")));
             SUBSCRIPTIONS.put(id, ret);
         }
         return ret;
@@ -163,6 +166,11 @@ public class StripeStandIn {
             SUBSCRIPTIONS.put(subscription.getString("id"), subscription.copy().put("schedule", ret.getString("id")));
         } else {
             ret = SCHEDULES.get(rest.substring(1).replace("/release", ""));
+            // a released schedule no longer controls its subscription
+            if (ret != null && rest.endsWith("/release")) {
+                String subscriptionId = ret.getString("subscription");
+                SUBSCRIPTIONS.put(subscriptionId, SUBSCRIPTIONS.get(subscriptionId).copy().putNull("schedule"));
+            }
         }
         return ret;
     }

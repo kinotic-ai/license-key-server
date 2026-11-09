@@ -277,6 +277,52 @@ class YearlyConfirmationTest extends ServerTest {
         assertThat(await(licenseRepository.findById(license.getId())).getTermEnd()).isBefore(Instant.now());
     }
 
+    @Test
+    void newerFiguresThatKeepThePlanUndoTheMoveEarlierFiguresSet() throws Exception {
+        String subscriptionId = "sub_" + UUID.randomUUID();
+        License license = paidLicense(seedCustomer(), subscriptionId);
+        sql("UPDATE license SET term_end = now() - interval '1 minute' WHERE id = $1", license.getId());
+        await(anniversaryJob.run());
+        License flagged = await(licenseRepository.findById(license.getId()));
+        confirm(contactOf(license), flagged, figures("400000", "1000000"));
+        assertThat(StripeStandIn.subscription(subscriptionId).getLong("cancel_at")).isNotNull();
+
+        // the next anniversary's window opens, and that year's figures keep the Small plan
+        sql("WITH old AS (SELECT term_end FROM license WHERE id = $1),"
+                    + " moved AS (UPDATE license SET term_end = date_trunc('second', now()) + interval '10 days' WHERE id = $1 RETURNING term_end)"
+                    + " UPDATE revenue_confirmation SET applies_at = (SELECT term_end FROM moved)"
+                    + " WHERE license_id = $1 AND applies_at = (SELECT term_end FROM old)", license.getId());
+        License due = await(licenseRepository.findById(license.getId()));
+        RevenueConfirmation kept = confirm(contactOf(license), due, figures("2000000", null));
+        assertThat(kept.getPlan()).isEqualTo(Plan.SMALL);
+        assertThat(StripeStandIn.subscription(subscriptionId).getValue("cancel_at")).isNull();
+
+        // at the anniversary the license goes on paid, its subscription kept
+        shiftAnniversary(license.getId());
+        await(anniversaryJob.run());
+        License renewed = await(licenseRepository.findById(license.getId()));
+        assertThat(renewed.getPlan()).isEqualTo(Plan.SMALL);
+        assertThat(renewed.getStripeSubscriptionId()).isEqualTo(subscriptionId);
+        assertThat(renewed.getTermEnd()).isAfter(Instant.now());
+    }
+
+    @Test
+    void aSubscriptionResumedAfterFiguresSetFreeStaysPaid() throws Exception {
+        String subscriptionId = "sub_" + UUID.randomUUID();
+        License license = paidLicense(seedCustomer(), subscriptionId);
+        sql("UPDATE license SET term_end = now() + interval '1 hour' WHERE id = $1", license.getId());
+        confirm(contactOf(license), await(licenseRepository.findById(license.getId())), figures("400000", "1000000"));
+        // the customer resumed the subscription in the Customer Portal
+        StripeStandIn.report(StripeStandIn.subscription(subscriptionId).copy().putNull("cancel_at"));
+
+        shiftAnniversary(license.getId());
+        await(anniversaryJob.run());
+        License stillPaid = await(licenseRepository.findById(license.getId()));
+        assertThat(stillPaid.getPlan()).isEqualTo(Plan.SMALL);
+        assertThat(stillPaid.getStripeSubscriptionId()).isEqualTo(subscriptionId);
+        assertThat(stillPaid.getTermEnd()).isAfter(Instant.now());
+    }
+
     // Moves the license's anniversary to just past, with the confirmations for it and the plans that apply at it; a
     // subscription set to end at it ends at the new time.
     private void shiftAnniversary(String licenseId) throws Exception {
@@ -287,7 +333,7 @@ class YearlyConfirmationTest extends ServerTest {
                     + " applies_at = CASE WHEN applies_at = (SELECT term_end FROM old) THEN (SELECT term_end FROM moved) ELSE applies_at END"
                     + " WHERE license_id = $1 AND (anniversary = (SELECT term_end FROM old) OR applies_at = (SELECT term_end FROM old))", licenseId);
         License moved = await(licenseRepository.findById(licenseId));
-        if (moved.getStripeSubscriptionId() != null && StripeStandIn.subscription(moved.getStripeSubscriptionId()).containsKey("cancel_at")) {
+        if (moved.getStripeSubscriptionId() != null && StripeStandIn.subscription(moved.getStripeSubscriptionId()).getValue("cancel_at") != null) {
             StripeStandIn.report(StripeStandIn.subscription(moved.getStripeSubscriptionId()).copy().put("cancel_at", moved.getTermEnd().getEpochSecond()));
         }
     }

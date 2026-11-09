@@ -69,7 +69,8 @@ public class RevenueConfirmationService {
                         .setConfirmedByName(caller.getName())
                         .setConfirmedByEmail(caller.getEmail());
                 // the move is applied first, so a Stripe failure leaves the figures unconfirmed for another attempt
-                return apply(license, confirmation)
+                return confirmationRepository.findApplyingAt(licenseId, license.getTermEnd())
+                        .compose(earlier -> apply(license, confirmation, earlier))
                         .compose(v -> confirmationRepository.save(confirmation))
                         .compose(saved -> licenseRepository.removeFlag(licenseId, LicenseFlag.REVENUE_UNCONFIRMED).map(saved))
                         .onSuccess(saved -> log.info("{} confirmed the figures of license {} for {}: {}", caller.getEmail(), licenseId,
@@ -78,24 +79,28 @@ public class RevenueConfirmationService {
         });
     }
 
-    // what the figures change at the license's next anniversary, which a late confirmation also waits for
-    private Future<Void> apply(License license, RevenueConfirmation confirmation) {
+    // What the figures change at the license's next anniversary, which a late confirmation also waits for. Figures
+    // confirmed late and then on time both apply at that anniversary; the newer replaces the move the earlier set.
+    private Future<Void> apply(License license, RevenueConfirmation confirmation, RevenueConfirmation earlier) {
         Plan plan = confirmation.getPlan();
         Instant at = license.getTermEnd();
+        Future<Void> undone = earlier != null && earlier.getPlan() != license.getPlan() && license.getPlan() != Plan.FREE
+                ? billingService.cancelPlanChange(license)
+                : Future.succeededFuture();
         Future<Void> ret;
         if (license.getPlan() == Plan.FREE && plan == Plan.FREE) {
             ret = freeLicenseService.requestRenewal(license.getCustomerId(), confirmation.getFigures());
         } else if (plan == license.getPlan()) {
-            ret = Future.succeededFuture();
+            ret = undone;
         } else {
             Future<Void> moved;
             if (license.getPlan() == Plan.FREE) {
                 // a free license buys its paid plan itself, at the price list it keeps
                 moved = Future.succeededFuture();
             } else if (plan == Plan.FREE) {
-                moved = billingService.endSubscriptionAt(license, at);
+                moved = undone.compose(v -> billingService.endSubscriptionAt(license, at));
             } else {
-                moved = billingService.schedulePlanMove(license, plan, at);
+                moved = undone.compose(v -> billingService.schedulePlanMove(license, plan, at));
             }
             ret = moved.compose(v -> licenseService.emailPlanChanged(license, plan, at)
                                                    .recover(t -> {

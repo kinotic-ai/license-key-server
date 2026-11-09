@@ -37,6 +37,7 @@ public class AnniversaryJob {
     private final LicenseRepository licenseRepository;
     private final RevenueConfirmationRepository confirmationRepository;
     private final LicenseService licenseService;
+    private final StripeBillingService billingService;
     private final Vertx vertx;
 
     @PostConstruct
@@ -89,14 +90,27 @@ public class AnniversaryJob {
                 }));
     }
 
-    // the subscription ended at the anniversary, and the license goes on as Free, whether or not Stripe's event of the
-    // ending has moved it already
+    // The subscription ended at the anniversary, and the license goes on as Free, whether or not Stripe's event of the
+    // ending has moved it already. A subscription the customer resumed in the Customer Portal since goes on paid.
     private Future<Void> continueAsFree(License license) {
-        Future<License> free = license.getPlan() == Plan.FREE
-                ? Future.succeededFuture(license)
-                : licenseRepository.moveToFree(license.getId());
-        return free.compose(moved -> moved != null ? nextYear(moved) : Future.succeededFuture())
-                   .onSuccess(v -> log.info("The license {} continues as Free", license.getId()));
+        Future<Void> ret;
+        if (license.getPlan() == Plan.FREE) {
+            ret = nextYear(license).onSuccess(v -> log.info("The license {} continues as Free", license.getId()));
+        } else {
+            ret = billingService.endsAt(license, license.getTermEnd()).compose(ending -> {
+                Future<Void> moved;
+                if (ending) {
+                    moved = licenseRepository.moveToFree(license.getId())
+                                             .compose(free -> free != null ? nextYear(free) : Future.succeededFuture())
+                                             .onSuccess(v -> log.info("The license {} continues as Free", license.getId()));
+                } else {
+                    log.info("The license {} confirmed figures that set Free, but its subscription was resumed; it stays paid", license.getId());
+                    moved = nextYear(license);
+                }
+                return moved;
+            });
+        }
+        return ret;
     }
 
     // a paid license's year moves on its own, its keys following the payments; a free license's year moves with the key
