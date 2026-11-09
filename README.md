@@ -10,8 +10,9 @@ a Postgres database. It never needs a Kinotic OS server: it is what licenses the
 in Azure Key Vault, where the private key stays.
 
 Everything a signed-in page does goes through the published services over Kinotic RPC. HTTP carries only sign-in and
-sign-up (as the Kinotic consoles do), the Stripe webhook, the staff OIDC redirect, and the two reads a page makes
-before signing in: `GET /api/site` and `GET /api/plans`, which the kinotic.ai pricing page reads too.
+sign-up (as the Kinotic consoles do), the Stripe webhook, the staff OIDC redirect, and `GET /api/site`, which a page
+reads before signing in to learn which site it is on. The plans and their prices are shown on the kinotic.ai website,
+which links to the purchase and free license pages here.
 
 - `src/main/java` — the server: sign-in, key issuing, Stripe billing, free licenses, the staff and customer services
 - `src/main/resources/db/migration` — the Postgres schema

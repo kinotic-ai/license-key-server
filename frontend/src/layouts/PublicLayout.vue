@@ -6,7 +6,7 @@ import { ThemeToggleButton, isDark } from '@kinotic-ai/frontend-common'
 import headerLogo from '@/assets/header-logo.svg'
 import { SESSION_STATE } from '@/states/LicenseSessionState'
 
-/** The public site's chrome: the header with the plans, free license and account links, and the footer. */
+/** The public site's chrome: the header with the buy, free license and account links, and the footer. */
 const router = useRouter()
 const signedIn = computed(() => SESSION_STATE.isAuthenticated())
 
@@ -30,7 +30,7 @@ async function logout() {
           <span class="app-heading-text text-sm font-medium">Kinotic <span class="app-muted-text">Licenses</span></span>
         </RouterLink>
         <nav class="flex items-center gap-1 md:gap-2">
-          <RouterLink to="/" class="app-muted-text px-3 py-2 text-sm hover:text-primary-500">Plans</RouterLink>
+          <RouterLink to="/buy" class="app-muted-text px-3 py-2 text-sm hover:text-primary-500">Buy</RouterLink>
           <RouterLink to="/free" class="app-muted-text px-3 py-2 text-sm hover:text-primary-500">Free license</RouterLink>
           <RouterLink to="/account" class="app-muted-text px-3 py-2 text-sm hover:text-primary-500">Account</RouterLink>
           <ThemeToggleButton />

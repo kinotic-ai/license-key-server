@@ -13,6 +13,7 @@ import org.kinotic.licenses.api.model.FreeLicenseRequest;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseWithKeys;
 import org.kinotic.licenses.api.model.Plan;
+import org.kinotic.licenses.api.model.PlanInfo;
 import org.kinotic.licenses.api.security.LicenseParticipant;
 import org.kinotic.licenses.api.services.CustomerAccountService;
 import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
@@ -76,6 +77,11 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
     @Override
     public Future<String> createPortalSession() {
         return customerRepository.findById(callingCustomerId()).compose(billingService::createPortalSession);
+    }
+
+    @Override
+    public Future<List<PlanInfo>> findPlans() {
+        return billingService.listPlans();
     }
 
     @Override

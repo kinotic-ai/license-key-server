@@ -9,7 +9,10 @@ import org.kinotic.licenses.api.model.CustomerAccount;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.FreeLicenseRequest;
 import org.kinotic.licenses.api.model.Plan;
+import org.kinotic.licenses.api.model.PlanInfo;
 import org.kinotic.licenses.api.security.LicenseZones;
+
+import java.util.List;
 
 /**
  * The customer account: everything answers for the calling customer only.
@@ -32,6 +35,11 @@ public interface CustomerAccountService {
      * @throws IllegalStateException when the customer has never bought a plan and so has no Stripe customer
      */
     Future<String> createPortalSession();
+
+    /**
+     * The plans, with the monthly price of each paid plan as Stripe has it.
+     */
+    Future<List<PlanInfo>> findPlans();
 
     /**
      * Starts the purchase of a paid plan by the calling customer, and records that the calling contact accepted the

@@ -23,8 +23,9 @@ kinotic:
       # the SPA is served by SpaRoutes on the API port, so one port serves both hostnames
       enabled: false
   cors:
-    # The kinotic.ai pricing page reads /api/plans; the server's own pages are same-origin
-    allowedOriginPattern: "https://kinotic\\.ai"
+    # browsers send Origin on every POST, their own origin's included, so the pattern admits this server's sites; a
+    # deployment adds its staff host
+    allowedOriginPattern: "https://licenses\\.kinotic\\.ai"
     allowCredentials: true
   maxNumberOfCoresToUse: 2
 

@@ -7,13 +7,13 @@ function dashboardItem(label: string, icon: SidebarItemMeta['icon'], order: numb
     return { group: 'dashboard', label, icon, order }
 }
 
-/** The public site: the plans, sign-up and sign-in, and for a signed-in customer the purchase, free request and account. */
+/** The public site: sign-up and sign-in, and for a signed-in customer the purchase, free request and account. */
 const PUBLIC_ROUTES: RouteRecordRaw[] = [
     {
         path: '/',
         component: () => import('./layouts/PublicLayout.vue'),
         children: [
-            { path: '', component: () => import('./pages/public/PlansPage.vue'), meta: { authenticationRequired: false } },
+            { path: '', redirect: '/account' },
             { path: 'buy', component: () => import('./pages/public/BuyPage.vue') },
             { path: 'buy/success', component: () => import('./pages/public/BuySuccessPage.vue') },
             { path: 'free', component: () => import('./pages/public/FreeRequestPage.vue') },

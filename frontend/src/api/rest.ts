@@ -1,5 +1,5 @@
 import { apiUrl, readAuthError } from '@kinotic-ai/frontend-common'
-import type { PlanInfo, SiteInfo } from './model'
+import type { SiteInfo } from './model'
 
 /** What a page reads before it signs in, and the customer sign-in and sign-up routes. */
 
@@ -33,10 +33,6 @@ async function postJson<T>(path: string, body: unknown, fallback: string): Promi
 
 export function fetchSite(): Promise<SiteInfo> {
     return getJson('/api/site')
-}
-
-export function fetchPlans(): Promise<PlanInfo[]> {
-    return getJson('/api/plans')
 }
 
 /** Asks for a code; every address is sent one, so the answer says nothing about whether it has an account. */

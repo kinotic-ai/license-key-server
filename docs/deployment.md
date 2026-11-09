@@ -71,11 +71,10 @@ signs with a key generated at startup that no verifier trusts. Never set it in p
 ### CORS
 
 The gateway's CORS handler refuses a request whose `Origin` is not admitted, and browsers send `Origin` on every
-POST, so the pattern must admit the kinotic.ai pricing page, which reads `/api/plans`, and both of this server's own
-sites:
+POST, to their own origin as well, so the pattern must admit both of this server's sites:
 
 ```
-KINOTIC_CORS_ALLOWEDORIGINPATTERN='https://(kinotic\.ai|licenses\.kinotic\.ai|<staff host>)'
+KINOTIC_CORS_ALLOWEDORIGINPATTERN='https://(licenses\.kinotic\.ai|<staff host>)'
 ```
 
 `kinotic.cors.allowCredentials` is `true` in `application.yml`, so the session cookie flows.

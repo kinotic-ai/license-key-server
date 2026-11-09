@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * A plan as the pricing page and the purchase flow show it: its price, read from the Stripe Price with the plan's
+ * A plan as the purchase flow shows it: its price, read from the Stripe Price with the plan's
  * lookup key, and what it includes.
  */
 @Data

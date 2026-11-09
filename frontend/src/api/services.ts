@@ -8,7 +8,8 @@ import type {
     FreeLicenseRequest,
     IssuedKey,
     License,
-    Plan
+    Plan,
+    PlanInfo
 } from './model'
 
 /** The published services, addressed in their zones as the gateway routes them. */
@@ -24,6 +25,10 @@ export class CustomerAccountService {
 
     getAccount(): Promise<CustomerAccount> {
         return this.proxy.invoke('getAccount', [])
+    }
+
+    findPlans(): Promise<PlanInfo[]> {
+        return this.proxy.invoke('findPlans', [])
     }
 
     createPortalSession(): Promise<string> {

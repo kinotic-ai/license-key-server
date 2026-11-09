@@ -84,7 +84,7 @@ async function submitRecertification() {
                 :loading="openingPortal" @click="openPortal" />
         <Button v-if="freeLicense && !pendingRenewal" label="Re-certify for renewal" icon="pi pi-refresh" severity="secondary" outlined
                 @click="recertifyVisible = true" />
-        <RouterLink v-if="account && !subscribed" to="/"><Button label="Buy a plan" icon="pi pi-shopping-cart" /></RouterLink>
+        <RouterLink v-if="account && !subscribed" to="/buy"><Button label="Buy a plan" icon="pi pi-shopping-cart" /></RouterLink>
       </template>
     </PageHeader>
 
@@ -94,7 +94,7 @@ async function submitRecertification() {
         <p class="app-heading-text">No license yet.</p>
         <p class="app-muted-text mt-2">
           <span v-if="pendingRenewal || account.freeLicenseRequests.length">Your free license request is being reviewed.</span>
-          <span v-else>Pick a plan from the <RouterLink to="/" class="underline">plans page</RouterLink>.</span>
+          <span v-else><RouterLink to="/buy" class="underline">Pick a plan</RouterLink>.</span>
         </p>
       </section>
 
