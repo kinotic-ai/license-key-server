@@ -1,12 +1,14 @@
 import { Kinotic, type IServiceProxy } from '@kinotic-ai/core'
 import type {
+    CheckoutKey,
     CustomerAccount,
     CustomerDetail,
     CustomerSummary,
     FreeLicenseCertification,
     FreeLicenseRequest,
     IssuedKey,
-    License
+    License,
+    Plan
 } from './model'
 
 /** The published services, addressed in their zones as the gateway routes them. */
@@ -28,8 +30,18 @@ export class CustomerAccountService {
         return this.proxy.invoke('createPortalSession', [])
     }
 
-    requestFreeRenewal(certification: FreeLicenseCertification): Promise<FreeLicenseRequest> {
-        return this.proxy.invoke('requestFreeRenewal', [certification])
+    /** Starts the purchase; resolves to the Stripe Checkout URL to send the browser to. */
+    startCheckout(plan: Plan, termsVersion: string): Promise<string> {
+        return this.proxy.invoke('startCheckout', [plan, termsVersion])
+    }
+
+    findCheckoutKey(checkoutSessionId: string): Promise<CheckoutKey> {
+        return this.proxy.invoke('findCheckoutKey', [checkoutSessionId])
+    }
+
+    /** Requests a free license, or the renewal of the one the account holds. */
+    requestFreeLicense(certification: FreeLicenseCertification, termsVersion: string): Promise<FreeLicenseRequest> {
+        return this.proxy.invoke('requestFreeLicense', [certification, termsVersion])
     }
 }
 
@@ -58,6 +70,11 @@ export class StaffCustomerService {
 
     issueTrialKey(): Promise<IssuedKey> {
         return this.proxy.invoke('issueTrialKey', [])
+    }
+
+    /** The public key license keys are signed with, as a JSON Web Key. */
+    getSigningKey(): Promise<Record<string, unknown>> {
+        return this.proxy.invoke('getSigningKey', [])
     }
 }
 

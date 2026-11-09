@@ -41,30 +41,20 @@ public class FreeLicenseService {
     private final EmailService emailService;
 
     /**
-     * Records an existing free licensee's re-certification for its next term.
-     *
-     * @throws IllegalStateException when the customer has no free license
-     * @throws AlreadyExistsException when another request of the customer's is open: pending, or approved with its key
-     *                                still being issued
-     */
-    public Future<FreeLicenseRequest> requestRenewal(String customerId, FreeLicenseCertification certification) {
-        validate(certification);
-        return licenseRepository.findFreeLicense(customerId).compose(license -> {
-            Validate.validState(license != null, "The customer %s has no free license to renew", customerId);
-            return requestForCustomer(customerId, certification);
-        });
-    }
-
-    /**
-     * Records a free license request for an existing customer, as a signed-in customer makes one: a first request, or a
-     * renewal when the customer holds a free license already.
+     * Records a free license request of the customer: its first, or the renewal of the free license it holds.
      *
      * @return the request, or a failure with {@link AlreadyExistsException} when another request of the customer's is
      *         open: pending, or approved with its key still being issued
      */
-    public Future<FreeLicenseRequest> requestForCustomer(String customerId, FreeLicenseCertification certification) {
+    public Future<FreeLicenseRequest> request(String customerId, FreeLicenseCertification certification) {
         validate(certification);
-        return saveRequest(customerId, certification);
+        return requestRepository.save(new FreeLicenseRequest()
+                                              .setId(UUID.randomUUID().toString())
+                                              .setCustomerId(customerId)
+                                              .setAnnualRevenue(certification.getAnnualRevenue())
+                                              .setCapitalRaised(certification.getCapitalRaised())
+                                              .setIntendedUse(certification.getIntendedUse().trim())
+                                              .setStatus(FreeLicenseRequestStatus.PENDING));
     }
 
     /**
@@ -161,18 +151,6 @@ public class FreeLicenseService {
                                            issued.key().getJti(), t);
                                  return Future.succeededFuture();
                              });
-    }
-
-
-
-    private Future<FreeLicenseRequest> saveRequest(String customerId, FreeLicenseCertification certification) {
-        return requestRepository.save(new FreeLicenseRequest()
-                                              .setId(UUID.randomUUID().toString())
-                                              .setCustomerId(customerId)
-                                              .setAnnualRevenue(certification.getAnnualRevenue())
-                                              .setCapitalRaised(certification.getCapitalRaised())
-                                              .setIntendedUse(certification.getIntendedUse().trim())
-                                              .setStatus(FreeLicenseRequestStatus.PENDING));
     }
 
     private static void validate(FreeLicenseCertification certification) {

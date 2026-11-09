@@ -6,8 +6,10 @@ import { FormDrawer, PageHeader, showErrorToast } from '@kinotic-ai/frontend-com
 import type { CustomerAccount } from '@/api/model'
 import { customerAccountService } from '@/api/services'
 import CertificationFields from '@/components/CertificationFields.vue'
+import TermsAcceptance from '@/components/TermsAcceptance.vue'
 import KeyBlock from '@/components/KeyBlock.vue'
 import LicenseStatusTag from '@/components/LicenseStatusTag.vue'
+import { SITE } from '@/states/site'
 import { formatDate, planName } from '@/util/format'
 
 /**
@@ -23,13 +25,14 @@ const recertifyVisible = ref(false)
 const annualRevenue = ref<number | null>(null)
 const capitalRaised = ref<number | null>(null)
 const intendedUse = ref('')
+const accepted = ref(false)
 const submitting = ref(false)
 
 const freeLicense = computed(() => account.value?.licenses.find(l => l.license.plan === 'FREE') ?? null)
 const subscribed = computed(() => account.value?.licenses.some(l => l.license.plan !== 'FREE'
     && (l.license.status === 'ACTIVE' || l.license.status === 'PAST_DUE')) ?? false)
 const pendingRenewal = computed(() => account.value?.freeLicenseRequests.some(r => r.status === 'PENDING') ?? false)
-const certificationReady = computed(() => annualRevenue.value !== null && capitalRaised.value !== null && intendedUse.value.trim())
+const certificationReady = computed(() => annualRevenue.value !== null && capitalRaised.value !== null && intendedUse.value.trim() && accepted.value)
 
 onMounted(load)
 
@@ -57,11 +60,11 @@ async function openPortal() {
 async function submitRecertification() {
   submitting.value = true
   try {
-    await customerAccountService.requestFreeRenewal({
+    await customerAccountService.requestFreeLicense({
       annualRevenue: annualRevenue.value ?? 0,
       capitalRaised: capitalRaised.value ?? 0,
       intendedUse: intendedUse.value.trim()
-    })
+    }, SITE.termsVersion)
     toast.add({ severity: 'success', summary: 'Renewal requested', detail: 'We will email you once it is reviewed.', life: 6000 })
     recertifyVisible.value = false
     await load()
@@ -140,6 +143,7 @@ async function submitRecertification() {
                 @close="recertifyVisible = false">
       <form id="recertify-form" class="flex flex-col gap-5" @submit.prevent="submitRecertification">
         <CertificationFields v-model:annual-revenue="annualRevenue" v-model:capital-raised="capitalRaised" v-model:intended-use="intendedUse" />
+        <TermsAcceptance v-model="accepted" />
       </form>
       <template #footer>
         <Button type="button" label="Cancel" severity="secondary" outlined @click="recertifyVisible = false" />

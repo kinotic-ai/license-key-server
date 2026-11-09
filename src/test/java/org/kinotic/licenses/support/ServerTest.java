@@ -15,11 +15,16 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.Tuple;
 import org.springframework.boot.test.system.CapturedOutput;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import static org.assertj.core.api.Assertions.assertThat;
 import org.kinotic.licenses.api.model.ContactRole;
 import org.kinotic.licenses.api.model.Customer;
 import org.kinotic.licenses.api.model.CustomerContact;
+import org.kinotic.licenses.api.security.LicenseParticipant;
+import org.kinotic.licenses.api.security.ParticipantType;
+import org.kinotic.core.api.security.SecurityContext;
 import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +34,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 import java.util.UUID;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -54,6 +60,8 @@ public abstract class ServerTest {
 
     @Autowired
     protected Pool pool;
+    @Autowired
+    protected SecurityContext securityContext;
     @Autowired
     protected CustomerRepository customerRepository;
     @Autowired
@@ -122,6 +130,18 @@ public abstract class ServerTest {
         return enterCode(output, email, false);
     }
 
+    /**
+     * Signs the address, which has no account, up as the page does: confirms it with the emailed code, creates the
+     * account of the organization, and returns the session cookie the account is signed in with.
+     */
+    protected static String signUp(CapturedOutput output, String email, String organization) throws Exception {
+        String confirmed = confirmEmail(output, email);
+        HttpResponse<Buffer> signedUp = post("/api/auth/signup", new JsonObject().put("organization", organization)
+                                                                                 .put("contactName", "Grace Hopper"), confirmed);
+        assertThat(signedUp.statusCode()).isEqualTo(204);
+        return signedUp.cookies().getFirst().split(";")[0];
+    }
+
     // the code is read from the log, where the test profile writes every email
     private static String enterCode(CapturedOutput output, String email, boolean account) throws Exception {
         int before = codesIn(output).size();
@@ -145,6 +165,23 @@ public abstract class ServerTest {
     /** The sign-in codes the test profile has logged so far, oldest first. */
     protected static List<String> codesIn(CapturedOutput output) {
         return CODE_IN_LOG.matcher(output.getAll()).results().map(m -> m.group(1)).toList();
+    }
+
+    /** Calls a published service as a staff member, as the gateway dispatches an RPC of a signed-in staff page. */
+    protected <T> T asStaff(Supplier<Future<T>> call) throws Exception {
+        LicenseParticipant staff = LicenseParticipant.builder().id("staff@mindsignited.com").type(ParticipantType.STAFF)
+                                                     .email("staff@mindsignited.com").name("Staff").metadata(Map.of()).roles(List.of()).build();
+        return callAs(staff, call);
+    }
+
+    /** Calls a published service as the contact, as the gateway dispatches an RPC of a page the contact signed in. */
+    protected <T> T asCustomer(CustomerContact contact, Supplier<Future<T>> call) throws Exception {
+        return callAs(LicenseParticipant.ofContact(contact), call);
+    }
+
+    // the services read the caller from the Vert.x context, as they do for an RPC the gateway dispatches
+    private <T> T callAs(LicenseParticipant participant, Supplier<Future<T>> call) throws Exception {
+        return securityContext.callAs(participant, () -> (CompletionStage<T>) call.get().toCompletionStage()).get();
     }
 
     /** A customer with one billing contact whose email is unique to the test. */

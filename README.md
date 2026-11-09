@@ -1,13 +1,17 @@
 # license-key-server
 
-Minds Ignited's license key server: sells, issues and tracks Kinotic Enterprise license keys. Customers buy a plan
-on `licenses.kinotic.ai`, pay monthly through Stripe, and get a signed key the moment payment succeeds; small
-organizations request a free license that staff approve. Staff see every customer and the keys it holds on a
-dashboard served on a network-restricted host.
+Minds Ignited's license key server: sells, issues and tracks Kinotic Enterprise license keys. Customers create an
+account on `licenses.kinotic.ai` by confirming their email with a code, then buy a plan, pay monthly through Stripe,
+and get a signed key the moment payment succeeds; small organizations request a free license that staff approve.
+Staff see every customer and the keys it holds on a dashboard served on a network-restricted host.
 
 The server runs on Kinotic RPC alone (`kinotic-core` and `kinotic-api-gateway`) with its own single-node Ignite and
 a Postgres database. It never needs a Kinotic OS server: it is what licenses them. Keys are compact ES256 JWS signed
 in Azure Key Vault, where the private key stays.
+
+Everything a signed-in page does goes through the published services over Kinotic RPC. HTTP carries only sign-in and
+sign-up (as the Kinotic consoles do), the Stripe webhook, the staff OIDC redirect, and the two reads a page makes
+before signing in: `GET /api/site` and `GET /api/plans`, which the kinotic.ai pricing page reads too.
 
 - `src/main/java` — the server: sign-in, key issuing, Stripe billing, free licenses, the staff and customer services
 - `src/main/resources/db/migration` — the Postgres schema

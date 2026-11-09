@@ -5,7 +5,11 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.HttpResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.kinotic.licenses.api.model.CheckoutKey;
+import org.kinotic.licenses.api.model.CheckoutKeyStatus;
 import org.kinotic.licenses.api.model.Customer;
+import org.kinotic.licenses.api.model.CustomerContact;
+import org.kinotic.licenses.api.services.CustomerAccountService;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseStatus;
@@ -46,6 +50,8 @@ class BillingWebhookTest extends ServerTest {
     private LicenseRepository licenseRepository;
     @Autowired
     private KeyRenewalJob renewalJob;
+    @Autowired
+    private CustomerAccountService customerAccount;
 
     @Test
     void eventsMoveTheLicenseAndAreHandledOnce(CapturedOutput output) throws Exception {
@@ -142,22 +148,26 @@ class BillingWebhookTest extends ServerTest {
     }
 
     @Test
-    void theSuccessPageSeesTheBoughtKeyOnce() throws Exception {
+    void theSuccessPageSeesTheBoughtKeyOnceAndOnlyTheBuyerSeesIt() throws Exception {
         Customer customer = seedCustomer();
+        CustomerContact buyer = await(contactRepository.findByCustomerId(customer.getId())).getFirst();
+        CustomerContact other = await(contactRepository.findByCustomerId(seedCustomer().getId())).getFirst();
         String sessionId = "cs_" + UUID.randomUUID();
-        assertThat(get("/api/checkout/" + sessionId + "/key", null).bodyAsJsonObject().getString("status")).isEqualTo("PENDING");
+        assertThat(checkoutKey(buyer, sessionId).getStatus()).isEqualTo(CheckoutKeyStatus.PENDING);
 
         License license = await(licenseService.createLicense(customer, Plan.STARTUP, "sub_" + UUID.randomUUID(), sessionId,
                                                              Instant.now().plus(Duration.ofDays(30)))).license();
         IssuedKey key = await(licenseService.keysOf(license.getId())).getFirst();
 
-        JsonObject first = get("/api/checkout/" + sessionId + "/key", null).bodyAsJsonObject();
-        assertThat(first.getString("status")).isEqualTo("READY");
-        assertThat(first.getString("key")).isEqualTo(key.getKey());
+        // another customer that names the session is told nothing of it
+        assertThat(checkoutKey(other, sessionId).getStatus()).isEqualTo(CheckoutKeyStatus.PENDING);
+        CheckoutKey first = checkoutKey(buyer, sessionId);
+        assertThat(first.getStatus()).isEqualTo(CheckoutKeyStatus.READY);
+        assertThat(first.getKey()).isEqualTo(key.getKey());
 
-        JsonObject second = get("/api/checkout/" + sessionId + "/key", null).bodyAsJsonObject();
-        assertThat(second.getString("status")).isEqualTo("SHOWN");
-        assertThat(second.containsKey("key")).isFalse();
+        CheckoutKey second = checkoutKey(buyer, sessionId);
+        assertThat(second.getStatus()).isEqualTo(CheckoutKeyStatus.SHOWN);
+        assertThat(second.getKey()).isNull();
     }
 
     @Test
@@ -210,11 +220,13 @@ class BillingWebhookTest extends ServerTest {
     void aBankDebitGetsItsFirstKeyWhenThePaymentClears() throws Exception {
         String subscriptionId = "sub_" + UUID.randomUUID();
         String sessionId = "cs_" + UUID.randomUUID();
-        License awaiting = await(licenseService.createAwaitingPayment(seedCustomer(), Plan.STARTUP, subscriptionId, sessionId,
+        Customer customer = seedCustomer();
+        CustomerContact buyer = await(contactRepository.findByCustomerId(customer.getId())).getFirst();
+        License awaiting = await(licenseService.createAwaitingPayment(customer, Plan.STARTUP, subscriptionId, sessionId,
                                                                       Instant.now().plus(Duration.ofDays(30))));
         assertThat(awaiting.getStatus()).isEqualTo(LicenseStatus.PAST_DUE);
         assertThat(await(licenseService.keysOf(awaiting.getId()))).isEmpty();
-        assertThat(get("/api/checkout/" + sessionId + "/key", null).bodyAsJsonObject().getString("status")).isEqualTo("PENDING");
+        assertThat(checkoutKey(buyer, sessionId).getStatus()).isEqualTo(CheckoutKeyStatus.PENDING);
 
         Instant before = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
@@ -225,7 +237,7 @@ class BillingWebhookTest extends ServerTest {
         List<IssuedKey> keys = await(licenseService.keysOf(awaiting.getId()));
         assertThat(keys).hasSize(1);
         assertThat(keys.getFirst().getExpiresAt()).isEqualTo(paid.getTermEnd().plus(LicenseService.KEY_BUFFER));
-        assertThat(get("/api/checkout/" + sessionId + "/key", null).bodyAsJsonObject().getString("status")).isEqualTo("READY");
+        assertThat(checkoutKey(buyer, sessionId).getStatus()).isEqualTo(CheckoutKeyStatus.READY);
 
         // the next invoice of a license that has its key issues no other
         assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
@@ -319,6 +331,10 @@ class BillingWebhookTest extends ServerTest {
         assertThat(await(licenseService.keysOf(license.getId()))).hasSize(2);
         await(renewalJob.run());
         assertThat(await(licenseService.keysOf(license.getId()))).hasSize(2);
+    }
+
+    private CheckoutKey checkoutKey(CustomerContact contact, String sessionId) throws Exception {
+        return asCustomer(contact, () -> customerAccount.findCheckoutKey(sessionId));
     }
 
     private void setTermEnd(String licenseId, Instant termEnd) throws Exception {

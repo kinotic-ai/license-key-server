@@ -7,20 +7,21 @@ function dashboardItem(label: string, icon: SidebarItemMeta['icon'], order: numb
     return { group: 'dashboard', label, icon, order }
 }
 
-/** The public site: the plans, the purchase and free-request flows, sign-in and the customer account. */
+/** The public site: the plans, sign-up and sign-in, and for a signed-in customer the purchase, free request and account. */
 const PUBLIC_ROUTES: RouteRecordRaw[] = [
     {
         path: '/',
         component: () => import('./layouts/PublicLayout.vue'),
         children: [
             { path: '', component: () => import('./pages/public/PlansPage.vue'), meta: { authenticationRequired: false } },
-            { path: 'buy', component: () => import('./pages/public/BuyPage.vue'), meta: { authenticationRequired: false } },
-            { path: 'buy/success', component: () => import('./pages/public/BuySuccessPage.vue'), meta: { authenticationRequired: false } },
-            { path: 'free', component: () => import('./pages/public/FreeRequestPage.vue'), meta: { authenticationRequired: false } },
+            { path: 'buy', component: () => import('./pages/public/BuyPage.vue') },
+            { path: 'buy/success', component: () => import('./pages/public/BuySuccessPage.vue') },
+            { path: 'free', component: () => import('./pages/public/FreeRequestPage.vue') },
             { path: 'account', component: () => import('./pages/public/AccountPage.vue') }
         ]
     },
     { path: '/login', component: () => import('./pages/public/LoginPage.vue'), meta: { authenticationRequired: false } },
+    { path: '/signup', component: () => import('./pages/public/SignUpPage.vue'), meta: { authenticationRequired: false } },
     { path: '/:catchAll(.*)', redirect: '/' }
 ]
 

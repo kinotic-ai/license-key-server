@@ -17,8 +17,8 @@ import org.springframework.stereotype.Component;
 import java.util.UUID;
 
 /**
- * Brings a new customer on: the legal entity, its billing contact, and the contact's acceptance of the agreement in
- * force, recorded before anything is bought or requested.
+ * Brings a new customer on, the legal entity with its billing contact, and records each acceptance of the agreement in
+ * force by one of its contacts, which every purchase and free license request makes.
  */
 @Component
 @RequiredArgsConstructor
@@ -29,16 +29,16 @@ public class CustomerService {
     private final AgreementAcceptanceRepository acceptanceRepository;
 
     /**
-     * Creates the customer with its billing contact and records that the contact accepted the current terms. An email
-     * address belongs to one customer: a sign-up with an address that already has an account is refused, and the
-     * person signs in to that account instead.
+     * Creates the customer with its billing contact. An email address belongs to one customer: a sign-up with an
+     * address that already has an account is refused, and the person signs in to that account instead.
      *
      * @param legalName    the customer's legal name
-     * @param contactName  the billing contact's name, who accepted the terms
-     * @param contactEmail the billing contact's email
-     * @return the customer, or a failure with {@link AlreadyExistsException} when the address already has an account
+     * @param contactName  the billing contact's name
+     * @param contactEmail the billing contact's email, which the caller has confirmed belongs to the person signing up
+     * @return the billing contact, or a failure with {@link AlreadyExistsException} when the address already has an
+     *         account
      */
-    public Future<Customer> createCustomer(String legalName, String contactName, String contactEmail) {
+    public Future<CustomerContact> createCustomer(String legalName, String contactName, String contactEmail) {
         Validate.notBlank(legalName, "The legal name is required");
         Validate.notBlank(contactName, "The contact's name is required");
         Validate.isTrue(contactEmail != null && contactEmail.contains("@"), "A valid contact email is required");
@@ -59,13 +59,11 @@ public class CustomerService {
                                                                     // a sign-up that lost a race past the check above leaves no customer behind
                                                                     .recover(t -> t instanceof AlreadyExistsException
                                                                             ? customerRepository.delete(customer.getId()).compose(v -> Future.failedFuture(t))
-                                                                            : Future.failedFuture(t)))
-                                 .compose(savedContact -> recordAcceptance(customer.getId(), savedContact.getName(), savedContact.getEmail()))
-                                 .compose(savedAcceptance -> customerRepository.findById(customer.getId()));
+                                                                            : Future.failedFuture(t)));
     }
 
     /**
-     * Records that a contact of the customer accepted the current terms, as before every purchase and free license
+     * Records that a contact of the customer accepted the current terms, as with every purchase and free license
      * request.
      */
     public Future<AgreementAcceptance> recordAcceptance(String customerId, String acceptedByName, String acceptedByEmail) {

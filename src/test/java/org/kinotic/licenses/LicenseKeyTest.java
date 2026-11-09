@@ -7,6 +7,7 @@ import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
+import org.kinotic.licenses.api.services.StaffCustomerService;
 import org.kinotic.licenses.internal.api.services.LicenseService;
 import org.kinotic.licenses.support.ServerTest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,6 +41,8 @@ class LicenseKeyTest extends ServerTest {
 
     @Autowired
     private LicenseService licenseService;
+    @Autowired
+    private StaffCustomerService staffCustomers;
 
     @Test
     void aNewLicenseGetsAKeyThatVerifiesAgainstThePublicKey() throws Exception {
@@ -95,9 +98,9 @@ class LicenseKeyTest extends ServerTest {
         return verifier.verify(signature);
     }
 
-    // the key a verifier builds from GET /api/signing-key
-    private static PublicKey publishedPublicKey() throws Exception {
-        JsonObject jwk = get("/api/signing-key", null).bodyAsJsonObject();
+    // the key a verifier builds from the JSON Web Key staff commit with the trial key
+    private PublicKey publishedPublicKey() throws Exception {
+        JsonObject jwk = new JsonObject(asStaff(staffCustomers::getSigningKey));
         assertThat(jwk.getString("kty")).isEqualTo("EC");
         assertThat(jwk.getString("crv")).isEqualTo("P-256");
         assertThat(jwk.getString("alg")).isEqualTo("ES256");

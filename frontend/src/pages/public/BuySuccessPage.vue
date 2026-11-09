@@ -5,7 +5,7 @@ import Button from 'primevue/button'
 import { useToast } from 'primevue/usetoast'
 import { PageHeader, showErrorToast } from '@kinotic-ai/frontend-common'
 import type { CheckoutKey } from '@/api/model'
-import { fetchCheckoutKey } from '@/api/rest'
+import { customerAccountService } from '@/api/services'
 import { downloadKey, formatDate } from '@/util/format'
 
 /**
@@ -28,7 +28,7 @@ let timer: ReturnType<typeof setTimeout> | null = null
 async function poll() {
   polls++
   try {
-    const fetched = await fetchCheckoutKey(sessionId)
+    const fetched = await customerAccountService.findCheckoutKey(sessionId)
     if (!unmounted) {
       result.value = fetched
     }

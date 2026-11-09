@@ -5,6 +5,8 @@ import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.core.buffer.Buffer;
 import org.junit.jupiter.api.Test;
 import org.kinotic.licenses.api.model.Customer;
+import org.kinotic.licenses.api.model.CustomerContact;
+import org.kinotic.licenses.internal.api.repositories.AgreementAcceptanceRepository;
 import org.kinotic.licenses.internal.api.model.SignInCode;
 import org.kinotic.licenses.internal.api.repositories.SignInCodeRepository;
 import org.kinotic.licenses.support.ServerTest;
@@ -21,13 +23,48 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Customers sign in with the code emailed to a contact: the code is used once, expires, and the response to a request
- * never says whether the address has an account.
+ * never says whether the address has an account. A new customer signs up by confirming its address with a code first.
  */
 @ExtendWith(OutputCaptureExtension.class)
 class CustomerSignInTest extends ServerTest {
 
     @Autowired
     private SignInCodeRepository codeRepository;
+    @Autowired
+    private AgreementAcceptanceRepository acceptanceRepository;
+
+    @Test
+    void aSignUpCreatesTheAccountOfAConfirmedAddressAndSignsItIn(CapturedOutput output) throws Exception {
+        String email = "new-" + UUID.randomUUID() + "@tiny.example";
+        // a page that confirmed no address signs nothing up, so it learns nothing about any address
+        JsonObject signUp = new JsonObject().put("organization", "Tiny Startup LLC").put("contactName", "Grace Hopper");
+        assertThat(post("/api/auth/signup", signUp, null).statusCode()).isEqualTo(401);
+
+        String cookie = signUp(output, email, "Tiny Startup LLC");
+        assertThat(get("/api/auth/me", cookie).statusCode()).isEqualTo(204);
+        CustomerContact contact = await(contactRepository.findByEmail(email)).getFirst();
+        assertThat(contact.getName()).isEqualTo("Grace Hopper");
+        assertThat(await(customerRepository.findById(contact.getCustomerId())).getLegalName()).isEqualTo("Tiny Startup LLC");
+        // the terms are accepted with each purchase and request, not at sign-up
+        assertThat(await(acceptanceRepository.findByCustomerId(contact.getCustomerId()))).isEmpty();
+
+        // the address's code now signs in to that account, and leaves nothing to sign up with
+        String signedIn = signIn(output, email.toUpperCase());
+        assertThat(post("/api/auth/signup", signUp, signedIn).statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void anAddressConfirmedOnTwoPagesSignsUpOnce(CapturedOutput output) throws Exception {
+        String email = "twice-" + UUID.randomUUID() + "@tiny.example";
+        String first = confirmEmail(output, email);
+        String second = confirmEmail(output, email);
+        JsonObject signUp = new JsonObject().put("organization", "Tiny Startup LLC").put("contactName", "Grace Hopper");
+
+        assertThat(post("/api/auth/signup", signUp, first).statusCode()).isEqualTo(204);
+        HttpResponse<Buffer> again = post("/api/auth/signup", signUp, second);
+        assertThat(again.statusCode()).isEqualTo(409);
+        assertThat(await(contactRepository.findByEmail(email))).hasSize(1);
+    }
 
     @Test
     void aContactSignsInWithTheEmailedCodeOnce(CapturedOutput output) throws Exception {

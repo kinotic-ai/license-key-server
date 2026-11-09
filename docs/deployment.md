@@ -5,7 +5,7 @@ dashboard on a host restricted by network to Minds Ignited, as the Kinotic syste
 front of the container terminates TLS for both names and forwards every path, WebSockets included (the STOMP API is
 `/api/v1`), to port 58503 with the `Host` header unchanged: the server decides which site a request belongs to from
 that header. Exactly one proxy stands in front of the server, and it appends the client's address to
-`X-Forwarded-For`: the sign-in and anonymous sign-up rate limits key on that last entry, since the client writes
+`X-Forwarded-For`: the sign-in code rate limits, which also gate sign-up, key on that last entry, since the client writes
 whatever it likes to the left of it. A second proxy in the chain would make every client look like the first proxy.
 
 ## Infrastructure
@@ -90,10 +90,11 @@ hostnames.
 
 Staff issue the trial key from the dashboard (Customers, "Issue trial key"). It licenses `kinotic-trial` for
 development and testing with every feature and never expires; commit it to kinotic-ai/kinotic for CI and tests
-together with the public key from `GET /api/signing-key`, which the future `kinotic-license` verifier needs.
+together with the public key the dashboard shows beside it, which the future `kinotic-license` verifier needs.
 
 ## Legal
 
-The click-through on `/buy` and `/free` records who accepted which version of the terms, when and for which
-customer (`agreement_acceptance`). Whether that click-through is the written agreement the Kinotic Enterprise
-License requires is for a lawyer to confirm; the server records what it can and decides nothing.
+The click-through with each purchase and free license request (on `/buy`, `/free` and the account page's renewal)
+records who accepted which version of the terms, when and for which customer (`agreement_acceptance`). Whether that
+click-through is the written agreement the Kinotic Enterprise License requires is for a lawyer to confirm; the server
+records what it can and decides nothing.

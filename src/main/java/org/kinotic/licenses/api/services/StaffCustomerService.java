@@ -11,6 +11,7 @@ import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.security.LicenseZones;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * The staff dashboard's view of customers and the actions staff take on a license.
@@ -58,4 +59,10 @@ public interface StaffCustomerService {
      * own repository commits for its CI and tests.
      */
     Future<IssuedKey> issueTrialKey();
+
+    /**
+     * The public key license keys are signed with, as an EC P-256 JSON Web Key, for verifiers to trust: committed to
+     * kinotic-ai/kinotic with the trial key.
+     */
+    Future<Map<String, Object>> getSigningKey();
 }

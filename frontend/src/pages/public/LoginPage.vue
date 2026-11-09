@@ -61,8 +61,8 @@ async function verify() {
       await SESSION_STATE.login()
       await router.push((route.query.referer as string | undefined) || '/account')
     } else {
-      toast.add({ severity: 'info', summary: 'No account yet', detail: 'This address has no Kinotic license account. Buy a plan or request a free license to create one.', life: 10000 })
-      await router.push('/')
+      toast.add({ severity: 'info', summary: 'No account yet', detail: 'This address has no Kinotic license account. Create one to continue.', life: 10000 })
+      await router.push({ path: '/signup', query: { ...route.query, email: email.value.trim() } })
     }
   } catch (err) {
     displayError(err instanceof Error ? err.message : 'The code is not valid')
@@ -96,6 +96,9 @@ function displayError(text: string) {
         <Button v-else label="Sign in" class="login-submit" :loading="loading" @click="verify" />
         <Button v-if="codeRequested" label="Use another address" severity="secondary" text size="small" class="mt-2"
                 @click="codeRequested = false; code = ''" />
+        <p class="app-muted-text mt-4 text-center text-sm">
+          No account yet? <RouterLink :to="{ path: '/signup', query: route.query.referer ? { referer: route.query.referer } : {} }" class="underline">Create one</RouterLink>
+        </p>
       </div>
     </div>
   </AuthPageShell>

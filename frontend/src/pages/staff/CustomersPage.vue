@@ -51,12 +51,14 @@ async function load(pageable: Pageable, searchText: string | null): Promise<Iter
 const { tableSearch, dataSource } = useCrudTablePage(load)
 
 const trialKey = ref<IssuedKey | null>(null)
+const signingKey = ref<string>('')
 const issuingTrial = ref(false)
 
 async function issueTrialKey() {
   issuingTrial.value = true
   try {
     trialKey.value = await staffCustomerService.issueTrialKey()
+    signingKey.value = JSON.stringify(await staffCustomerService.getSigningKey(), null, 2)
   } catch (err) {
     showErrorToast(toast, 'The trial key could not be issued', err, { life: 8000 })
   } finally {
@@ -87,9 +89,13 @@ async function issueTrialKey() {
     </CrudTable>
 
     <FormDrawer :visible="trialKey !== null" title="Trial key"
-                description="Development and testing only, never expires, every feature. Commit it to kinotic-ai/kinotic for CI and tests."
+                description="Development and testing only, never expires, every feature. Commit it to kinotic-ai/kinotic for CI and tests, with the public key that verifies it."
                 @close="trialKey = null">
       <KeyBlock v-if="trialKey" :issued-key="trialKey" />
+      <div v-if="signingKey" class="mt-5">
+        <h3 class="app-heading-text mb-2 text-sm font-medium">Public key (JSON Web Key)</h3>
+        <pre class="app-card-surface overflow-x-auto rounded-lg border p-3 font-mono text-xs">{{ signingKey }}</pre>
+      </div>
       <template #footer>
         <Button type="button" label="Done" @click="trialKey = null" />
       </template>
