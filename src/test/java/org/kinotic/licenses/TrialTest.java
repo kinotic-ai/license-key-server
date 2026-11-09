@@ -38,6 +38,9 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -110,10 +113,17 @@ class TrialTest extends ServerTest {
     void twoTrialsStartedTogetherLeaveOne() throws Exception {
         CustomerContact contact = contactOf();
 
-        List<CompletableFuture<License>> starts = List.of(startTrialAsync(contact), startTrialAsync(contact));
-        long started = starts.stream().filter(start -> start.handle((trial, t) -> t == null).join()).count();
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch go = new CountDownLatch(1);
+        try {
+            List<CompletableFuture<License>> starts = List.of(startTrialAsync(contact, go, executor), startTrialAsync(contact, go, executor));
+            go.countDown();
+            long started = starts.stream().filter(start -> start.handle((trial, t) -> t == null).join()).count();
 
-        assertThat(started).isEqualTo(1);
+            assertThat(started).isEqualTo(1);
+        } finally {
+            executor.shutdownNow();
+        }
         assertThat(await(licenseRepository.findByCustomerId(contact.getCustomerId()))).hasSize(1);
     }
 
@@ -172,6 +182,9 @@ class TrialTest extends ServerTest {
 
         License moved = await(licenseRepository.findById(trial.getId()));
         assertThat(moved.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
+        List<IssuedKey> keys = await(licenseService.keysOf(trial.getId()));
+        assertThat(keys).hasSize(2);
+        assertThat(keys.getFirst().getExpiresAt()).isEqualTo(LicenseService.keyExpiry(moved.getCurrentPeriodEnd()));
         assertThat(moved.getStripeSubscriptionId()).isEqualTo(subscriptionId);
         assertThat(moved.getBillingPeriod()).isEqualTo(BillingPeriod.ANNUAL);
         assertThat(moved.getPriceList()).isEqualTo(StripeStandIn.OLDER_PRICE_LIST);
@@ -212,14 +225,16 @@ class TrialTest extends ServerTest {
         return asCustomer(contact, () -> customerAccount.startTrial(new TrialRequest().setPlan(plan).setFigures(figures), AgreementTerms.VERSION));
     }
 
-    private CompletableFuture<License> startTrialAsync(CustomerContact contact) {
+    // a start on its own thread that waits for the latch, so two of them begin together
+    private CompletableFuture<License> startTrialAsync(CustomerContact contact, CountDownLatch go, ExecutorService executor) {
         return CompletableFuture.supplyAsync(() -> {
             try {
+                go.await();
                 return startTrial(contact, Plan.SMALL, SMALL_FIGURES);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
-        });
+        }, executor);
     }
 
     private CustomerContact contactOf() throws Exception {

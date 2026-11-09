@@ -89,8 +89,9 @@ public class LicenseService {
     }
 
     /**
-     * Creates a trial of a paid plan, running {@link #TRIAL} from now on the given price list and the current terms, and
-     * issues its key, which expires when the trial ends. The caller emails the key.
+     * Creates a trial of a paid plan, running {@link #TRIAL} from now on the given price list and the current terms,
+     * together with its key, which expires when the trial ends: a trial is created with its key or not at all. The
+     * caller emails the key.
      *
      * @param priceList the current price list, which the license keeps when its plan is bought
      * @return the license and its key, or a failure with {@link org.kinotic.core.api.exceptions.AlreadyExistsException}
@@ -99,8 +100,14 @@ public class LicenseService {
     public Future<NewLicense> createTrial(Customer customer, Plan plan, int priceList) {
         License license = newLicense(customer).setPlan(plan).setPriceList(priceList).setStatus(LicenseStatus.TRIAL);
         license.setTermEnd(license.getTermStart().atZone(ZoneOffset.UTC).plus(TRIAL).toInstant());
-        return licenseRepository.saveTrial(license)
-                                .compose(saved -> issueKey(saved).map(key -> new NewLicense(saved, key)));
+        // signed before anything is stored, so a signing failure leaves no trial behind to block a retry
+        return claims(license, keyExpiry(license)).compose(claims -> keyIssuer.issue(claims).compose(key -> {
+            IssuedKey issued = issuedKey(claims, key, license.getId());
+            return licenseRepository.saveTrial(license, issued).map(saved -> {
+                logIssued(issued);
+                return new NewLicense(saved, issued);
+            });
+        }));
     }
 
     /**

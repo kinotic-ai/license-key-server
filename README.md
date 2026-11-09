@@ -3,8 +3,9 @@
 Minds Ignited's license key server: sells, issues and tracks Kinotic Enterprise license keys. Customers create an
 account on `licenses.kinotic.ai` by confirming their email with a code, then buy the plan their annual revenue sets
 (Small, Medium or Large), paying monthly or annually through Stripe, and get a signed key the moment payment
-succeeds; small organizations request a free license that staff approve. A customer that has never had a paid plan
-may first try one free for three months, with no payment details; see [Trials](docs/deployment.md#trials). A license keeps the price list and terms it
+succeeds; small organizations request a free license that staff approve. A customer that has never had a paid plan or
+a trial, and holds no active free license, may first try a paid plan free for three months, with no payment details;
+see [Trials](docs/deployment.md#trials). A license keeps the price list and terms it
 started on for as long as it stays active; see [Price lists](docs/deployment.md#price-lists). Once a year the customer
 confirms its figures, and the license moves to the plan they set at its anniversary; see
 [Yearly confirmation](docs/deployment.md#yearly-confirmation-and-plan-moves). Design partners apply for half off a paid

@@ -123,10 +123,8 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
 
     @Override
     public Future<License> startTrial(TrialRequest request, String termsVersion) {
-        LicenseParticipant caller = caller();
         requireCurrentTerms(termsVersion);
-        return trialService.start(caller.getCustomerId(), request)
-                           .compose(trial -> recordAcceptance(caller, null).map(trial));
+        return trialService.start(caller(), request);
     }
 
     @Override

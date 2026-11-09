@@ -50,13 +50,16 @@ const figuresGiven = computed(() => annualRevenue.value !== null && (annualReven
 watch([annualRevenue, capitalRaised, plan], () => { matching.value = null })
 
 onMounted(async () => {
+  // the prices stand on their own; an account that cannot be read offers no trial
+  const account = customerAccountService.getAccount()
+    .then(found => { trialAvailable.value = found.trialAvailable })
+    .catch(() => { trialAvailable.value = false })
   try {
-    const [found, account] = await Promise.all([customerAccountService.findPrices(), customerAccountService.getAccount()])
-    prices.value = found
-    trialAvailable.value = account.trialAvailable
+    prices.value = await customerAccountService.findPrices()
   } catch (err) {
     showErrorToast(toast, 'The prices could not be loaded', err)
   } finally {
+    await account
     loading.value = false
   }
 })

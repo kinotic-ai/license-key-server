@@ -477,7 +477,11 @@ public class StripeBillingService {
                                     Future<Void> ret;
                                     if (moved != null) {
                                         log.info("The Checkout Session {} moved the license {} onto a paid plan", session.getId(), licenseId);
-                                        ret = sync(moved, subscription).mapEmpty();
+                                        // the key covering the subscription, as createLicenseFor issues one, in case its
+                                        // invoice.paid arrived before the license had the subscription
+                                        ret = sync(moved, subscription).compose(synced -> isPaid(subscription) && synced.getStatus() == LicenseStatus.ACTIVE
+                                                ? issueExtendedKey(synced)
+                                                : Future.succeededFuture());
                                     } else {
                                         ret = customerRepository.findById(session.getClientReferenceId())
                                                                 .compose(customer -> createLicenseFor(customer, session, subscription));

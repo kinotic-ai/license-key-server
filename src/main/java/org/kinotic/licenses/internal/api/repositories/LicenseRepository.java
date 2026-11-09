@@ -33,6 +33,9 @@ public class LicenseRepository {
     // the statuses a billing change never moves a license out of
     private static final String ENDED = "('REVOKED', 'CANCELED', 'LAPSED', 'EXPIRED')";
     private static final String UNIQUE_VIOLATION = "23505";
+    private static final String INSERT = "INSERT INTO license (id, customer_id, plan, status, billing_period, price_list, terms_version,"
+            + " stripe_subscription_id, checkout_session_id, current_period_end, term_start, term_end, last_payment_at)"
+            + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING " + COLUMNS;
     // The status a billing change sets, unless staff revoked the license or its subscription ended; Stripe never
     // reopens a canceled subscription, so a later write is an event delivered out of order. A license entering
     // PAST_DUE records when, and keeps that time through further failures until it leaves PAST_DUE.
@@ -43,27 +46,31 @@ public class LicenseRepository {
     private final Pool pool;
 
     public Future<License> save(License license) {
-        return pool.preparedQuery("INSERT INTO license (id, customer_id, plan, status, billing_period, price_list, terms_version,"
-                                          + " stripe_subscription_id, checkout_session_id, current_period_end, term_start, term_end,"
-                                          + " last_payment_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING " + COLUMNS)
-                   .execute(Tuple.from(Arrays.asList(license.getId(), license.getCustomerId(), PgValues.name(license.getPlan()),
-                                                     PgValues.name(license.getStatus()), PgValues.name(license.getBillingPeriod()),
-                                                     license.getPriceList(), license.getTermsVersion(),
-                                                     license.getStripeSubscriptionId(), license.getCheckoutSessionId(),
-                                                     PgValues.timestamp(license.getCurrentPeriodEnd()), PgValues.timestamp(license.getTermStart()),
-                                                     PgValues.timestamp(license.getTermEnd()), PgValues.timestamp(license.getLastPaymentAt()))))
+        return pool.preparedQuery(INSERT)
+                   .execute(insertValues(license))
                    .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
     }
 
     /**
-     * Stores a new {@link LicenseStatus#TRIAL} license.
+     * Stores a new {@link LicenseStatus#TRIAL} license together with its key, so either both are stored or neither is.
      *
+     * @param key the trial's key, which belongs to the license
      * @return the license, or a failure with {@link AlreadyExistsException} when the customer holds a trial already
      */
-    public Future<License> saveTrial(License trial) {
-        return save(trial).recover(t -> Future.failedFuture(t instanceof PgException pg && UNIQUE_VIOLATION.equals(pg.getSqlState())
-                                                                    ? new AlreadyExistsException("This account already has a trial", t)
-                                                                    : t));
+    public Future<License> saveTrial(License trial, IssuedKey key) {
+        Tuple values = insertValues(trial).addValue(key.getJti())
+                                          .addValue(key.getKey())
+                                          .addValue(PgValues.timestamp(key.getIssuedAt()))
+                                          .addValue(PgValues.timestamp(key.getExpiresAt()));
+        return pool.preparedQuery("WITH saved AS (" + INSERT + "),"
+                                          + " stored AS (INSERT INTO issued_key (jti, license_id, key, issued_at, expires_at)"
+                                          + " SELECT $14, id, $15, $16, $17 FROM saved)"
+                                          + " SELECT " + COLUMNS + " FROM saved")
+                   .execute(values)
+                   .map(rows -> PgValues.first(rows, LicenseRepository::toLicense))
+                   .recover(t -> Future.failedFuture(t instanceof PgException pg && UNIQUE_VIOLATION.equals(pg.getSqlState())
+                                                             ? new AlreadyExistsException("This account already has a trial", t)
+                                                             : t));
     }
 
     /**
@@ -322,6 +329,15 @@ public class LicenseRepository {
         return pool.preparedQuery("SELECT " + COLUMNS + " FROM license WHERE customer_id = $1 ORDER BY created_at DESC")
                    .execute(Tuple.of(customerId))
                    .map(rows -> PgValues.map(rows, LicenseRepository::toLicense));
+    }
+
+    private static Tuple insertValues(License license) {
+        return Tuple.from(Arrays.asList(license.getId(), license.getCustomerId(), PgValues.name(license.getPlan()),
+                                        PgValues.name(license.getStatus()), PgValues.name(license.getBillingPeriod()),
+                                        license.getPriceList(), license.getTermsVersion(),
+                                        license.getStripeSubscriptionId(), license.getCheckoutSessionId(),
+                                        PgValues.timestamp(license.getCurrentPeriodEnd()), PgValues.timestamp(license.getTermStart()),
+                                        PgValues.timestamp(license.getTermEnd()), PgValues.timestamp(license.getLastPaymentAt())));
     }
 
     private Future<License> updateOne(String assignments, String id, Object... values) {

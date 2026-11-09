@@ -7,6 +7,8 @@ import org.kinotic.core.api.exceptions.AuthenticationException;
 import org.kinotic.core.api.security.AuthenticationContext;
 import org.kinotic.core.api.security.Participant;
 import org.kinotic.core.api.security.SecurityService;
+import org.kinotic.licenses.api.model.IssuedKey;
+import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseFlag;
 import org.kinotic.licenses.api.model.LicenseKeyClaims;
 import org.kinotic.licenses.api.model.LicenseStatus;
@@ -72,25 +74,34 @@ public class LicenseSecurityService implements SecurityService {
             return Future.failedFuture(new AuthenticationException(KEY_REFUSED));
         }
         return issuedKeyRepository.findByJti(claims.keyId()).compose(issued -> {
+            Future<Participant> ret;
             if (issued == null) {
                 log.warn("The key {} is signed by this server but was never issued", claims.keyId());
-                return Future.failedFuture(new AuthenticationException(KEY_REFUSED));
+                ret = Future.failedFuture(new AuthenticationException(KEY_REFUSED));
+            } else {
+                ret = licenseRepository.findById(issued.getLicenseId()).compose(license -> licenseeOf(license, issued, claims));
             }
-            return licenseRepository.findById(issued.getLicenseId()).compose(license -> {
-                if (license.getStatus() != LicenseStatus.ACTIVE && license.getStatus() != LicenseStatus.PAST_DUE
-                        && license.getStatus() != LicenseStatus.TRIAL) {
-                    log.info("The key {} signed in for license {}, which is {}", claims.keyId(), license.getId(), license.getStatus());
-                    return Future.failedFuture(new AuthenticationException(KEY_REFUSED));
-                }
-                return issuedKeyRepository.findLatestByLicenseId(license.getId()).compose(newest -> {
-                    Future<Void> flagged = Future.succeededFuture();
-                    if (!newest.getJti().equals(issued.getJti())) {
-                        log.info("The license {} signed in with its older key {}; its newest is {}", license.getId(), issued.getJti(), newest.getJti());
-                        flagged = licenseRepository.addFlag(license.getId(), LicenseFlag.POSSIBLY_COPIED).mapEmpty();
-                    }
-                    return flagged.map(v -> (Participant) LicenseParticipant.ofLicensee(license, issued.getJti(), claims.subject()));
-                });
-            });
+            return ret;
         });
+    }
+
+    // the license's licensee, when the license still takes keys; an older key than its newest flags it
+    private Future<Participant> licenseeOf(License license, IssuedKey issued, LicenseKeyClaims claims) {
+        Future<Participant> ret;
+        if (license.getStatus() != LicenseStatus.ACTIVE && license.getStatus() != LicenseStatus.PAST_DUE
+                && license.getStatus() != LicenseStatus.TRIAL) {
+            log.info("The key {} signed in for license {}, which is {}", claims.keyId(), license.getId(), license.getStatus());
+            ret = Future.failedFuture(new AuthenticationException(KEY_REFUSED));
+        } else {
+            ret = issuedKeyRepository.findLatestByLicenseId(license.getId()).compose(newest -> {
+                Future<Void> flagged = Future.succeededFuture();
+                if (!newest.getJti().equals(issued.getJti())) {
+                    log.info("The license {} signed in with its older key {}; its newest is {}", license.getId(), issued.getJti(), newest.getJti());
+                    flagged = licenseRepository.addFlag(license.getId(), LicenseFlag.POSSIBLY_COPIED).mapEmpty();
+                }
+                return flagged.map(v -> (Participant) LicenseParticipant.ofLicensee(license, issued.getJti(), claims.subject()));
+            });
+        }
+        return ret;
     }
 }
