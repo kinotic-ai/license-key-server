@@ -9,6 +9,7 @@ import org.kinotic.licenses.api.model.CustomerDetail;
 import org.kinotic.licenses.api.model.CustomerSummary;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
+import org.kinotic.licenses.api.model.LicenseFlag;
 import org.kinotic.licenses.api.security.LicenseParticipant;
 import org.kinotic.licenses.api.services.StaffCustomerService;
 import org.kinotic.licenses.internal.api.repositories.AgreementAcceptanceRepository;
@@ -17,8 +18,8 @@ import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.springframework.stereotype.Component;
 
+import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 
 /**
  * The staff dashboard's customers and license actions. Every action is logged with the staff member taking it.
@@ -38,7 +39,20 @@ public class DefaultStaffCustomerService implements StaffCustomerService {
 
     @Override
     public Future<List<CustomerSummary>> findCustomerSummaries() {
-        return customerRepository.findSummaries();
+        return customerRepository.findSummaries()
+                                 .map(summaries -> summaries.stream()
+                                                            .map(summary -> summary.setPaidThrough(summary.getPlan() == null ? null
+                                                                    : LicenseService.paidThrough(summary.getPlan(), summary.getTermEnd(), summary.getCurrentPeriodEnd())))
+                                                            .toList());
+    }
+
+    @Override
+    public Future<List<CustomerSummary>> findRevenueUnconfirmed() {
+        return findCustomerSummaries()
+                                 .map(summaries -> summaries.stream()
+                                                            .filter(summary -> summary.getFlags().contains(LicenseFlag.REVENUE_UNCONFIRMED))
+                                                            .sorted(Comparator.comparing(CustomerSummary::getTermEnd))
+                                                            .toList());
     }
 
     @Override
@@ -54,7 +68,7 @@ public class DefaultStaffCustomerService implements StaffCustomerService {
                                      ret.setContacts(contacts);
                                      return licenseRepository.findByCustomerId(customerId);
                                  })
-                                 .compose(licenses -> DefaultCustomerAccountService.withKeys(licenses, licenseService))
+                                 .compose(licenseService::withKeys)
                                  .compose(licenses -> {
                                      ret.setLicenses(licenses);
                                      return acceptanceRepository.findByCustomerId(customerId);
@@ -71,7 +85,7 @@ public class DefaultStaffCustomerService implements StaffCustomerService {
     @Override
     public Future<IssuedKey> issueReplacementKey(String licenseId) {
         // the key is issued either way; a failed email is retried with resendKey rather than by issuing another key
-        return license(licenseId).compose(license -> licenseService.issueReplacementKey(license)
+        return license(licenseId).compose(license -> licenseService.issueKey(license)
                                                                    .compose(key -> licenseService.emailNewKey(license, key)
                                                                                                  .recover(t -> {
                                                                                                      log.error("The replacement key {} was issued but could not be emailed", key.getJti(), t);
@@ -88,14 +102,8 @@ public class DefaultStaffCustomerService implements StaffCustomerService {
     }
 
     @Override
-    public Future<IssuedKey> issueTrialKey() {
-        return licenseService.issueTrialKey()
-                             .onSuccess(key -> log.info("{} issued the trial key {}", staff(), key.getJti()));
-    }
-
-    @Override
-    public Future<Map<String, Object>> getSigningKey() {
-        return Future.succeededFuture(signingKey.publicJwk().getMap());
+    public Future<String> getSigningPublicKey() {
+        return Future.succeededFuture(signingKey.publicKey());
     }
 
     private Future<License> license(String licenseId) {

@@ -7,7 +7,6 @@ import com.azure.security.keyvault.keys.models.KeyCurveName;
 import com.azure.security.keyvault.keys.models.KeyOperation;
 import com.azure.security.keyvault.keys.models.KeyType;
 import com.azure.security.keyvault.keys.models.KeyVaultKey;
-import io.vertx.core.json.JsonObject;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.kinotic.licenses.api.config.KinoticLicensesProperties;
@@ -16,6 +15,13 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.math.BigInteger;
+import java.security.AlgorithmParameters;
+import java.security.GeneralSecurityException;
+import java.security.KeyFactory;
+import java.security.PublicKey;
+import java.security.spec.ECParameterSpec;
+import java.security.spec.ECPoint;
+import java.security.spec.ECPublicKeySpec;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.interfaces.ECPrivateKey;
@@ -70,7 +76,11 @@ public class SigningKeyConfiguration {
                                                     + jwk.getKeyType() + " " + jwk.getCurveName());
         }
         log.info("Signing license keys with the Key Vault key {}", key.getId());
-        return new LicenseSigningKey(cryptography, publicJwk(key.getId(), jwk.getX(), jwk.getY()));
+        try {
+            return new LicenseSigningKey(cryptography, publicKeyInfo(jwk.getX(), jwk.getY()));
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("The public key of " + keyId + " cannot be read", e);
+        }
     }
 
     private static LicenseSigningKey ephemeralKey() {
@@ -92,22 +102,19 @@ public class SigningKeyConfiguration {
                     .setD(coordinate(((ECPrivateKey) pair.getPrivate()).getS()));
             // a client given the key material signs locally, with the same operation the vault-backed client offers
             var cryptography = new CryptographyClientBuilder().jsonWebKey(jwk).buildAsyncClient();
-            return new LicenseSigningKey(cryptography, publicJwk(kid, x, y));
+            return new LicenseSigningKey(cryptography, publicKeyInfo(x, y));
         } catch (Exception e) {
             throw new IllegalStateException("Could not generate the ephemeral signing key", e);
         }
     }
 
-    private static JsonObject publicJwk(String kid, byte[] x, byte[] y) {
-        Base64.Encoder base64url = Base64.getUrlEncoder().withoutPadding();
-        return new JsonObject()
-                .put("kty", "EC")
-                .put("crv", "P-256")
-                .put("x", base64url.encodeToString(x))
-                .put("y", base64url.encodeToString(y))
-                .put("kid", kid)
-                .put("alg", "ES256")
-                .put("use", "sig");
+    // the X.509 SubjectPublicKeyInfo of the P-256 point (x, y), in Base64
+    private static String publicKeyInfo(byte[] x, byte[] y) throws GeneralSecurityException {
+        AlgorithmParameters parameters = AlgorithmParameters.getInstance("EC");
+        parameters.init(new ECGenParameterSpec("secp256r1"));
+        ECPoint point = new ECPoint(new BigInteger(1, x), new BigInteger(1, y));
+        PublicKey key = KeyFactory.getInstance("EC").generatePublic(new ECPublicKeySpec(point, parameters.getParameterSpec(ECParameterSpec.class)));
+        return Base64.getEncoder().encodeToString(key.getEncoded());
     }
 
     // a fixed 32-byte big-endian coordinate, as JWK requires, whatever length BigInteger gives it

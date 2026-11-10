@@ -1,9 +1,11 @@
-import type { LicenseStatus, Plan } from '@/api/model'
+import type { BillingPeriod, LicenseStatus, Plan, PublicityConsent } from '@/api/model'
 
 /** Formatting shared by the public pages and the dashboard. */
 
-export function formatMoney(amount: number, currency: string): string {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase(), maximumFractionDigits: 0 }).format(amount)
+export function formatMoney(amount: number | null | undefined, currency: string): string {
+    return amount === null || amount === undefined
+        ? '—'
+        : new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase(), maximumFractionDigits: 0 }).format(amount)
 }
 
 export function formatDate(value: string | null | undefined): string {
@@ -14,8 +16,34 @@ export function planName(plan: Plan | null | undefined): string {
     return plan ? plan.charAt(0) + plan.slice(1).toLowerCase() : '—'
 }
 
+export function billingPeriodName(period: BillingPeriod | null | undefined): string {
+    let ret: string
+    if (period === 'ANNUAL') {
+        ret = 'Annual'
+    } else if (period === 'MONTHLY') {
+        ret = 'Monthly'
+    } else {
+        ret = '—'
+    }
+    return ret
+}
+
+export function publicityLabel(consent: PublicityConsent | null | undefined): string {
+    let ret: string
+    if (consent === 'CUSTOMER_NAME') {
+        ret = 'May be named as a customer'
+    } else if (consent === 'DESIGN_PARTNER') {
+        ret = 'Design partner'
+    } else {
+        ret = 'None'
+    }
+    return ret
+}
+
 export function statusLabel(status: LicenseStatus | null | undefined): string {
-    const labels: Record<LicenseStatus, string> = { ACTIVE: 'Active', PAST_DUE: 'Past due', CANCELED: 'Canceled', REVOKED: 'Revoked' }
+    const labels: Record<LicenseStatus, string> = {
+        TRIAL: 'Trial', ACTIVE: 'Active', PAST_DUE: 'Past due', LAPSED: 'Lapsed', CANCELED: 'Canceled', EXPIRED: 'Expired', REVOKED: 'Revoked'
+    }
     return status ? labels[status] : 'No license'
 }
 
@@ -24,6 +52,8 @@ export function statusSeverity(status: LicenseStatus | null | undefined): string
     let ret: string
     if (status === 'ACTIVE') {
         ret = 'success'
+    } else if (status === 'TRIAL') {
+        ret = 'info'
     } else if (status === 'PAST_DUE') {
         ret = 'warn'
     } else if (status) {

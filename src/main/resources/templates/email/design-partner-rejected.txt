@@ -1,0 +1,7 @@
+Thank you for applying to be a Kinotic design partner on behalf of {{organization}}. We are not able to take on your application at this time.
+
+You can still buy any plan at its list price from your account, and we would be glad to hear from you again:
+
+{{accountUrl}}
+
+— Minds Ignited, makers of Kinotic

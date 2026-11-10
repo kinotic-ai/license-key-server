@@ -1,0 +1,7 @@
+The license key for {{organization}} expires on {{expiresOn}}, and no newer key has been issued: {{reason}}
+
+Kinotic keeps its Enterprise features on for 14 days after a key expires. Your account shows what to do next:
+
+{{accountUrl}}
+
+— Minds Ignited, makers of Kinotic

@@ -7,5 +7,7 @@ public enum ParticipantType {
     /** A Minds Ignited staff member, signed in through the staff OIDC provider on the staff host. */
     STAFF,
     /** A contact of a customer, signed in with a one-time code emailed to that contact. */
-    CUSTOMER
+    CUSTOMER,
+    /** A Kinotic installation, signed in with a license key it holds. */
+    LICENSEE
 }

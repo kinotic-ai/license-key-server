@@ -20,13 +20,18 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.kinotic.licenses.api.config.EmailProperties;
 import org.kinotic.licenses.api.config.KinoticLicensesProperties;
+import org.kinotic.licenses.api.model.BillingPeriod;
 import org.kinotic.licenses.api.model.CustomerContact;
+import org.kinotic.licenses.api.model.DesignPartnerApplication;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
+import org.kinotic.licenses.api.model.Plan;
+import org.kinotic.licenses.api.model.LicenseStatus;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -58,10 +63,29 @@ public class EmailService {
     private static final Template RENEWAL_KEY_TEXT = compile(TEXT_TEMPLATES, "renewal-key");
     private static final Template PAST_DUE_HTML = compile(HTML_TEMPLATES, "past-due");
     private static final Template PAST_DUE_TEXT = compile(TEXT_TEMPLATES, "past-due");
+    private static final Template KEY_EXPIRING_HTML = compile(HTML_TEMPLATES, "key-expiring");
+    private static final Template KEY_EXPIRING_TEXT = compile(TEXT_TEMPLATES, "key-expiring");
+    private static final Template CONFIRMATION_DUE_HTML = compile(HTML_TEMPLATES, "confirmation-due");
+    private static final Template CONFIRMATION_DUE_TEXT = compile(TEXT_TEMPLATES, "confirmation-due");
+    private static final Template PLAN_CHANGED_HTML = compile(HTML_TEMPLATES, "plan-changed");
+    private static final Template PLAN_CHANGED_TEXT = compile(TEXT_TEMPLATES, "plan-changed");
+    private static final Template PARTNER_APPROVED_HTML = compile(HTML_TEMPLATES, "design-partner-approved");
+    private static final Template PARTNER_APPROVED_TEXT = compile(TEXT_TEMPLATES, "design-partner-approved");
+    private static final Template PARTNER_REJECTED_HTML = compile(HTML_TEMPLATES, "design-partner-rejected");
+    private static final Template PARTNER_REJECTED_TEXT = compile(TEXT_TEMPLATES, "design-partner-rejected");
+    private static final Template LAPSE_WARNING_HTML = compile(HTML_TEMPLATES, "lapse-warning");
+    private static final Template LAPSE_WARNING_TEXT = compile(TEXT_TEMPLATES, "lapse-warning");
+    private static final Template LAPSED_HTML = compile(HTML_TEMPLATES, "lapsed");
+    private static final Template LAPSED_TEXT = compile(TEXT_TEMPLATES, "lapsed");
     private static final Template FREE_APPROVED_HTML = compile(HTML_TEMPLATES, "free-request-approved");
     private static final Template FREE_APPROVED_TEXT = compile(TEXT_TEMPLATES, "free-request-approved");
     private static final Template FREE_REJECTED_HTML = compile(HTML_TEMPLATES, "free-request-rejected");
     private static final Template FREE_REJECTED_TEXT = compile(TEXT_TEMPLATES, "free-request-rejected");
+
+    private static final Template TRIAL_STARTED_HTML = compile(HTML_TEMPLATES, "trial-started");
+    private static final Template TRIAL_STARTED_TEXT = compile(TEXT_TEMPLATES, "trial-started");
+    private static final Template TRIAL_EXPIRED_HTML = compile(HTML_TEMPLATES, "trial-expired");
+    private static final Template TRIAL_EXPIRED_TEXT = compile(TEXT_TEMPLATES, "trial-expired");
 
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("d MMMM uuuu").withZone(ZoneOffset.UTC);
 
@@ -95,15 +119,106 @@ public class EmailService {
     }
 
     /**
+     * Warns a contact that the license's newest key expires with no newer one issued, saying why.
+     */
+    public Future<Void> sendKeyExpiring(CustomerContact contact, String organization, License license, IssuedKey key) {
+        Map<String, Object> variables = keyVariables(organization, license, key);
+        variables.put("reason", expiryReason(license));
+        return send(contact.getEmail(), contact.getName(), "Your Kinotic Enterprise license key expires soon",
+                    KEY_EXPIRING_HTML, KEY_EXPIRING_TEXT, variables);
+    }
+
+    /**
+     * Asks a contact to confirm the company's figures before the license's next anniversary.
+     */
+    public Future<Void> sendConfirmationDue(CustomerContact contact, String organization, License license) {
+        Map<String, Object> variables = new HashMap<>();
+        variables.put("organization", organization);
+        variables.put("planName", planName(license.getPlan()));
+        variables.put("anniversaryOn", DATE.format(license.getTermEnd()));
+        variables.put("figuresAsked", license.getPlan() == Plan.FREE ? "annual revenue and the capital it has raised" : "annual revenue");
+        variables.put("accountUrl", accountUrl());
+        return send(contact.getEmail(), contact.getName(), "Confirm your figures for your Kinotic license",
+                    CONFIRMATION_DUE_HTML, CONFIRMATION_DUE_TEXT, variables);
+    }
+
+    /**
+     * Tells a contact what the figures confirmed for the license's anniversary change: the plan it moves to, the paid
+     * subscription ending as the license continues as Free, or the paid plan a free license must buy.
+     *
+     * @param plan the plan the figures set
+     * @param at   the anniversary the change takes effect at
+     */
+    public Future<Void> sendPlanChanged(CustomerContact contact, String organization, License license, Plan plan, Instant at) {
+        String on = DATE.format(at);
+        String summary;
+        if (plan == Plan.FREE) {
+            summary = "Your paid subscription ends on " + on + ", and your license continues on the Free plan from then.";
+        } else if (license.getPlan() == Plan.FREE) {
+            summary = "Your company's figures now set the " + planName(plan) + " plan. Buy it from your account by " + on
+                    + " to keep your license, with the price list it keeps.";
+        } else {
+            summary = "Your license moves from the " + planName(license.getPlan()) + " plan to the " + planName(plan) + " plan on " + on + ".";
+        }
+        Map<String, Object> variables = new HashMap<>();
+        variables.put("organization", organization);
+        variables.put("summary", summary);
+        variables.put("accountUrl", accountUrl());
+        return send(contact.getEmail(), contact.getName(), "Your Kinotic plan is changing", PLAN_CHANGED_HTML, PLAN_CHANGED_TEXT, variables);
+    }
+
+    /**
      * Tells a contact a payment failed and no renewal key is issued until it is paid.
      */
     public Future<Void> sendPastDue(CustomerContact contact, String organization, License license) {
         Map<String, Object> variables = new HashMap<>();
         variables.put("organization", organization);
-        variables.put("planName", planName(license));
+        variables.put("planName", planName(license.getPlan()));
         variables.put("accountUrl", accountUrl());
         return send(contact.getEmail(), contact.getName(), "Action needed: your Kinotic payment didn't go through",
                     PAST_DUE_HTML, PAST_DUE_TEXT, variables);
+    }
+
+    /**
+     * Warns a contact that the past-due license lapses at {@code lapsesAt} unless its payment is settled.
+     */
+    public Future<Void> sendLapseWarning(CustomerContact contact, String organization, License license, Instant lapsesAt) {
+        Map<String, Object> variables = new HashMap<>();
+        variables.put("organization", organization);
+        variables.put("planName", planName(license.getPlan()));
+        variables.put("pastDueSince", DATE.format(license.getPastDueSince()));
+        variables.put("lapsesOn", DATE.format(lapsesAt));
+        variables.put("accountUrl", accountUrl());
+        return send(contact.getEmail(), contact.getName(), "Action needed: your Kinotic license lapses on " + DATE.format(lapsesAt),
+                    LAPSE_WARNING_HTML, LAPSE_WARNING_TEXT, variables);
+    }
+
+    /**
+     * Tells a contact the license lapsed and its subscription was cancelled.
+     */
+    public Future<Void> sendLapsed(CustomerContact contact, String organization) {
+        Map<String, Object> variables = Map.of("organization", organization, "accountUrl", accountUrl());
+        return send(contact.getEmail(), contact.getName(), "Your Kinotic license has lapsed", LAPSED_HTML, LAPSED_TEXT, variables);
+    }
+
+    /**
+     * Emails a contact a trial's key, with how to buy its plan before the trial ends.
+     */
+    public Future<Void> sendTrialStarted(CustomerContact contact, String organization, License license, IssuedKey key) {
+        return send(contact.getEmail(), contact.getName(), "Your Kinotic Enterprise trial license key",
+                    TRIAL_STARTED_HTML, TRIAL_STARTED_TEXT, keyVariables(organization, license, key));
+    }
+
+    /**
+     * Tells a contact the trial ended without its plan being bought.
+     */
+    public Future<Void> sendTrialExpired(CustomerContact contact, String organization, License license) {
+        Map<String, Object> variables = new HashMap<>();
+        variables.put("organization", organization);
+        variables.put("planName", planName(license.getPlan()));
+        variables.put("accountUrl", accountUrl());
+        return send(contact.getEmail(), contact.getName(), "Your Kinotic Enterprise trial has ended",
+                    TRIAL_EXPIRED_HTML, TRIAL_EXPIRED_TEXT, variables);
     }
 
     /**
@@ -124,13 +239,52 @@ public class EmailService {
                     FREE_REJECTED_HTML, FREE_REJECTED_TEXT, variables);
     }
 
+    /**
+     * Tells a contact its design partner application is approved, with the link that starts its discounted subscription.
+     */
+    public Future<Void> sendDesignPartnerApproved(CustomerContact contact, String organization, DesignPartnerApplication application,
+                                                  String checkoutUrl) {
+        Map<String, Object> variables = new HashMap<>();
+        variables.put("organization", organization);
+        variables.put("planName", planName(application.getPlan()));
+        variables.put("billing", application.getBillingPeriod() == BillingPeriod.ANNUAL ? "annually" : "monthly");
+        variables.put("checkoutUrl", checkoutUrl);
+        return send(contact.getEmail(), contact.getName(), "You are a Kinotic design partner",
+                    PARTNER_APPROVED_HTML, PARTNER_APPROVED_TEXT, variables);
+    }
+
+    /**
+     * Tells a contact its design partner application was not approved.
+     */
+    public Future<Void> sendDesignPartnerRejected(CustomerContact contact, String organization) {
+        Map<String, Object> variables = Map.of("organization", organization, "accountUrl", accountUrl());
+        return send(contact.getEmail(), contact.getName(), "About your Kinotic design partner application",
+                    PARTNER_REJECTED_HTML, PARTNER_REJECTED_TEXT, variables);
+    }
+
     private Map<String, Object> keyVariables(String organization, License license, IssuedKey key) {
         Map<String, Object> ret = new HashMap<>();
         ret.put("organization", organization);
-        ret.put("planName", planName(license));
+        ret.put("planName", planName(license.getPlan()));
         ret.put("key", key.getKey());
         ret.put("expiresOn", DATE.format(key.getExpiresAt()));
         ret.put("accountUrl", accountUrl());
+        return ret;
+    }
+
+    // why no newer key comes by itself, for the license states KeyEmailJob warns about
+    private static String expiryReason(License license) {
+        String ret;
+        if (license.getStatus() == LicenseStatus.TRIAL) {
+            ret = "your trial of the " + planName(license.getPlan()) + " plan ends on " + DATE.format(license.getTermEnd())
+                    + ". Buy the plan from your account to keep your license, its price list and its terms.";
+        } else if (license.getStatus() == LicenseStatus.PAST_DUE) {
+            ret = "a payment failed. Update your payment details from your account, and a new key is issued once it is paid.";
+        } else if (license.getCancelsAt() != null) {
+            ret = "your subscription is set to end on " + DATE.format(license.getCancelsAt()) + ".";
+        } else {
+            ret = "your free license's year is ending. Confirm your company's figures in your account so we can renew it.";
+        }
         return ret;
     }
 
@@ -138,8 +292,8 @@ public class EmailService {
         return properties.getLicenses().getPublicBaseUrl() + ACCOUNT_PATH;
     }
 
-    private static String planName(License license) {
-        String name = license.getPlan().name();
+    private static String planName(Plan plan) {
+        String name = plan.name();
         return name.charAt(0) + name.substring(1).toLowerCase();
     }
 

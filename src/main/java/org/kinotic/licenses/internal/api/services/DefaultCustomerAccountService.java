@@ -8,23 +8,30 @@ import org.kinotic.licenses.api.model.AgreementTerms;
 import org.kinotic.licenses.api.model.CheckoutKey;
 import org.kinotic.licenses.api.model.CheckoutKeyStatus;
 import org.kinotic.licenses.api.model.CustomerAccount;
+import org.kinotic.licenses.api.model.DesignPartnerApplication;
+import org.kinotic.licenses.api.model.DesignPartnerApplicationForm;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.FreeLicenseRequest;
 import org.kinotic.licenses.api.model.License;
-import org.kinotic.licenses.api.model.LicenseWithKeys;
 import org.kinotic.licenses.api.model.Plan;
-import org.kinotic.licenses.api.model.PlanInfo;
+import org.kinotic.licenses.api.model.PlanPrice;
+import org.kinotic.licenses.api.model.PublicityConsent;
+import org.kinotic.licenses.api.model.RevenueConfirmation;
+import org.kinotic.licenses.api.model.CheckoutRequest;
+import org.kinotic.licenses.api.model.CompanyFigures;
+import org.kinotic.licenses.api.model.TrialRequest;
 import org.kinotic.licenses.api.security.LicenseParticipant;
 import org.kinotic.licenses.api.services.CustomerAccountService;
 import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
+import org.kinotic.licenses.internal.api.repositories.DesignPartnerApplicationRepository;
+import org.kinotic.licenses.internal.api.repositories.DesignPartnerRepository;
 import org.kinotic.licenses.internal.api.repositories.FreeLicenseRequestRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -52,6 +59,11 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
     private final StripeBillingService billingService;
     private final FreeLicenseService freeLicenseService;
     private final CustomerService customerService;
+    private final RevenueConfirmationService confirmationService;
+    private final DesignPartnerService designPartnerService;
+    private final DesignPartnerRepository designPartnerRepository;
+    private final DesignPartnerApplicationRepository applicationRepository;
+    private final TrialService trialService;
 
     @Override
     public Future<CustomerAccount> getAccount() {
@@ -66,12 +78,23 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
                                      ret.setContacts(contacts);
                                      return licenseRepository.findByCustomerId(customerId);
                                  })
-                                 .compose(licenses -> withKeys(licenses, licenseService))
+                                 .compose(licenses -> {
+                                     ret.setTrialAvailable(TrialService.isAvailable(licenses));
+                                     return licenseService.withKeys(licenses);
+                                 })
                                  .compose(licenses -> {
                                      ret.setLicenses(licenses);
                                      return requestRepository.findByCustomerId(customerId);
                                  })
-                                 .map(ret::setFreeLicenseRequests);
+                                 .compose(requests -> {
+                                     ret.setFreeLicenseRequests(requests);
+                                     return applicationRepository.findByCustomerId(customerId);
+                                 })
+                                 .compose(applications -> {
+                                     ret.setDesignPartnerApplications(applications);
+                                     return designPartnerRepository.findByCustomerId(customerId);
+                                 })
+                                 .map(ret::setDesignPartner);
     }
 
     @Override
@@ -80,17 +103,28 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
     }
 
     @Override
-    public Future<List<PlanInfo>> findPlans() {
-        return billingService.listPlans();
+    public Future<List<PlanPrice>> findPrices() {
+        return customerRepository.findById(callingCustomerId()).compose(billingService::findPrices);
     }
 
     @Override
-    public Future<String> startCheckout(Plan plan, String termsVersion) {
+    public Future<Plan> findPlanFor(CompanyFigures figures) {
+        return Future.succeededFuture(Plan.matching(figures));
+    }
+
+    @Override
+    public Future<String> startCheckout(CheckoutRequest request, String termsVersion) {
         LicenseParticipant caller = caller();
         requireCurrentTerms(termsVersion);
         return customerRepository.findById(caller.getCustomerId())
-                                 .compose(customer -> billingService.startCheckout(customer, caller.getName(), caller.getEmail(), plan))
-                                 .compose(url -> recordAcceptance(caller).map(url));
+                                 .compose(customer -> billingService.startCheckout(customer, caller, request))
+                                 .compose(url -> recordAcceptance(caller, null).map(url));
+    }
+
+    @Override
+    public Future<License> startTrial(TrialRequest request, String termsVersion) {
+        requireCurrentTerms(termsVersion);
+        return trialService.start(caller(), request);
     }
 
     @Override
@@ -124,11 +158,29 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
     }
 
     @Override
+    public Future<DesignPartnerApplication> applyAsDesignPartner(DesignPartnerApplicationForm form, String termsVersion) {
+        LicenseParticipant caller = caller();
+        requireCurrentTerms(termsVersion);
+        return designPartnerService.apply(caller.getCustomerId(), form)
+                                   .compose(application -> recordAcceptance(caller, PublicityConsent.DESIGN_PARTNER).map(application));
+    }
+
+    @Override
+    public Future<String> startDesignPartnerCheckout(String applicationId) {
+        return designPartnerService.startCheckout(caller(), applicationId);
+    }
+
+    @Override
+    public Future<RevenueConfirmation> confirmRevenue(String licenseId, CompanyFigures figures) {
+        return confirmationService.confirm(caller(), licenseId, figures);
+    }
+
+    @Override
     public Future<FreeLicenseRequest> requestFreeLicense(FreeLicenseCertification certification, String termsVersion) {
         LicenseParticipant caller = caller();
         requireCurrentTerms(termsVersion);
         return freeLicenseService.request(caller.getCustomerId(), certification)
-                                 .compose(request -> recordAcceptance(caller).map(request));
+                                 .compose(request -> recordAcceptance(caller, PublicityConsent.CUSTOMER_NAME).map(request));
     }
 
     private String callingCustomerId() {
@@ -139,26 +191,12 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
         return securityContext.requireParticipant(LicenseParticipant.class);
     }
 
-    private Future<Void> recordAcceptance(LicenseParticipant caller) {
-        return customerService.recordAcceptance(caller.getCustomerId(), caller.getName(), caller.getEmail()).mapEmpty();
+    private Future<Void> recordAcceptance(LicenseParticipant caller, PublicityConsent publicityConsent) {
+        return customerService.recordAcceptance(caller.getCustomerId(), caller.getName(), caller.getEmail(), publicityConsent).mapEmpty();
     }
 
     private static void requireCurrentTerms(String termsVersion) {
         Validate.isTrue(AgreementTerms.VERSION.equals(termsVersion), "The terms must be accepted in their current version, %s",
                         AgreementTerms.VERSION);
-    }
-
-    /**
-     * Each license with its keys, in the order given.
-     */
-    static Future<List<LicenseWithKeys>> withKeys(List<License> licenses, LicenseService licenseService) {
-        Future<List<LicenseWithKeys>> ret = Future.succeededFuture(new ArrayList<>());
-        for (License license : licenses) {
-            ret = ret.compose(list -> licenseService.keysOf(license.getId()).map(keys -> {
-                list.add(new LicenseWithKeys().setLicense(license).setKeys(keys));
-                return list;
-            }));
-        }
-        return ret;
     }
 }

@@ -16,12 +16,10 @@ import java.time.Instant;
 public class IssuedKey {
     /** The key id, the {@code jti} claim. */
     private String jti;
-    /** The license the key was issued for; {@code null} for the trial key. */
+    /** The license the key was issued for. */
     private String licenseId;
-    private LicensePurpose purpose;
     /** The compact JWS. */
     private String key;
     private Instant issuedAt;
-    /** {@code null} for the trial key, which never expires. */
     private Instant expiresAt;
 }

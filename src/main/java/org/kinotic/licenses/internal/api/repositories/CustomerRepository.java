@@ -6,7 +6,9 @@ import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import lombok.RequiredArgsConstructor;
 import org.kinotic.licenses.api.model.Customer;
+import org.kinotic.licenses.api.model.BillingPeriod;
 import org.kinotic.licenses.api.model.CustomerSummary;
+import org.kinotic.licenses.api.model.LicenseFlag;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
 import org.springframework.stereotype.Repository;
@@ -25,7 +27,7 @@ public class CustomerRepository {
     // one row per customer: its newest license and that license's newest key
     private static final String SUMMARY_SQL = """
             SELECT c.id, c.legal_name, c.stripe_customer_id, c.created_at,
-                   l.id AS license_id, l.plan, l.status, l.current_period_end, l.term_end, l.last_payment_at,
+                   l.id AS license_id, l.plan, l.status, l.billing_period, l.price_list, l.current_period_end, l.term_end, l.last_payment_at, l.flags,
                    k.jti AS latest_key_jti, k.expires_at AS latest_key_expires_at,
                    (SELECT email FROM customer_contact WHERE customer_id = c.id AND role = 'BILLING' LIMIT 1) AS billing_email
             FROM customer c
@@ -95,9 +97,12 @@ public class CustomerRepository {
                 .setLicenseId(row.getString("license_id"))
                 .setPlan(PgValues.enumValue(row, "plan", Plan.class))
                 .setStatus(PgValues.enumValue(row, "status", LicenseStatus.class))
+                .setBillingPeriod(PgValues.enumValue(row, "billing_period", BillingPeriod.class))
+                .setPriceList(row.getInteger("price_list"))
                 .setCurrentPeriodEnd(PgValues.instant(row, "current_period_end"))
                 .setTermEnd(PgValues.instant(row, "term_end"))
                 .setLastPaymentAt(PgValues.instant(row, "last_payment_at"))
+                .setFlags(PgValues.enumSet(row, "flags", LicenseFlag.class))
                 .setLatestKeyJti(row.getString("latest_key_jti"))
                 .setLatestKeyExpiresAt(PgValues.instant(row, "latest_key_expires_at"));
     }

@@ -5,21 +5,18 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.Validate;
 import org.kinotic.core.api.exceptions.AlreadyExistsException;
-import org.kinotic.licenses.api.model.Customer;
+import org.kinotic.licenses.api.model.CompanyFigures;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.FreeLicenseRequest;
 import org.kinotic.licenses.api.model.FreeLicenseRequestStatus;
-import org.kinotic.licenses.api.model.License;
+import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.internal.api.model.NewLicense;
-import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.kinotic.licenses.internal.api.repositories.FreeLicenseRequestRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.springframework.stereotype.Component;
 
-import java.math.BigDecimal;
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -34,26 +31,49 @@ import java.util.UUID;
 public class FreeLicenseService {
 
     private final CustomerRepository customerRepository;
-    private final CustomerContactRepository contactRepository;
+    private final CustomerService customerService;
     private final FreeLicenseRequestRepository requestRepository;
     private final LicenseRepository licenseRepository;
     private final LicenseService licenseService;
     private final EmailService emailService;
+    private final StripeBillingService billingService;
 
     /**
-     * Records a free license request of the customer: its first, or the renewal of the free license it holds.
+     * Records a free license request of the customer, which holds no active free license.
      *
-     * @return the request, or a failure with {@link AlreadyExistsException} when another request of the customer's is
-     *         open: pending, or approved with its key still being issued
+     * @return the request, or a failure with {@link IllegalStateException} when the customer holds an active free license,
+     *         or with {@link AlreadyExistsException} when another request of the customer's is open: pending, or approved
+     *         with its key still being issued
      */
     public Future<FreeLicenseRequest> request(String customerId, FreeLicenseCertification certification) {
         validate(certification);
         certification.setIntendedUse(certification.getIntendedUse().trim());
-        return requestRepository.save(new FreeLicenseRequest()
+        return licenseRepository.findFreeLicense(customerId).compose(free -> {
+            Validate.validState(free == null || free.getStatus() != LicenseStatus.ACTIVE,
+                                "Your free license renews when you confirm your figures for its anniversary in your account");
+            return requestRepository.save(new FreeLicenseRequest()
                                               .setId(UUID.randomUUID().toString())
                                               .setCustomerId(customerId)
                                               .setCertification(certification)
                                               .setStatus(FreeLicenseRequestStatus.PENDING));
+        });
+    }
+
+    /**
+     * Asks staff to approve the next year of the customer's free license, with the figures it confirmed for its
+     * anniversary and the intended use of its last request. A request of the customer's that is open already stands.
+     */
+    public Future<Void> requestRenewal(String customerId, CompanyFigures figures) {
+        return requestRepository.findByCustomerId(customerId).compose(requests -> {
+            String intendedUse = requests.isEmpty() ? "Renewal" : requests.getFirst().getCertification().getIntendedUse();
+            return requestRepository.save(new FreeLicenseRequest()
+                                                  .setId(UUID.randomUUID().toString())
+                                                  .setCustomerId(customerId)
+                                                  .setCertification(new FreeLicenseCertification().setFigures(figures).setIntendedUse(intendedUse))
+                                                  .setStatus(FreeLicenseRequestStatus.PENDING))
+                                    .<Void>mapEmpty()
+                                    .recover(t -> t instanceof AlreadyExistsException ? Future.succeededFuture() : Future.failedFuture(t));
+        });
     }
 
     /**
@@ -97,22 +117,13 @@ public class FreeLicenseService {
                     Validate.validState(request != null, "The free license request %s is not pending", requestId);
                     return request;
                 })
-                .compose(request -> customerRepository.findById(request.getCustomerId())
-                                                      .compose(customer -> contactRepository.findByCustomerId(customer.getId())
-                                                                                            .compose(contacts -> {
-                                                                                                Future<Void> sent = Future.succeededFuture();
-                                                                                                for (var contact : contacts) {
-                                                                                                    sent = sent.compose(x -> emailService.sendFreeRequestRejected(contact, customer.getLegalName()));
-                                                                                                }
-                                                                                                return sent;
-                                                                                            }))
-                                                      // the decision stands once recorded; a notice that fails is logged, as an
-                                                      // approval's email is
-                                                      .recover(t -> {
-                                                          log.error("The free license request {} was rejected but its contacts could not be told", requestId, t);
-                                                          return Future.succeededFuture();
-                                                      })
-                                                      .map(request))
+                // the decision stands once recorded; a notice that fails is logged, as an approval's email is
+                .compose(request -> customerService.emailContacts(request.getCustomerId(), emailService::sendFreeRequestRejected)
+                                                   .recover(t -> {
+                                                       log.error("The free license request {} was rejected but its contacts could not be told", requestId, t);
+                                                       return Future.succeededFuture();
+                                                   })
+                                                   .map(request))
                 .onSuccess(request -> log.info("{} rejected the free license request {}", reviewedBy, requestId));
     }
 
@@ -124,7 +135,8 @@ public class FreeLicenseService {
             Future<NewLicense> ret;
             if (license == null) {
                 ret = customerRepository.findById(request.getCustomerId())
-                                        .compose(customer -> licenseService.createLicense(customer, Plan.FREE, null, null, null));
+                                        .compose(customer -> billingService.currentPriceList()
+                                                                           .compose(priceList -> licenseService.createFreeLicense(customer, priceList)));
             } else {
                 ret = licenseService.keysOf(license.getId()).compose(keys -> {
                     Future<NewLicense> issued;
@@ -132,9 +144,9 @@ public class FreeLicenseService {
                     if (!keys.isEmpty() && !keys.getFirst().getIssuedAt().isBefore(request.getReviewedAt())) {
                         issued = Future.succeededFuture(new NewLicense(license, keys.getFirst()));
                     } else if (keys.isEmpty()) {
-                        issued = licenseService.issueFirstKey(license);
+                        issued = licenseService.startFreeTerm(license);
                     } else {
-                        issued = licenseService.issueRenewalKey(license);
+                        issued = licenseService.renewFreeTerm(license);
                     }
                     return issued;
                 });
@@ -154,12 +166,11 @@ public class FreeLicenseService {
 
     private static void validate(FreeLicenseCertification certification) {
         Validate.notNull(certification, "The certification is required");
-        Validate.isTrue(isAmount(certification.getAnnualRevenue()), "The annual revenue must be zero or more");
-        Validate.isTrue(isAmount(certification.getCapitalRaised()), "The capital raised must be zero or more");
+        Plan.validate(certification.getFigures());
+        Validate.isTrue(certification.getFigures().getCapitalRaised() != null && certification.getFigures().getCapitalRaised().signum() >= 0,
+                        "The capital raised must be zero or more");
         Validate.notBlank(certification.getIntendedUse(), "The intended use is required");
-    }
-
-    private static boolean isAmount(BigDecimal value) {
-        return value != null && value.signum() >= 0;
+        Plan plan = Plan.matching(certification.getFigures());
+        Validate.isTrue(plan == Plan.FREE, "Your company's figures fit the %s plan, which is bought rather than requested", plan);
     }
 }

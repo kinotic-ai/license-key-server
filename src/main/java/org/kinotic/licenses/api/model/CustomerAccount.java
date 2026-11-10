@@ -18,4 +18,10 @@ public class CustomerAccount {
     private List<LicenseWithKeys> licenses;
     /** The customer's free license requests, newest first; empty for a paying customer. */
     private List<FreeLicenseRequest> freeLicenseRequests;
+    /** The customer's design partner applications, newest first. */
+    private List<DesignPartnerApplication> designPartnerApplications;
+    /** The customer as a design partner, with when its discount ends; {@code null} when it is none. */
+    private DesignPartner designPartner;
+    /** Whether the customer may start a trial of a paid plan. */
+    private boolean trialAvailable;
 }

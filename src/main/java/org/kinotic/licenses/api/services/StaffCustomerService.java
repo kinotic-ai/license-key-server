@@ -11,7 +11,6 @@ import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.security.LicenseZones;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * The staff dashboard's view of customers and the actions staff take on a license.
@@ -22,9 +21,16 @@ import java.util.Map;
 public interface StaffCustomerService {
 
     /**
-     * Every customer with the state of its newest license and that license's newest key, newest customer first.
+     * Every customer with the state of its newest license (plan, billing period, price list, paid-through date, next
+     * anniversary and flags) and that license's newest key, newest customer first.
      */
     Future<List<CustomerSummary>> findCustomerSummaries();
+
+    /**
+     * The customers whose newest license reached its anniversary without its figures confirmed, oldest anniversary
+     * first. The license went on as it was; staff follow up with the customer.
+     */
+    Future<List<CustomerSummary>> findRevenueUnconfirmed();
 
     /**
      * A customer with its contacts, licenses, keys and agreement acceptances.
@@ -41,9 +47,10 @@ public interface StaffCustomerService {
     Future<License> revokeLicense(String licenseId);
 
     /**
-     * Issues and emails another key for the license's current term.
+     * Issues and emails another key covering the date the license is paid through.
      *
      * @throws IllegalArgumentException when no license has the id
+     * @throws IllegalStateException    when the license is not active, which is issued no key
      */
     Future<IssuedKey> issueReplacementKey(String licenseId);
 
@@ -55,14 +62,8 @@ public interface StaffCustomerService {
     Future<Void> resendKey(String licenseId);
 
     /**
-     * Issues the trial key: a key for development and testing with every feature that never expires, which Kinotic's
-     * own repository commits for its CI and tests.
+     * The public key license keys are signed with: the X.509 SubjectPublicKeyInfo of the EC P-256 key in Base64, the
+     * form of {@code LicenseVerifier.TRUSTED_PUBLIC_KEY} in kinotic-ai/kinotic, which must equal it.
      */
-    Future<IssuedKey> issueTrialKey();
-
-    /**
-     * The public key license keys are signed with, as an EC P-256 JSON Web Key, for verifiers to trust: committed to
-     * kinotic-ai/kinotic with the trial key.
-     */
-    Future<Map<String, Object>> getSigningKey();
+    Future<String> getSigningPublicKey();
 }

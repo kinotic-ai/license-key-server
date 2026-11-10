@@ -5,10 +5,11 @@ Ignited's own back office, built on Kinotic RPC (`org.kinotic:kinotic-core` and 
 and never on a Kinotic OS module: the server licenses Kinotic OS, so requiring it at runtime would be circular.
 
 The conventions below are kinotic-ai/kinotic's, copied verbatim, and bind here too. Where a rule names a
-kinotic-ai/kinotic path (`kinotic-ee`, `website/content`, `V1__init.sql` under `kinotic-migration`), read it as
-the matching thing in this repository: the docs are `docs/` and the README, the schema is
-`src/main/resources/db/migration/V1__init.sql`, and there is no enterprise module. The rules about `kinotic-server`
-never touching files and about Elasticsearch mappings describe Kinotic OS and do not apply to this server.
+kinotic-ai/kinotic path (`website/content`, `V1__init.sql` under `kinotic-migration`), read it as the matching
+thing in this repository: the docs are `docs/` and the README, and the schema is
+`src/main/resources/db/migration/V1__init.sql`. This server holds no Enterprise Implementations, so it has no `ee`
+packages. The rules about `kinotic-server` never touching files and about Elasticsearch mappings describe Kinotic OS
+and do not apply to this server.
 
 ## Building
 
@@ -48,13 +49,13 @@ the new base instead of discarding them.
 A pull request description never mentions Claude or any AI tool: no "Generated with Claude Code"
 line, no `Co-Authored-By` trailer, no session link, and no other attribution to an assistant.
 
-## Enterprise Features live in kinotic-ee
+## Enterprise Features live in `ee` packages
 
-The root `LICENSE.md` licenses everything under the Elastic License 2.0 with the Kinotic Additional Limitations, except `kinotic-ee/`, which holds the Enterprise Features under the Kinotic Enterprise License (`kinotic-ee/LICENSE`), and Kinotic RPC, under the Apache License 2.0 (see below). Every interface in an ELv2 package with an `ee` segment (`org.kinotic.domain.api.ee.services.SecretStorageBackend`) is an Enterprise Extension Point whose production implementations are Enterprise Features. To make a capability enterprise-only, put its interface in the module's `api/ee/` tree, mirroring `api/` (`api/ee/services/`), and put its implementations in `kinotic-ee`, never in an ELv2 module. The package name is the license designation, so an `ee` package may hold a single file.
+The root `LICENSE.md` licenses everything under the Elastic License 2.0 with the Kinotic Additional Limitations, except Kinotic RPC, under the Apache License 2.0 (see below), and Enterprise Implementations, under the Kinotic Enterprise License (`LICENSE-ENTERPRISE`). An Enterprise Implementation is any file in a Java package with a segment named `ee`. To make a capability enterprise-only, put its classes in the `internal/api/ee/` tree of the module the capability belongs to, mirroring `internal/api/` (`internal/api/ee/services/`). Only where an interface already has a free implementation and an Enterprise one does that interface live in `api/ee/` (`SecretStorageBackend`, with `InMemoryBackend` and `AzureKeyVaultBackend`). The package name is the license designation, so an `ee` package may hold a single file. Never put Enterprise code in a Kinotic RPC module.
 
 ## Kinotic RPC stands alone
 
-Kinotic RPC — `kinotic-core`, `kinotic-api-gateway`, `kinotic-idl`, and the `core` and `idl` packages in `kinotic-js/workspace/packages/` — is licensed under the Apache License 2.0 (`LICENSE-APACHE`) so it can be used without Kinotic OS. None of its modules may depend on a Kinotic OS module (domain, persistence, management-api, system-api, the servers); `org.kinotic.java-common-conventions` fails the build if one declares such a project dependency. Code that only Kinotic OS uses belongs in an OS module, never in core, and anything RPC needs from the OS's model goes through an interface in core that the OS implements (`ZoneRulesResolver`, implemented by domain's `ScopedParticipantZoneRulesResolver`). A setting both RPC and the OS read lives on core's `KinoticProperties` (`kinotic.cors`).
+Kinotic RPC — `kinotic-core`, `kinotic-api-gateway`, `kinotic-client`, `kinotic-idl`, and the `core` and `idl` packages in `kinotic-js/workspace/packages/` — is licensed under the Apache License 2.0 (`LICENSE-APACHE`) so it can be used without Kinotic OS. None of its modules may depend on a Kinotic OS module (domain, persistence, management-api, system-api, the servers); `org.kinotic.java-common-conventions` fails the build if one declares such a project dependency. Code that only Kinotic OS uses belongs in an OS module, never in core, and anything RPC needs from the OS's model goes through an interface in core that the OS implements (`ZoneRulesResolver`, implemented by domain's `ScopedParticipantZoneRulesResolver`). A setting both RPC and the OS read lives on core's `KinoticProperties` (`kinotic.cors`).
 
 ## Don't guess from names
 
@@ -160,7 +161,7 @@ it a credential.
 
 While `kinoticVersion` in `gradle.properties` is a `-SNAPSHOT`, no released artifact depends on this code, so there is nothing to stay backwards-compatible with: rename fields, break APIs, and reshape wire contracts freely. Deprecation shims and compatibility fallbacks start when the first release exists — building them sooner is Speculative Generality.
 
-Migrations follow the same rule while the cluster can be rebuilt: a schema change edits the table in `V1__init.sql`, a change to seeded rows edits the environment file that seeds them (`V2__kinotic_test_users.development.test.sql`, `V3__e2e_app_fixtures.test.sql`, `V4__system_console.fixtures.sql`), and the cluster is rebuilt to take it. Append-only discipline starts with the first release, for the development server with the first peer sign-up (`website/content/02.platform/13.development-server.md`): from then on a change is a new versioned file, never an edit of one already applied, and since Elasticsearch cannot retype a mapped field, a column that changes type is a new column beside the old one, which stays mapped and unused.
+Migrations follow the same rule while the cluster can be rebuilt: a schema change edits the table in `V1__init.sql`, a change to seeded rows edits the environment file that seeds them (`V2__system_identities.demonstration.test.e2e.sql`, `V3__test_org.fixtures.test.e2e.sql`, `V4__e2e_app_fixtures.e2e.sql`, `V5__system_console.fixtures.sql`), and the cluster is rebuilt to take it. Append-only discipline starts with the first release, for the development server with the first peer sign-up (`website/content/04.platform/13.development-server.md`): from then on a change is a new versioned file, never an edit of one already applied, and since Elasticsearch cannot retype a mapped field, a column that changes type is a new column beside the old one, which stays mapped and unused.
 
 ## Keep migrations in sync with persisted entities
 

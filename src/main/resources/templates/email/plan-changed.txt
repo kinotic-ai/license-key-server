@@ -1,0 +1,7 @@
+Thank you for confirming the figures of {{organization}}. {{summary}}
+
+Your license keeps the price list and terms it started on. Your account has the details:
+
+{{accountUrl}}
+
+— Minds Ignited, makers of Kinotic

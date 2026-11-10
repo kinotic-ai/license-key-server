@@ -7,7 +7,9 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -30,6 +32,18 @@ final class PgValues {
     static <E extends Enum<E>> E enumValue(Row row, String column, Class<E> type) {
         String value = row.getString(column);
         return value == null ? null : Enum.valueOf(type, value);
+    }
+
+    /** A {@code TEXT[]} column of enum names as a set, empty for SQL {@code NULL}. */
+    static <E extends Enum<E>> Set<E> enumSet(Row row, String column, Class<E> type) {
+        Set<E> ret = EnumSet.noneOf(type);
+        String[] names = row.getArrayOfStrings(column);
+        if (names != null) {
+            for (String name : names) {
+                ret.add(Enum.valueOf(type, name));
+            }
+        }
+        return ret;
     }
 
     static String name(Enum<?> value) {

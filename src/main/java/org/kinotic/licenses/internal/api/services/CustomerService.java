@@ -9,12 +9,14 @@ import org.kinotic.licenses.api.model.AgreementTerms;
 import org.kinotic.licenses.api.model.ContactRole;
 import org.kinotic.licenses.api.model.Customer;
 import org.kinotic.licenses.api.model.CustomerContact;
+import org.kinotic.licenses.api.model.PublicityConsent;
 import org.kinotic.licenses.internal.api.repositories.AgreementAcceptanceRepository;
 import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.springframework.stereotype.Component;
 
 import java.util.UUID;
+import java.util.function.BiFunction;
 
 /**
  * Brings a new customer on, the legal entity with its billing contact, and records each acceptance of the agreement in
@@ -63,15 +65,35 @@ public class CustomerService {
     }
 
     /**
-     * Records that a contact of the customer accepted the current terms, as with every purchase and free license
-     * request.
+     * Sends an email to each contact of the customer, one after another; the first that fails fails the result.
+     *
+     * @param send sends to one contact, given the contact and the customer's legal name
      */
-    public Future<AgreementAcceptance> recordAcceptance(String customerId, String acceptedByName, String acceptedByEmail) {
+    public Future<Void> emailContacts(String customerId, BiFunction<CustomerContact, String, Future<Void>> send) {
+        return customerRepository.findById(customerId)
+                                 .compose(customer -> contactRepository.findByCustomerId(customerId).compose(contacts -> {
+                                     Future<Void> ret = Future.succeededFuture();
+                                     for (CustomerContact contact : contacts) {
+                                         ret = ret.compose(v -> send.apply(contact, customer.getLegalName()));
+                                     }
+                                     return ret;
+                                 }));
+    }
+
+    /**
+     * Records that a contact of the customer accepted the current terms, as with every purchase, free license request
+     * and design partner application, with the publicity the terms ask for.
+     *
+     * @param publicityConsent what the customer lets Minds Ignited publish about it, or {@code null} for nothing
+     */
+    public Future<AgreementAcceptance> recordAcceptance(String customerId, String acceptedByName, String acceptedByEmail,
+                                                        PublicityConsent publicityConsent) {
         return acceptanceRepository.save(new AgreementAcceptance()
                                                  .setId(UUID.randomUUID().toString())
                                                  .setCustomerId(customerId)
                                                  .setTermsVersion(AgreementTerms.VERSION)
                                                  .setAcceptedByName(acceptedByName)
-                                                 .setAcceptedByEmail(acceptedByEmail));
+                                                 .setAcceptedByEmail(acceptedByEmail)
+                                                 .setPublicityConsent(publicityConsent));
     }
 }

@@ -1,0 +1,9 @@
+A payment for the Kinotic Enterprise license of {{organization}} on the {{planName}} plan failed on {{pastDueSince}} and is still unsettled. If it is not settled by {{lapsesOn}}, the license lapses: its subscription is cancelled, and buying again starts on the price list and terms then in effect.
+
+Update your payment details from your account and Stripe retries the payment:
+
+{{accountUrl}}
+
+Your current key keeps working until it expires.
+
+— Minds Ignited, makers of Kinotic

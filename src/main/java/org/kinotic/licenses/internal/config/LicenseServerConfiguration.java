@@ -38,12 +38,12 @@ public class LicenseServerConfiguration {
     private static final String LOOPBACK = "127.0.0.1";
 
     /**
-     * This server hosts and reaches the staff and customer zones and nothing else, and names itself to the cluster
+     * This server hosts and reaches the staff, customer and licensee zones and nothing else, and names itself to the cluster
      * and the session cookie as {@code licenses}.
      */
     @Bean
     public ZonePartitioningService zonePartitioningService() {
-        Set<String> zones = Set.of(LicenseZones.STAFF, LicenseZones.CUSTOMER);
+        Set<String> zones = Set.of(LicenseZones.STAFF, LicenseZones.CUSTOMER, LicenseZones.LICENSEE);
         return ZonePartitioningService.of(SERVER_NAME, zones, zones);
     }
 

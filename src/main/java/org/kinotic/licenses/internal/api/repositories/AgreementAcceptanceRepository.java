@@ -6,6 +6,7 @@ import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import lombok.RequiredArgsConstructor;
 import org.kinotic.licenses.api.model.AgreementAcceptance;
+import org.kinotic.licenses.api.model.PublicityConsent;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -17,15 +18,16 @@ import java.util.List;
 @RequiredArgsConstructor
 public class AgreementAcceptanceRepository {
 
-    private static final String COLUMNS = "id, customer_id, terms_version, accepted_by_name, accepted_by_email, accepted_at";
+    private static final String COLUMNS = "id, customer_id, terms_version, accepted_by_name, accepted_by_email, publicity_consent, accepted_at";
 
     private final Pool pool;
 
     public Future<AgreementAcceptance> save(AgreementAcceptance acceptance) {
-        return pool.preparedQuery("INSERT INTO agreement_acceptance (id, customer_id, terms_version, accepted_by_name, accepted_by_email)"
-                                          + " VALUES ($1, $2, $3, $4, $5) RETURNING " + COLUMNS)
+        return pool.preparedQuery("INSERT INTO agreement_acceptance (id, customer_id, terms_version, accepted_by_name, accepted_by_email,"
+                                          + " publicity_consent) VALUES ($1, $2, $3, $4, $5, $6) RETURNING " + COLUMNS)
                    .execute(Tuple.of(acceptance.getId(), acceptance.getCustomerId(), acceptance.getTermsVersion(),
-                                     acceptance.getAcceptedByName(), acceptance.getAcceptedByEmail()))
+                                     acceptance.getAcceptedByName(), acceptance.getAcceptedByEmail(),
+                                     PgValues.name(acceptance.getPublicityConsent())))
                    .map(rows -> PgValues.first(rows, AgreementAcceptanceRepository::toAcceptance));
     }
 
@@ -42,6 +44,7 @@ public class AgreementAcceptanceRepository {
                 .setTermsVersion(row.getString("terms_version"))
                 .setAcceptedByName(row.getString("accepted_by_name"))
                 .setAcceptedByEmail(row.getString("accepted_by_email"))
+                .setPublicityConsent(PgValues.enumValue(row, "publicity_consent", PublicityConsent.class))
                 .setAcceptedAt(PgValues.instant(row, "accepted_at"));
     }
 }

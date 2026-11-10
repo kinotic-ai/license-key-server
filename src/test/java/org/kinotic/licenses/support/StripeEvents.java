@@ -37,6 +37,7 @@ public final class StripeEvents {
                 .put("id", id)
                 .put("object", "subscription")
                 .put("status", status)
+                .put("start_date", Instant.now().getEpochSecond())
                 .put("items", new JsonObject().put("object", "list").put("data", new JsonArray().add(item)))
                 .put("latest_invoice", new JsonObject().put("id", "in_" + UUID.randomUUID().toString().replace("-", ""))
                                                        .put("object", "invoice").put("status", "paid"));
@@ -51,6 +52,21 @@ public final class StripeEvents {
                 .put("subscription", subscriptionId)
                 .put("client_reference_id", customerId)
                 .put("payment_status", paymentStatus);
+    }
+
+    /**
+     * The Checkout Session the server created with the request, completed in subscription mode: it carries the
+     * client reference and metadata the server set.
+     */
+    public static JsonObject completedSession(StripeRequest created, String subscriptionId, String paymentStatus) {
+        JsonObject metadata = new JsonObject();
+        created.params().forEach((key, value) -> {
+            if (key.startsWith("metadata[")) {
+                metadata.put(key.substring("metadata[".length(), key.length() - 1), value);
+            }
+        });
+        return checkoutSession("cs_" + UUID.randomUUID().toString().replace("-", ""), subscriptionId,
+                               created.params().get("client_reference_id"), paymentStatus).put("metadata", metadata);
     }
 
     public static JsonObject invoice(String subscriptionId, Instant paidAt) {
