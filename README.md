@@ -44,7 +44,7 @@ the contract it builds to.
   (`ConnectOptions.authHeaders`). The gateway hands the upgrade's headers, not the STOMP CONNECT frame's, to its
   `SecurityService`. A key signs in when its signature verifies against this server's signing key, its `jti` is one this
   server issued, it expired no more than 30 days ago, its license is not cancelled, lapsed, expired or revoked, and its
-  cluster has not been released. Any other key is refused with a 401 on the upgrade. Any key of the cluster signs in,
+  cluster has not moved to another license. Any other key is refused with a 401 on the upgrade. Any key of the cluster signs in,
   however old, so a restored backup is never locked out.
 - **Service:** Kinotic declares this interface in its own code; there is no shared jar. A service's address is its
   zone, namespace, name and version together, so all four must match:

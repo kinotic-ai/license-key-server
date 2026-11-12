@@ -37,7 +37,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * A Kinotic cluster renews its key with kinotic-client, as Kinotic will: it connects to the gateway with the key it
  * holds in the {@code license-key} header and calls the renewal service by the contract's namespace, name, zone and
- * version. It may call nothing else, a key whose license ended or whose cluster was released cannot connect, any key
+ * version. It may call nothing else, a key whose license ended or whose cluster moved to another license cannot connect, any key
  * of a cluster renews to the cluster's newest, and a cluster beyond the license's seats is told why no newer key comes.
  */
 class LicenseRenewalTest extends ServerTest {
@@ -125,17 +125,21 @@ class LicenseRenewalTest extends ServerTest {
     }
 
     @Test
-    void aKeyOfAReleasedClusterCannotConnect() throws Exception {
+    void aKeyOfAClusterThatMovedToAnotherLicenseCannotConnect() throws Exception {
         License license = await(licenseService.createFreeLicense(seedCustomer(), StripeStandIn.CURRENT_PRICE_LIST, null));
         LicensedCluster cluster = addCluster(license);
         String key = newestKey(cluster);
-        CustomerContact contact = await(contactRepository.findByCustomerId(license.getCustomerId())).getFirst();
         KinoticLicenseRenewalService open = renewal(connect(key));
-        asCustomer(contact, () -> customerAccount.releaseCluster(license.getId(), cluster.getId()));
+        // the license lapses, the cluster is added to another license, and the first license is paid up again
+        sql("UPDATE license SET status = 'LAPSED' WHERE id = $1", license.getId());
+        License next = await(licenseService.createFreeLicense(seedCustomer(), StripeStandIn.CURRENT_PRICE_LIST, null));
+        CustomerContact contact = await(contactRepository.findByCustomerId(next.getCustomerId())).getFirst();
+        asCustomer(contact, () -> customerAccount.addCluster(next.getId(), cluster.getClusterId(), "production"));
+        sql("UPDATE license SET status = 'ACTIVE' WHERE id = $1", license.getId());
 
         assertThatThrownBy(() -> connect(key)).hasCauseInstanceOf(AuthenticationException.class);
-        // a session opened before the release renews nothing
-        assertThatThrownBy(() -> renew(open)).hasMessageContaining("released");
+        // a session opened before the move renews nothing
+        assertThatThrownBy(() -> renew(open)).hasMessageContaining("another license");
     }
 
     @Test

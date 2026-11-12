@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import Button from 'primevue/button'
 import Tag from 'primevue/tag'
 import type { IssuedKey, LicensedCluster, LicenseWithKeys } from '@/api/model'
 import KeyBlock from '@/components/KeyBlock.vue'
@@ -8,18 +7,11 @@ import { formatDate } from '@/util/format'
 
 /**
  * A license's clusters: each cluster holding a seat with its id, when it was added and last renewed online, and its
- * newest key, marked when it is beyond the license's seats and gets no newer key; then the clusters released.
+ * newest key, marked when it is beyond the license's seats and gets no newer key; then the clusters that moved to
+ * another license after this one ended.
  */
 const props = defineProps<{
   entry: LicenseWithKeys
-  /** Offers a Release button on each cluster holding a seat. */
-  releasable?: boolean
-  /** The cluster being released, whose button shows it is busy. */
-  releasing?: string | null
-}>()
-
-const emit = defineEmits<{
-  release: [cluster: LicensedCluster]
 }>()
 
 const holding = computed(() => props.entry.clusters.filter(cluster => cluster.releasedAt === null))
@@ -46,19 +38,17 @@ function keysOf(cluster: LicensedCluster): IssuedKey[] {
             · {{ cluster.lastRenewedAt ? `last renewed online ${formatDate(cluster.lastRenewedAt)}` : 'never renewed online' }}
           </div>
         </div>
-        <Button v-if="releasable" label="Release" icon="pi pi-times" severity="secondary" outlined size="small"
-                :loading="releasing === cluster.id" @click="emit('release', cluster)" />
       </div>
       <p v-if="index >= entry.license.seats" class="text-sm text-orange-600 dark:text-orange-400">
         The license has {{ entry.license.seats }} {{ entry.license.seats === 1 ? 'seat' : 'seats' }}, so this cluster gets no newer key.
-        Release a cluster or add seats to keep it licensed.
+        Add seats to keep it licensed.
       </p>
       <KeyBlock v-for="(key, keyIndex) in keysOf(cluster)" :key="key.jti" :issued-key="key" :collapsed="keyIndex > 0" />
     </div>
     <p v-if="!holding.length" class="app-muted-text text-sm">No cluster holds a seat.</p>
     <ul v-if="released.length" class="app-muted-text space-y-1 text-xs">
       <li v-for="cluster in released" :key="cluster.id">
-        {{ cluster.name }} · <span class="font-mono">{{ cluster.clusterId }}</span> · released {{ formatDate(cluster.releasedAt) }}
+        {{ cluster.name }} · <span class="font-mono">{{ cluster.clusterId }}</span> · moved to another license {{ formatDate(cluster.releasedAt) }}
       </li>
     </ul>
   </div>

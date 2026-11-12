@@ -62,11 +62,6 @@ export class CustomerAccountService {
         return this.proxy.invoke('addCluster', [licenseId, clusterId, name])
     }
 
-    /** Releases a cluster's seat; its keys work until they expire. */
-    releaseCluster(licenseId: string, id: string): Promise<LicensedCluster> {
-        return this.proxy.invoke('releaseCluster', [licenseId, id])
-    }
-
     /** Applies to be a design partner; staff approve or reject the application. */
     applyAsDesignPartner(form: DesignPartnerApplicationForm, termsVersion: string): Promise<DesignPartnerApplication> {
         return this.proxy.invoke('applyAsDesignPartner', [form, termsVersion])

@@ -138,15 +138,7 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
         // a cluster whose first key cannot be issued gives its seat back, so adding it again starts over
         return callersLicense(licenseId).compose(license -> clusterRepository.add(cluster).compose(added -> licenseService.issueKey(license, added)
                 .map(added)
-                .recover(t -> clusterRepository.release(licenseId, added.getId()).compose(v -> Future.failedFuture(t)))));
-    }
-
-    @Override
-    public Future<LicensedCluster> releaseCluster(String licenseId, String id) {
-        return callersLicense(licenseId).compose(license -> clusterRepository.release(licenseId, id)).map(released -> {
-            Validate.isTrue(released != null, "The license has no cluster %s holding a seat", id);
-            return released;
-        });
+                .recover(t -> clusterRepository.remove(added.getId()).compose(v -> Future.failedFuture(t)))));
     }
 
     @Override

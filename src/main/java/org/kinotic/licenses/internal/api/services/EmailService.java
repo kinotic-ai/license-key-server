@@ -287,7 +287,7 @@ public class EmailService {
         String ret;
         if (beyondSeats) {
             ret = "the cluster is beyond your license's " + license.getSeats() + (license.getSeats() == 1 ? " seat" : " seats")
-                    + ". Release a cluster or add seats in your account to keep it licensed.";
+                    + ". Add seats in your account to keep it licensed.";
         } else if (license.getStatus() == LicenseStatus.TRIAL) {
             ret = "your trial of the " + planName(license.getPlan()) + " plan ends on " + DATE.format(license.getTermEnd())
                     + ". Buy the plan from your account to keep your license, its price list and its terms.";

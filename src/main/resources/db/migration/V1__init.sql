@@ -146,7 +146,8 @@ CREATE TABLE design_partner_publication (
 );
 
 -- A cluster a license's keys are bound to, by its id: the UID of the cluster's kube-system namespace, which Kubernetes
--- assigns when the cluster is created. A cluster holds a seat of its license until it is released.
+-- assigns when the cluster is created. A cluster holds a seat of its license for good, unless the license ends and the
+-- cluster is added to another license.
 CREATE TABLE licensed_cluster (
     id              TEXT PRIMARY KEY,
     license_id      TEXT        NOT NULL REFERENCES license (id),

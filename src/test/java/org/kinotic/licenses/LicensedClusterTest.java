@@ -29,8 +29,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * A customer adds a cluster to a license from its account by the id the cluster's system console shows, and the
- * cluster gets a key bound to it; a license holds as many clusters as it has seats, a cluster holds one seat at a time,
- * and releasing a cluster frees its seat.
+ * cluster gets a key bound to it; a license holds as many clusters as it has seats, and a cluster holds one seat at a
+ * time, which it gives up only when its license ends and it is added to another.
  */
 class LicensedClusterTest extends ServerTest {
 
@@ -64,17 +64,10 @@ class LicensedClusterTest extends ServerTest {
     void aLicenseHoldsAsManyClustersAsItHasSeats() throws Exception {
         License license = paidLicense();
         sql("UPDATE license SET seats = 2 WHERE id = $1", license.getId());
-        LicensedCluster first = addCluster(license);
+        addCluster(license);
         addCluster(license);
 
         assertThatThrownBy(() -> addCluster(license)).hasCauseInstanceOf(IllegalStateException.class).hasMessageContaining("seat");
-
-        LicensedCluster released = asCustomer(contactOf(license), () -> customerAccount.releaseCluster(license.getId(), first.getId()));
-        assertThat(released.getReleasedAt()).isNotNull();
-        addCluster(license);
-        // a cluster released already is not released again
-        assertThatThrownBy(() -> asCustomer(contactOf(license), () -> customerAccount.releaseCluster(license.getId(), first.getId())))
-                .hasCauseInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -98,12 +91,9 @@ class LicensedClusterTest extends ServerTest {
         License first = paidLicense();
         License second = paidLicense();
         String clusterId = UUID.randomUUID().toString();
-        LicensedCluster cluster = add(first, clusterId, "production");
+        add(first, clusterId, "production");
 
         assertThatThrownBy(() -> add(second, clusterId, "production")).hasCauseInstanceOf(AlreadyExistsException.class);
-
-        asCustomer(contactOf(first), () -> customerAccount.releaseCluster(first.getId(), cluster.getId()));
-        assertThat(add(second, clusterId, "production").getLicenseId()).isEqualTo(second.getId());
     }
 
     @Test
@@ -120,14 +110,12 @@ class LicensedClusterTest extends ServerTest {
     }
 
     @Test
-    void aCustomerAddsAndReleasesClustersOfItsOwnLicensesAlone() throws Exception {
+    void aCustomerAddsClustersToItsOwnLicensesAlone() throws Exception {
         License license = paidLicense();
-        LicensedCluster cluster = addCluster(license);
+        addCluster(license);
         CustomerContact other = await(contactRepository.findByCustomerId(seedCustomer().getId())).getFirst();
 
         assertThatThrownBy(() -> asCustomer(other, () -> customerAccount.addCluster(license.getId(), UUID.randomUUID().toString(), "theirs")))
-                .hasCauseInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> asCustomer(other, () -> customerAccount.releaseCluster(license.getId(), cluster.getId())))
                 .hasCauseInstanceOf(IllegalArgumentException.class);
         assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
     }

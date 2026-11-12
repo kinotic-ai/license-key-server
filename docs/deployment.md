@@ -48,12 +48,13 @@ the plan's Price; one for Free and for a trial. The customer adds a cluster from
 system console License page shows, the UID of its `kube-system` namespace, and a name (`licensed_cluster`). Adding a
 cluster takes a seat and issues its first key at once; the license row is locked while seats are counted, so clusters
 added together never take more seats than it has, and the partial unique index `licensed_cluster_active_idx` lets a
-cluster hold one seat at a time across every license. Releasing a cluster frees its seat; the keys it holds work until
-they expire, and no newer one is issued for it.
+cluster hold one seat at a time across every license. A cluster keeps its seat for good: the customer cannot release
+it, so a seat licenses one cluster. A cluster gives up its seat only when its license ends (expires, lapses, is canceled
+or revoked) and the cluster is added to another license.
 
 A license's seated clusters are its oldest unreleased ones, as many as it has seats. When the customer lowers the
 quantity below the clusters it holds, the newest clusters beyond it get no new keys, and renewing from one says why,
-until the customer releases a cluster or adds seats.
+until the customer adds seats again.
 
 ## Keys
 

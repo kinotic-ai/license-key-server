@@ -107,18 +107,6 @@ public interface CustomerAccountService {
     Future<LicensedCluster> addCluster(String licenseId, String clusterId, String name);
 
     /**
-     * Releases a cluster of one of the calling customer's licenses, freeing its seat. The cluster's keys work until they
-     * expire, and no newer one is issued for it.
-     *
-     * @param licenseId the license
-     * @param id        the licensed cluster's id
-     * @return the released cluster
-     * @throws IllegalArgumentException when the customer has no license with the id, or the license has no unreleased
-     *                                  cluster with the id
-     */
-    Future<LicensedCluster> releaseCluster(String licenseId, String id);
-
-    /**
      * Applies for the calling customer to be a design partner, on the paid plan its figures set, and records that the
      * calling contact accepted the terms with the design partner publicity they describe. Staff approve or reject it.
      *

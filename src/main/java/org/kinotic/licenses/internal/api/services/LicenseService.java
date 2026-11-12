@@ -117,7 +117,7 @@ public class LicenseService {
      * Issues a key for the cluster covering the date the license is paid through, or the trial.
      *
      * @return the key, or a failure with {@link IllegalStateException} when the license is neither active nor a trial,
-     *         or the cluster was released
+     *         or the cluster holds a seat of another license
      */
     public Future<IssuedKey> issueKey(License license, LicensedCluster cluster) {
         return claims(license, cluster, keyExpiry(license)).compose(claims -> sign(claims, license.getId(), cluster.getId()));
@@ -129,7 +129,7 @@ public class LicenseService {
      *
      * @return the key issued, or {@code null} when the cluster's newest key already covers the paid-through date or the
      *         trial; a failure with {@link IllegalStateException} when the license is neither active nor a trial, or the
-     *         cluster was released
+     *         cluster holds a seat of another license
      */
     public Future<IssuedKey> issueKeyIfExtended(License license, LicensedCluster cluster) {
         Instant coverage = keyExpiry(license);
@@ -413,7 +413,7 @@ public class LicenseService {
                         .map(issued -> {
                             if (issued == null) {
                                 throw new IllegalStateException("The license " + licenseId + " is neither active nor a trial, or its cluster "
-                                                                        + licensedClusterId + " was released, so it is issued no key");
+                                                                        + licensedClusterId + " gave up its seat, so it is issued no key");
                             }
                             log.info("Issued key {} for cluster {} of license {}", issued.getJti(), licensedClusterId, licenseId);
                             return issued;

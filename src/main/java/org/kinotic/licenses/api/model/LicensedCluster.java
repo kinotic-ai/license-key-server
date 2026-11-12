@@ -21,7 +21,7 @@ public class LicensedCluster {
     /** The name the customer gave the cluster. */
     private String name;
     private Instant addedAt;
-    /** When the customer released the cluster's seat; {@code null} while it holds one. */
+    /** When the cluster gave up its seat, as when its license ended and it was added to another; {@code null} while it holds one. */
     private Instant releasedAt;
     /** When the cluster last renewed its key from this server; {@code null} when it never has. */
     private Instant lastRenewedAt;

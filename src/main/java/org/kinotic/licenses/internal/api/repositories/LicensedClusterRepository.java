@@ -21,7 +21,7 @@ import java.util.List;
 public class LicensedClusterRepository {
 
     /** Why a cluster that holds a seat already cannot be added again. */
-    public static final String CLUSTER_TAKEN = "That cluster holds a seat of a license already; release it there first";
+    public static final String CLUSTER_TAKEN = "That cluster holds a seat of another license already";
 
     private static final String COLUMNS = "id, license_id, cluster_id, name, added_at, released_at, last_renewed_at";
     private static final String UNIQUE_VIOLATION = "23505";
@@ -52,7 +52,7 @@ public class LicensedClusterRepository {
                                          long taken = rows.iterator().next().getLong("taken");
                                          if (taken >= seats) {
                                              throw new IllegalStateException("Every seat of the license is taken (" + seats
-                                                     + "); release a cluster, or add seats to your subscription");
+                                                     + "); add seats to your subscription");
                                          }
                                          return seats;
                                      });
@@ -71,15 +71,12 @@ public class LicensedClusterRepository {
     }
 
     /**
-     * Releases a cluster's seat.
-     *
-     * @return the cluster as stored, or {@code null} when the license has no unreleased cluster with the id
+     * Removes a cluster that was never issued a key, freeing its seat.
      */
-    public Future<LicensedCluster> release(String licenseId, String id) {
-        return pool.preparedQuery("UPDATE licensed_cluster SET released_at = now() WHERE id = $1 AND license_id = $2"
-                                          + " AND released_at IS NULL RETURNING " + COLUMNS)
-                   .execute(Tuple.of(id, licenseId))
-                   .map(rows -> PgValues.first(rows, LicensedClusterRepository::toCluster));
+    public Future<Void> remove(String id) {
+        return pool.preparedQuery("DELETE FROM licensed_cluster WHERE id = $1")
+                   .execute(Tuple.of(id))
+                   .mapEmpty();
     }
 
     /**

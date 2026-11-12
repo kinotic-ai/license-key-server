@@ -3,10 +3,9 @@ import { computed, onMounted, ref } from 'vue'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
-import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 import { FormDrawer, PageHeader, showErrorToast } from '@kinotic-ai/frontend-common'
-import type { CustomerAccount, LicensedCluster, LicenseWithKeys, Plan } from '@/api/model'
+import type { CustomerAccount, LicenseWithKeys, Plan } from '@/api/model'
 import { customerAccountService } from '@/api/services'
 import ClusterList from '@/components/ClusterList.vue'
 import CompanyFiguresFields from '@/components/CompanyFiguresFields.vue'
@@ -16,14 +15,13 @@ import { billingPeriodName, formatDate, formatMoney, planName } from '@/util/for
 /**
  * The customer account: each license's status, plan, seats, billing period, paid-through date and next anniversary,
  * when a trial ends and how to buy its plan, the yearly confirmation of the company's figures when it is due, the design
- * partner discount, the license's clusters with adding and releasing them and every key issued for each with copy and
+ * partner discount, the license's clusters with adding them and every key issued for each with copy and
  * download and how to install it on the system console's License page, and the Stripe Customer Portal for payment
  * details, receipts and seats.
  */
 const CLUSTER_ID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 
 const toast = useToast()
-const confirm = useConfirm()
 const account = ref<CustomerAccount | null>(null)
 const loading = ref(true)
 const openingPortal = ref(false)
@@ -39,7 +37,6 @@ const addingTo = ref<LicenseWithKeys | null>(null)
 const clusterId = ref('')
 const clusterName = ref('')
 const adding = ref(false)
-const releasing = ref<string | null>(null)
 const clusterReady = computed(() => CLUSTER_ID.test(clusterId.value.trim()) && clusterName.value.trim().length > 0)
 
 const subscribed = computed(() => account.value?.licenses.some(l => l.license.plan !== 'FREE'
@@ -138,28 +135,6 @@ async function submitCluster() {
   } finally {
     adding.value = false
   }
-}
-
-function release(entry: LicenseWithKeys, cluster: LicensedCluster) {
-  confirm.require({
-    header: `Release ${cluster.name}?`,
-    message: 'Its seat is freed for another cluster. The keys it holds keep working until they expire, and no newer one is issued for it.',
-    icon: 'pi pi-exclamation-triangle',
-    acceptProps: { label: 'Release', severity: 'danger' },
-    rejectProps: { label: 'Cancel', severity: 'secondary', outlined: true },
-    accept: async () => {
-      releasing.value = cluster.id
-      try {
-        await customerAccountService.releaseCluster(entry.license.id, cluster.id)
-        toast.add({ severity: 'success', summary: 'Cluster released', life: 4000 })
-        await load()
-      } catch (err) {
-        showErrorToast(toast, 'The cluster could not be released', err, { life: 8000 })
-      } finally {
-        releasing.value = null
-      }
-    }
-  })
 }
 
 /** The paid plan a free license's latest confirmed figures set, which it must buy by its anniversary. */
@@ -279,7 +254,7 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
             <Button label="Add a cluster" icon="pi pi-plus" size="small" :disabled="!canAddCluster(entry)" @click="startAddingCluster(entry)" />
           </div>
         </div>
-        <ClusterList :entry="entry" releasable :releasing="releasing" @release="cluster => release(entry, cluster)" />
+        <ClusterList :entry="entry" />
       </section>
 
       <section v-if="account.licenses.length" class="app-card-surface rounded-xl border p-5 text-sm">

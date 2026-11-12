@@ -49,11 +49,10 @@ public class DefaultLicenseRenewalService implements LicenseRenewalService {
     }
 
     private Future<IssuedKey> renew(LicenseParticipant caller, License license, LicensedCluster cluster) {
-        // a session signed in before the cluster was released is still open
+        // a session signed in before the cluster moved to another license is still open
         if (cluster.getReleasedAt() != null) {
             return Future.failedFuture(new IllegalStateException(
-                    "This cluster was released from its license in your account at licenses.kinotic.ai, so no newer key is issued."
-                            + " Add the cluster again there to license it."));
+                    "This cluster holds a seat of another license now, so this license issues it no newer key. Install that license's key."));
         }
         return license.getStatus() == LicenseStatus.ACTIVE || license.getStatus() == LicenseStatus.TRIAL
                 ? seated(license, cluster)
@@ -70,7 +69,7 @@ public class DefaultLicenseRenewalService implements LicenseRenewalService {
             } else {
                 ret = Future.failedFuture(new IllegalStateException(
                         "The license has " + license.getSeats() + " seat(s) and more clusters than that, and this cluster is not one of"
-                                + " its oldest, so no newer key is issued. Release a cluster or add seats in your account at licenses.kinotic.ai."));
+                                + " its oldest, so no newer key is issued. Add seats in your account at licenses.kinotic.ai."));
             }
             return ret;
         });
