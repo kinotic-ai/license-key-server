@@ -203,6 +203,36 @@ class TrialTest extends ServerTest {
     }
 
     @Test
+    void aMoveWhileTheSubscriptionIsPastDueIsReadyWhenItsInvoiceIsPaid(CapturedOutput output) throws Exception {
+        CustomerContact contact = contactOf();
+        License trial = startTrial(contact, Plan.SMALL, SMALL_FIGURES);
+        String lookupKey = StripeStandIn.lookupKey(StripeStandIn.CURRENT_PRICE_LIST, Plan.SMALL, BillingPeriod.ANNUAL);
+        asCustomer(contact, () -> customerAccount.startCheckout(new CheckoutRequest().setPlan(Plan.SMALL)
+                                                                                     .setBillingPeriod(BillingPeriod.ANNUAL)
+                                                                                     .setFigures(SMALL_FIGURES),
+                                                               AgreementTerms.VERSION));
+        StripeRequest created = StripeStandIn.requests("POST", "/v1/checkout/sessions").stream()
+                                             .filter(request -> contact.getCustomerId().equals(request.params().get("client_reference_id")))
+                                             .reduce((first, second) -> second)
+                                             .orElseThrow();
+        String subscriptionId = "sub_" + UUID.randomUUID();
+        Instant periodEnd = Instant.now().plus(Duration.ofDays(365)).truncatedTo(ChronoUnit.SECONDS);
+        int readyEmails = count(output.getAll(), READY);
+
+        // the first invoice is paid but Stripe has the subscription past due when the checkout is handled
+        StripeStandIn.report(StripeEvents.subscription(subscriptionId, "past_due", lookupKey, periodEnd));
+        assertThat(deliver(StripeEvents.event("checkout.session.completed", StripeEvents.completedSession(created, subscriptionId, "paid")))
+                           .statusCode()).isEqualTo(200);
+        assertThat(count(output.getAll(), READY)).isEqualTo(readyEmails);
+        assertThat(await(licenseRepository.findById(trial.getId())).getLastPaymentAt()).isNull();
+
+        StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", lookupKey, periodEnd));
+        assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
+        assertThat(count(output.getAll(), READY)).isEqualTo(readyEmails + 1);
+        assertThat(await(licenseRepository.findById(trial.getId())).getLastPaymentAt()).isNotNull();
+    }
+
+    @Test
     void aTrialNobodyBoughtExpires(CapturedOutput output) throws Exception {
         CustomerContact contact = contactOf();
         License trial = startTrial(contact, Plan.SMALL, SMALL_FIGURES);

@@ -478,13 +478,9 @@ public class StripeBillingService {
                                     Future<Void> ret;
                                     if (moved != null) {
                                         log.info("The Checkout Session {} moved the license {} onto a paid plan", session.getId(), licenseId);
-                                        // A paid move is fulfilled here as createLicenseFor fulfills a purchase: the payment is
-                                        // recorded, so an invoice.paid arriving after it is no first payment, and the keys for
-                                        // the clusters the license holds and the ready email follow, in case its invoice.paid
-                                        // arrived before the license had the subscription
-                                        ret = sync(moved, subscription).compose(synced -> isPaid(subscription) && synced.getStatus() == LicenseStatus.ACTIVE
-                                                ? licenseRepository.recordPayment(synced.getId(), now).compose(paid -> extend(paid, true))
-                                                : Future.succeededFuture());
+                                        // a paid move is fulfilled here, in case its invoice.paid arrived before the license had
+                                        // the subscription
+                                        ret = sync(moved, subscription).compose(synced -> finishFulfillment(synced, isPaid(subscription)));
                                     } else {
                                         ret = customerRepository.findById(session.getClientReferenceId())
                                                                 .compose(customer -> createLicenseFor(customer, session, subscription));
@@ -493,10 +489,13 @@ public class StripeBillingService {
                                 });
     }
 
-    // issues the keys and sends the email a failed first attempt never got to; a payment that has not cleared waits for
-    // invoice.paid
+    // Issues the keys for the clusters the license holds and sends the ready email, then records the payment, so a
+    // redelivery after a failure, or an invoice.paid arriving later, still treats the payment as the first. A payment
+    // that has not cleared, or a license that is not active, waits for invoice.paid.
     private Future<Void> finishFulfillment(License license, boolean paid) {
-        return paid && license.getStatus() == LicenseStatus.ACTIVE ? extend(license, true) : Future.succeededFuture();
+        return paid && license.getStatus() == LicenseStatus.ACTIVE
+                ? extend(license, true).compose(extended -> licenseRepository.recordPayment(license.getId(), Instant.now())).mapEmpty()
+                : Future.succeededFuture();
     }
 
     private Future<Void> invoicePaid(Invoice invoice) {
