@@ -111,8 +111,8 @@ public class LicenseRepository {
 
     /**
      * Moves an active free license or a trial onto the paid subscription its customer bought, keeping its price list and
-     * terms, with the seats the subscription pays for. A free license keeps its license year; a trial starts its first
-     * license year, from {@code termStart} to {@code termEnd}.
+     * terms, with the seats the subscription pays for and no payment recorded for it yet. A free license keeps its
+     * license year; a trial starts its first license year, from {@code termStart} to {@code termEnd}.
      *
      * @return the license as stored, or {@code null} when it is no longer an active free license or a trial
      */
@@ -120,7 +120,7 @@ public class LicenseRepository {
                                               String checkoutSessionId, Instant currentPeriodEnd, Instant termStart, Instant termEnd) {
         // every CASE reads the status the row had before this update
         return pool.preparedQuery("UPDATE license SET plan = $2, billing_period = $3, stripe_subscription_id = $4,"
-                                          + " checkout_session_id = $5, current_period_end = $6, seats = $9,"
+                                          + " checkout_session_id = $5, current_period_end = $6, seats = $9, last_payment_at = NULL,"
                                           + " term_start = CASE WHEN status = 'TRIAL' THEN $7 ELSE term_start END,"
                                           + " term_end = CASE WHEN status = 'TRIAL' THEN $8 ELSE term_end END, status = 'ACTIVE'"
                                           + " WHERE id = $1 AND (status = 'TRIAL' OR (plan = 'FREE' AND status = 'ACTIVE')) RETURNING " + COLUMNS)

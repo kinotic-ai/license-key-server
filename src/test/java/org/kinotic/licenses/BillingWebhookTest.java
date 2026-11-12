@@ -259,6 +259,26 @@ class BillingWebhookTest extends ServerTest {
     }
 
     @Test
+    void aFreeLicensePaidBeforeIsReadyWhenItsNewSubscriptionsFirstInvoiceIsPaid(CapturedOutput output) throws Exception {
+        License free = await(licenseService.createFreeLicense(seedCustomer(), StripeStandIn.CURRENT_PRICE_LIST, null));
+        // a license that was paid before it moved to Free
+        sql("UPDATE license SET last_payment_at = now() - interval '400 days' WHERE id = $1", free.getId());
+        String subscriptionId = "sub_" + UUID.randomUUID();
+        Instant periodEnd = Instant.now().plus(Duration.ofDays(30)).truncatedTo(ChronoUnit.SECONDS);
+        JsonObject session = StripeEvents.checkoutSession("cs_" + UUID.randomUUID(), subscriptionId, free.getCustomerId(), "paid")
+                                         .put("metadata", new JsonObject().put("kinoticLicenseId", free.getId()));
+        int readyEmails = count(output.getAll(), "Your Kinotic Enterprise license is ready");
+
+        StripeStandIn.report(StripeEvents.subscription(subscriptionId, "past_due", StripeStandIn.monthly(Plan.SMALL), periodEnd));
+        assertThat(deliver(StripeEvents.event("checkout.session.completed", session)).statusCode()).isEqualTo(200);
+        assertThat(await(licenseRepository.findById(free.getId())).getLastPaymentAt()).isNull();
+
+        StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", StripeStandIn.monthly(Plan.SMALL), periodEnd));
+        assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
+        assertThat(count(output.getAll(), "Your Kinotic Enterprise license is ready")).isEqualTo(readyEmails + 1);
+    }
+
+    @Test
     void aDebitThatClearedBeforeItsCheckoutWasHandledIsActiveAtOnce() throws Exception {
         Customer customer = seedCustomer();
         String subscriptionId = "sub_" + UUID.randomUUID();
