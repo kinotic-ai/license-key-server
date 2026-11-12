@@ -493,9 +493,10 @@ public class StripeBillingService {
                                 });
     }
 
-    // sends the email a failed first attempt never sent; a payment that has not cleared waits for invoice.paid
+    // issues the keys and sends the email a failed first attempt never got to; a payment that has not cleared waits for
+    // invoice.paid
     private Future<Void> finishFulfillment(License license, boolean paid) {
-        return paid ? licenseService.emailLicenseReady(license) : Future.succeededFuture();
+        return paid && license.getStatus() == LicenseStatus.ACTIVE ? extend(license, true) : Future.succeededFuture();
     }
 
     private Future<Void> invoicePaid(Invoice invoice) {
