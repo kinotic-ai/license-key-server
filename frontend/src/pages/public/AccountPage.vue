@@ -119,11 +119,15 @@ async function submitCluster() {
   if (!addingTo.value || !clusterReady.value) {
     return
   }
+  const entry = addingTo.value
   adding.value = true
   try {
-    await customerAccountService.addCluster(addingTo.value.license.id, clusterId.value.trim(), clusterName.value.trim())
+    await customerAccountService.addCluster(entry.license.id, clusterId.value.trim(), clusterName.value.trim())
     toast.add({ severity: 'success', summary: 'Cluster added', detail: 'Its key is below. Paste it into the cluster\'s License page.', life: 6000 })
-    addingTo.value = null
+    // the drawer may have been closed and opened for another license while the add was in flight
+    if (addingTo.value === entry) {
+      addingTo.value = null
+    }
     await load()
   } catch (err) {
     showErrorToast(toast, 'The cluster could not be added', err, { life: 8000 })

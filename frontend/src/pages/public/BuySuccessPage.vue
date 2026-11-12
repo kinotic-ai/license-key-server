@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import Button from 'primevue/button'
 import { useToast } from 'primevue/usetoast'
 import { PageHeader, showErrorToast } from '@kinotic-ai/frontend-common'
-import type { License } from '@/api/model'
+import type { License, LicenseStatus } from '@/api/model'
 import { customerAccountService } from '@/api/services'
 import { planName } from '@/util/format'
 
@@ -16,6 +16,7 @@ import { planName } from '@/util/format'
 const POLL_MS = 2000
 // ten minutes of polling, well past the time Stripe takes to deliver the webhook
 const MAX_POLLS = 300
+const ENDED: LicenseStatus[] = ['LAPSED', 'CANCELED', 'EXPIRED', 'REVOKED']
 
 const route = useRoute()
 const toast = useToast()
@@ -78,6 +79,12 @@ onBeforeUnmount(() => {
       <div>
         <RouterLink to="/account"><Button label="Add your clusters" icon="pi pi-server" /></RouterLink>
       </div>
+    </div>
+    <div v-else-if="license && ENDED.includes(license.status)" class="app-card-surface rounded-xl border p-5 text-sm">
+      <p class="app-heading-text">This license is no longer active.</p>
+      <p class="app-muted-text mt-2">
+        See its state in <RouterLink to="/account" class="underline">your account</RouterLink>, or write to us if that is unexpected.
+      </p>
     </div>
     <div v-else-if="gaveUp || license" class="app-card-surface rounded-xl border p-5 text-sm">
       <p class="app-heading-text">Your license is on its way.</p>

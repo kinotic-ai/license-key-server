@@ -186,13 +186,13 @@ public class LicenseRepository {
     }
 
     /**
-     * Moves a paid license whose subscription ended at its anniversary onto Free, keeping its price list, terms and
-     * license year. It no longer refers to the ended subscription.
+     * Moves a paid license whose subscription ended at its anniversary onto Free, with Free's one seat, keeping its
+     * price list, terms and license year. It no longer refers to the ended subscription.
      *
      * @return the license as stored, or {@code null} when it is not a paid license in good standing or past due
      */
     public Future<License> moveToFree(String id) {
-        return pool.preparedQuery("UPDATE license SET plan = 'FREE', billing_period = NULL, stripe_subscription_id = NULL,"
+        return pool.preparedQuery("UPDATE license SET plan = 'FREE', seats = 1, billing_period = NULL, stripe_subscription_id = NULL,"
                                           + " current_period_end = NULL, cancels_at = NULL, past_due_since = NULL, status = 'ACTIVE'"
                                           + " WHERE id = $1 AND plan <> 'FREE' AND status IN ('ACTIVE', 'PAST_DUE') RETURNING " + COLUMNS)
                    .execute(Tuple.of(id))

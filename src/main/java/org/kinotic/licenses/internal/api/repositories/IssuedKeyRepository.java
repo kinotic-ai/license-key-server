@@ -59,8 +59,8 @@ public class IssuedKeyRepository {
 
     /**
      * The newest key of each unreleased cluster that expires before {@code expiresBefore} and after now, with no warning
-     * sent for it, whose license will not replace it by itself: past due, set to end, a trial, or free, whose next year
-     * is approved by staff.
+     * sent for it, which will not be replaced by itself: its license is past due, set to end, a trial, or free, whose
+     * next year is approved by staff, or the cluster is beyond the license's seats.
      */
     public Future<List<IssuedKey>> findExpiringUnwarned(Instant expiresBefore) {
         return pool.preparedQuery("SELECT k.jti, k.license_id, k.licensed_cluster_id, k.key, k.issued_at, k.expires_at"
@@ -68,7 +68,10 @@ public class IssuedKeyRepository {
                                           + " JOIN LATERAL (SELECT * FROM issued_key WHERE licensed_cluster_id = c.id ORDER BY issued_at DESC LIMIT 1) k ON true"
                                           + " WHERE c.released_at IS NULL AND k.expires_at > now() AND k.expires_at < $1"
                                           + " AND NOT EXISTS (SELECT 1 FROM key_expiry_warning w WHERE w.jti = k.jti)"
-                                          + " AND (l.status IN ('PAST_DUE', 'TRIAL') OR (l.status = 'ACTIVE' AND (l.plan = 'FREE' OR l.cancels_at IS NOT NULL)))"
+                                          + " AND (l.status IN ('PAST_DUE', 'TRIAL') OR (l.status = 'ACTIVE' AND (l.plan = 'FREE' OR l.cancels_at IS NOT NULL))"
+                                          // beyond the seats: as many older unreleased clusters as the license has seats, as findSeated orders them
+                                          + " OR (SELECT count(*) FROM licensed_cluster o WHERE o.license_id = c.license_id AND o.released_at IS NULL"
+                                          + " AND (o.added_at, o.id) < (c.added_at, c.id)) >= l.seats)"
                                           + " ORDER BY k.expires_at")
                    .execute(Tuple.of(PgValues.timestamp(expiresBefore)))
                    .map(rows -> PgValues.map(rows, IssuedKeyRepository::toKey));

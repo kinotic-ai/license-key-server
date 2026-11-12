@@ -1,4 +1,4 @@
-Good news: the free Kinotic Enterprise license for {{organization}} is approved, for one cluster, until {{expiresOn}}. To turn on the Enterprise Features:
+Good news: the free Kinotic Enterprise license for {{organization}} is approved, for one cluster, until {{termEnd}}. To turn on the Enterprise Features:
 
 1. Copy the cluster id from your Kinotic system console's License page.
 2. In your account, add the cluster to this license with that id.

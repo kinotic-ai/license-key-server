@@ -92,7 +92,7 @@ async function decide(approve: boolean) {
       </dl>
       <template #footer>
         <Button type="button" label="Reject" severity="danger" outlined :loading="deciding" @click="decide(false)" />
-        <Button type="button" label="Approve and issue key" :loading="deciding" @click="decide(true)" />
+        <Button type="button" label="Approve" :loading="deciding" @click="decide(true)" />
       </template>
     </FormDrawer>
   </div>

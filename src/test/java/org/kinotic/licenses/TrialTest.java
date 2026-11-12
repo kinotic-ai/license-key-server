@@ -55,6 +55,7 @@ class TrialTest extends ServerTest {
 
     private static final CompanyFigures SMALL_FIGURES = figures("1500000");
     private static final CompanyFigures MEDIUM_FIGURES = figures("30000000");
+    private static final String READY = "Your Kinotic Enterprise license is ready";
 
     @Autowired
     private LicenseRepository licenseRepository;
@@ -157,7 +158,7 @@ class TrialTest extends ServerTest {
     }
 
     @Test
-    void buyingDuringTheTrialMovesItOntoThePlanAndStartsItsFirstYear() throws Exception {
+    void buyingDuringTheTrialMovesItOntoThePlanAndStartsItsFirstYear(CapturedOutput output) throws Exception {
         CustomerContact contact = contactOf();
         License trial = startTrial(contact, Plan.SMALL, SMALL_FIGURES);
         addCluster(trial);
@@ -180,8 +181,13 @@ class TrialTest extends ServerTest {
         String subscriptionId = "sub_" + UUID.randomUUID();
         StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", lookupKey,
                                                        Instant.now().plus(Duration.ofDays(365)).truncatedTo(ChronoUnit.SECONDS)));
+        int readyEmails = count(output.getAll(), READY);
         assertThat(deliver(StripeEvents.event("checkout.session.completed", StripeEvents.completedSession(created, subscriptionId, "paid")))
                            .statusCode()).isEqualTo(200);
+        assertThat(count(output.getAll(), READY)).isEqualTo(readyEmails + 1);
+        // the first invoice's payment arriving after the move tells the contacts nothing more
+        assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
+        assertThat(count(output.getAll(), READY)).isEqualTo(readyEmails + 1);
 
         License moved = await(licenseRepository.findById(trial.getId()));
         assertThat(moved.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
@@ -248,5 +254,9 @@ class TrialTest extends ServerTest {
 
     private static CompanyFigures figures(String revenue) {
         return new CompanyFigures().setAnnualRevenue(new BigDecimal(revenue));
+    }
+
+    private static int count(String text, String needle) {
+        return (text.length() - text.replace(needle, "").length()) / needle.length();
     }
 }

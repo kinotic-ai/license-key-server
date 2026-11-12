@@ -48,7 +48,7 @@ const plan = computed<Plan | null>(() => {
 })
 const period = computed<BillingPeriod>(() => String(route.query.billing ?? '').toUpperCase() === 'ANNUAL' ? 'ANNUAL' : 'MONTHLY')
 const price = computed(() => prices.value.find(p => p.plan === plan.value && p.billingPeriod === period.value) ?? null)
-const seatsGiven = computed(() => seats.value !== null && seats.value >= 1)
+const seatsGiven = computed(() => seats.value !== null && Number.isInteger(seats.value) && seats.value >= 1)
 const figuresGiven = computed(() => annualRevenue.value !== null && (annualRevenue.value >= 1_000_000 || capitalRaised.value !== null))
 
 watch([annualRevenue, capitalRaised, plan], () => { matching.value = null })
@@ -148,7 +148,7 @@ async function startTrial() {
         <div class="flex flex-wrap items-end gap-4">
           <div class="flex flex-col gap-2">
             <label for="seats" class="app-heading-text text-sm font-medium">Clusters</label>
-            <InputNumber input-id="seats" v-model="seats" :min="1" show-buttons class="w-36" />
+            <InputNumber input-id="seats" v-model="seats" :min="1" :max-fraction-digits="0" show-buttons class="w-36" />
           </div>
           <p v-if="price && seatsGiven" class="app-muted-text pb-2 text-sm tabular-nums">
             {{ formatMoney(price.amount * seats!, price.currency) }} {{ period === 'ANNUAL' ? 'a year' : 'a month' }} in all

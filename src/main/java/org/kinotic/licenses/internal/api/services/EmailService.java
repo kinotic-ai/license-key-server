@@ -268,12 +268,13 @@ public class EmailService {
                     PARTNER_REJECTED_HTML, PARTNER_REJECTED_TEXT, variables);
     }
 
-    // expiresOn is when a key issued for the license now expires
+    // expiresOn is when a key issued for the license now expires, termEnd when its license year ends
     private Map<String, Object> licenseVariables(String organization, License license) {
         Map<String, Object> ret = new HashMap<>();
         ret.put("organization", organization);
         ret.put("planName", planName(license.getPlan()));
         ret.put("expiresOn", DATE.format(LicenseService.keyExpiry(license)));
+        ret.put("termEnd", DATE.format(license.getTermEnd()));
         ret.put("accountUrl", accountUrl());
         return ret;
     }
@@ -288,8 +289,11 @@ public class EmailService {
             ret = "a payment failed. Update your payment details from your account, and a new key is issued once it is paid.";
         } else if (license.getCancelsAt() != null) {
             ret = "your subscription is set to end on " + DATE.format(license.getCancelsAt()) + ".";
-        } else {
+        } else if (license.getPlan() == Plan.FREE) {
             ret = "your free license's year is ending. Confirm your company's figures in your account so we can renew it.";
+        } else {
+            ret = "the cluster is beyond your license's " + license.getSeats() + (license.getSeats() == 1 ? " seat" : " seats")
+                    + ". Release a cluster or add seats in your account to keep it licensed.";
         }
         return ret;
     }

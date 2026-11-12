@@ -125,7 +125,7 @@ class YearlyConfirmationTest extends ServerTest {
     void figuresThatSetFreeEndThePaidSubscriptionAndTheLicenseContinuesAsFree() throws Exception {
         String subscriptionId = "sub_" + UUID.randomUUID();
         License license = paidLicense(seedCustomer(), subscriptionId);
-        sql("UPDATE license SET term_end = now() + interval '1 hour' WHERE id = $1", license.getId());
+        sql("UPDATE license SET term_end = now() + interval '1 hour', seats = 3 WHERE id = $1", license.getId());
         License due = await(licenseRepository.findById(license.getId()));
 
         RevenueConfirmation confirmed = confirm(contactOf(license), due, figures("400000", "1000000"));
@@ -139,6 +139,7 @@ class YearlyConfirmationTest extends ServerTest {
         assertThat(free.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
         assertThat(free.getStripeSubscriptionId()).isNull();
         assertThat(free.getBillingPeriod()).isNull();
+        assertThat(free.getSeats()).isEqualTo(1);
 
         // once the anniversary has passed, its next year starts as Free with the key covering it
         shiftAnniversary(license.getId());

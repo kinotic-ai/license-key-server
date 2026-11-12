@@ -1,6 +1,7 @@
 package org.kinotic.licenses;
 
 import io.vertx.core.json.JsonObject;
+import io.vertx.sqlclient.Tuple;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.kinotic.licenses.api.model.IssuedKey;
@@ -131,6 +132,29 @@ class KeyCoverageTest extends ServerTest {
         assertThat(count(output.getAll(), EXPIRING)).isEqualTo(afterFirst);
         assertThat(await(licenseService.keysOf(renewing.getId()))).hasSize(1);
         assertThat(freeKey).isNotNull();
+    }
+
+    @Test
+    void theContactsOfAClusterBeyondTheSeatsAreWarned(CapturedOutput output) throws Exception {
+        Instant periodEnd = Instant.now().plus(Duration.ofDays(3)).truncatedTo(ChronoUnit.SECONDS);
+        License license = await(licenseService.createLicense(seedCustomer(), subscription(Plan.SMALL, "sub_" + UUID.randomUUID(),
+                                                                                          "cs_" + UUID.randomUUID(), periodEnd)));
+        sql("UPDATE license SET seats = 2 WHERE id = $1", license.getId());
+        LicensedCluster seated = addCluster(license);
+        LicensedCluster beyond = addCluster(license);
+        // the customer drops a seat, so the newer cluster gets no next key
+        sql("UPDATE license SET seats = 1 WHERE id = $1", license.getId());
+
+        await(keyEmailJob.run());
+
+        assertThat(output.getAll()).contains("the cluster is beyond your license's 1 seat");
+        assertThat(warned(beyond)).isTrue();
+        assertThat(warned(seated)).isFalse();
+    }
+
+    private boolean warned(LicensedCluster cluster) throws Exception {
+        return await(pool.preparedQuery("SELECT 1 FROM key_expiry_warning w JOIN issued_key k ON k.jti = w.jti WHERE k.licensed_cluster_id = $1")
+                         .execute(Tuple.of(cluster.getId()))).size() > 0;
     }
 
     private static int count(String text, String needle) {
