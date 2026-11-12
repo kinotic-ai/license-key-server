@@ -231,6 +231,34 @@ class BillingWebhookTest extends ServerTest {
     }
 
     @Test
+    void aPaymentWhileTheLicenseIsNotActiveLeavesTheNextOneItsFirst(CapturedOutput output) throws Exception {
+        Customer customer = seedCustomer();
+        String subscriptionId = "sub_" + UUID.randomUUID();
+        String sessionId = "cs_" + UUID.randomUUID();
+        Instant periodEnd = Instant.now().plus(Duration.ofDays(30)).truncatedTo(ChronoUnit.SECONDS);
+        JsonObject clearing = StripeEvents.subscription(subscriptionId, "incomplete", StripeStandIn.monthly(Plan.SMALL), periodEnd);
+        clearing.getJsonObject("latest_invoice").put("status", "open");
+        StripeStandIn.report(clearing);
+        assertThat(deliver(StripeEvents.event("checkout.session.completed",
+                                              StripeEvents.checkoutSession(sessionId, subscriptionId, customer.getId(), "unpaid"))).statusCode()).isEqualTo(200);
+        License awaiting = await(licenseRepository.findByCheckoutSessionId(sessionId));
+        int readyEmails = count(output.getAll(), "Your Kinotic Enterprise license is ready");
+
+        // an invoice paid while Stripe still has the subscription past due leaves the license waiting
+        StripeStandIn.report(StripeEvents.subscription(subscriptionId, "past_due", StripeStandIn.monthly(Plan.SMALL), periodEnd));
+        assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
+        assertThat(await(licenseRepository.findById(awaiting.getId())).getLastPaymentAt()).isNull();
+
+        StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", StripeStandIn.monthly(Plan.SMALL), periodEnd));
+        assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
+
+        License paid = await(licenseRepository.findById(awaiting.getId()));
+        assertThat(paid.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
+        assertThat(paid.getLastPaymentAt()).isNotNull();
+        assertThat(count(output.getAll(), "Your Kinotic Enterprise license is ready")).isEqualTo(readyEmails + 1);
+    }
+
+    @Test
     void aDebitThatClearedBeforeItsCheckoutWasHandledIsActiveAtOnce() throws Exception {
         Customer customer = seedCustomer();
         String subscriptionId = "sub_" + UUID.randomUUID();
