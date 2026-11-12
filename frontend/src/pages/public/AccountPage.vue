@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
@@ -15,13 +16,16 @@ import { billingPeriodName, formatDate, formatMoney, planName } from '@/util/for
 /**
  * The customer account: each license's status, plan, seats, billing period, paid-through date and next anniversary,
  * when a trial ends and how to buy its plan, the yearly confirmation of the company's figures when it is due, the design
- * partner discount, the license's clusters with adding them and every key issued for each with copy and
+ * partner discount, the license's clusters with adding them, started from a cluster's License page link that names the
+ * cluster in its clusterId query parameter, and every key issued for each with copy and
  * download and how to install it on the system console's License page, and the Stripe Customer Portal for payment
  * details, receipts and seats.
  */
 const CLUSTER_ID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 
 const toast = useToast()
+const route = useRoute()
+const router = useRouter()
 const account = ref<CustomerAccount | null>(null)
 const loading = ref(true)
 const openingPortal = ref(false)
@@ -37,6 +41,12 @@ const addingTo = ref<LicenseWithKeys | null>(null)
 const clusterId = ref('')
 const clusterName = ref('')
 const adding = ref(false)
+// the cluster id a cluster's system console License page sends with its "License this cluster" link, until it is added
+const linkedClusterId = ref<string | null>(null)
+const addableLicenses = computed(() => account.value?.licenses.filter(canAddCluster) ?? [])
+// the license the linked cluster holds a seat of already
+const linkedHolder = computed(() => account.value?.licenses.find(entry => entry.clusters.some(
+    cluster => cluster.releasedAt === null && cluster.clusterId === linkedClusterId.value)))
 const clusterReady = computed(() => CLUSTER_ID.test(clusterId.value.trim()) && clusterName.value.trim().length > 0)
 
 const subscribed = computed(() => account.value?.licenses.some(l => l.license.plan !== 'FREE'
@@ -49,7 +59,10 @@ const confirmingFree = computed(() => confirming.value?.license.plan === 'FREE')
 const needsCapital = computed(() => confirmingFree.value || (annualRevenue.value !== null && annualRevenue.value < 1_000_000))
 const figuresReady = computed(() => annualRevenue.value !== null && (!needsCapital.value || capitalRaised.value !== null))
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  takeLinkedCluster()
+})
 
 async function load() {
   loading.value = true
@@ -59,6 +72,20 @@ async function load() {
     showErrorToast(toast, 'Your account could not be loaded', err)
   } finally {
     loading.value = false
+  }
+}
+
+// Takes the cluster id of the link once: opens the add-cluster drawer when exactly one license has a seat free, and
+// otherwise leaves the id for the drawer of whichever license the customer picks
+function takeLinkedCluster() {
+  const linked = typeof route.query.clusterId === 'string' ? route.query.clusterId.trim().toLowerCase() : ''
+  if (!account.value || !CLUSTER_ID.test(linked)) {
+    return
+  }
+  router.replace({ query: { ...route.query, clusterId: undefined } })
+  linkedClusterId.value = linked
+  if (!linkedHolder.value && addableLicenses.value.length === 1) {
+    startAddingCluster(addableLicenses.value[0]!)
   }
 }
 
@@ -108,7 +135,7 @@ function canAddCluster(entry: LicenseWithKeys): boolean {
 
 function startAddingCluster(entry: LicenseWithKeys) {
   addingTo.value = entry
-  clusterId.value = ''
+  clusterId.value = linkedClusterId.value ?? ''
   clusterName.value = ''
 }
 
@@ -129,6 +156,7 @@ async function submitCluster() {
     await customerAccountService.addCluster(entry.license.id, clusterId.value.trim(), clusterName.value.trim())
     toast.add({ severity: 'success', summary: 'Cluster added', detail: 'Its key is below. Paste it into the cluster\'s License page.', life: 6000 })
     addingTo.value = null
+    linkedClusterId.value = null
     await load()
   } catch (err) {
     showErrorToast(toast, 'The cluster could not be added', err, { life: 8000 })
@@ -158,6 +186,19 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
 
     <div v-if="loading" class="app-muted-text text-sm">Loading…</div>
     <div v-else-if="account" class="flex flex-col gap-8">
+      <template v-if="linkedClusterId && !addingTo">
+        <Message v-if="linkedHolder" severity="info">
+          Cluster <span class="font-mono">{{ linkedClusterId }}</span> holds a seat of your {{ planName(linkedHolder.license.plan) }} plan
+          already; its key is below.
+        </Message>
+        <Message v-else-if="addableLicenses.length === 0" severity="warn">
+          No license has a seat free for cluster <span class="font-mono">{{ linkedClusterId }}</span>. Buy a plan, or add seats under
+          Billing, receipts and seats.
+        </Message>
+        <Message v-else severity="info">
+          Select Add a cluster on the license that should cover cluster <span class="font-mono">{{ linkedClusterId }}</span>.
+        </Message>
+      </template>
       <section v-if="account.licenses.length === 0" class="app-card-surface rounded-xl border p-5 text-sm">
         <p class="app-heading-text">No license yet.</p>
         <p class="app-muted-text mt-2">
@@ -283,7 +324,7 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
     </div>
 
     <FormDrawer :visible="addingTo !== null" title="Add a cluster"
-                description="The cluster id is on the License page of the cluster's Kinotic system console. The cluster takes one of the license's seats."
+                description="The cluster id is on the License page of the cluster's Kinotic system console. The cluster takes one of the license's seats for good."
                 @close="closeAddCluster">
       <form id="cluster-form" class="flex flex-col gap-5" @submit.prevent="submitCluster">
         <div class="flex flex-col gap-2">
