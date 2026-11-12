@@ -115,6 +115,13 @@ function startAddingCluster(entry: LicenseWithKeys) {
   clusterName.value = ''
 }
 
+// the drawer stays open while an add is in flight, so the add's completion closes the drawer it was made from
+function closeAddCluster() {
+  if (!adding.value) {
+    addingTo.value = null
+  }
+}
+
 async function submitCluster() {
   if (!addingTo.value || !clusterReady.value) {
     return
@@ -124,10 +131,7 @@ async function submitCluster() {
   try {
     await customerAccountService.addCluster(entry.license.id, clusterId.value.trim(), clusterName.value.trim())
     toast.add({ severity: 'success', summary: 'Cluster added', detail: 'Its key is below. Paste it into the cluster\'s License page.', life: 6000 })
-    // the drawer may have been closed and opened for another license while the add was in flight
-    if (addingTo.value === entry) {
-      addingTo.value = null
-    }
+    addingTo.value = null
     await load()
   } catch (err) {
     showErrorToast(toast, 'The cluster could not be added', err, { life: 8000 })
@@ -305,7 +309,7 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
 
     <FormDrawer :visible="addingTo !== null" title="Add a cluster"
                 description="The cluster id is on the License page of the cluster's Kinotic system console. The cluster takes one of the license's seats."
-                @close="addingTo = null">
+                @close="closeAddCluster">
       <form id="cluster-form" class="flex flex-col gap-5" @submit.prevent="submitCluster">
         <div class="flex flex-col gap-2">
           <label for="cluster-id" class="app-heading-text text-sm font-medium">Cluster id</label>
@@ -317,7 +321,7 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
         </div>
       </form>
       <template #footer>
-        <Button type="button" label="Cancel" severity="secondary" outlined @click="addingTo = null" />
+        <Button type="button" label="Cancel" severity="secondary" outlined :disabled="adding" @click="closeAddCluster" />
         <Button type="submit" form="cluster-form" label="Add cluster" :disabled="!clusterReady" :loading="adding" />
       </template>
     </FormDrawer>
