@@ -503,12 +503,14 @@ public class StripeBillingService {
         Instant paidAt = invoice.getStatusTransitions() != null && invoice.getStatusTransitions().getPaidAt() != null
                 ? Instant.ofEpochSecond(invoice.getStatusTransitions().getPaidAt())
                 : Instant.now();
-        // a license never paid before is one bought by bank debit, whose first payment clears here
-        return withLicenseOf(subscriptionOf(invoice), (license, subscription) -> licenseRepository.recordPayment(license.getId(), paidAt)
-                .compose(paid -> sync(paid, subscription))
+        // A license never paid before is one bought by bank debit, whose first payment clears here. The payment is
+        // recorded after the license is extended, so a redelivery after a failed ready email is still a first payment.
+        return withLicenseOf(subscriptionOf(invoice), (license, subscription) -> sync(license, subscription)
                 .compose(synced -> synced.getStatus() == LicenseStatus.ACTIVE
                         ? extend(synced, license.getLastPaymentAt() == null)
-                        : Future.succeededFuture()));
+                        : Future.succeededFuture())
+                .compose(extended -> licenseRepository.recordPayment(license.getId(), paidAt))
+                .mapEmpty());
     }
 
     // A paid invoice extends the license's paid-through date, and each seated cluster's key covering it is issued once
