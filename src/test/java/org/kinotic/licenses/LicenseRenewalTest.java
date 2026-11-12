@@ -130,9 +130,12 @@ class LicenseRenewalTest extends ServerTest {
         LicensedCluster cluster = addCluster(license);
         String key = newestKey(cluster);
         CustomerContact contact = await(contactRepository.findByCustomerId(license.getCustomerId())).getFirst();
+        KinoticLicenseRenewalService open = renewal(connect(key));
         asCustomer(contact, () -> customerAccount.releaseCluster(license.getId(), cluster.getId()));
 
         assertThatThrownBy(() -> connect(key)).hasCauseInstanceOf(AuthenticationException.class);
+        // a session opened before the release renews nothing
+        assertThatThrownBy(() -> renew(open)).hasMessageContaining("released");
     }
 
     @Test

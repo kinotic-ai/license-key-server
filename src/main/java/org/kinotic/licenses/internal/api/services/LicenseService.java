@@ -104,8 +104,8 @@ public class LicenseService {
     }
 
     /**
-     * Creates a paid license whose first payment has not cleared, as with a bank debit. It holds no key and is
-     * {@link LicenseStatus#PAST_DUE} until the payment succeeds, when {@link #issueKeyIfExtended(License)} issues its first.
+     * Creates a paid license whose first payment has not cleared, as with a bank debit. It is
+     * {@link LicenseStatus#PAST_DUE}, and takes no cluster, until the payment succeeds.
      *
      * @return the license
      */
@@ -219,7 +219,11 @@ public class LicenseService {
      * Warns the licensee's contacts that a cluster's newest key expires with no newer one issued.
      */
     public Future<Void> emailKeyExpiring(License license, LicensedCluster cluster, IssuedKey key) {
-        return emailContacts(license, (contact, organization) -> emailService.sendKeyExpiring(contact, organization, license, cluster, key));
+        return clusterRepository.findSeated(license.getId()).compose(seated -> {
+            boolean beyondSeats = seated.stream().noneMatch(held -> held.getId().equals(cluster.getId()));
+            return emailContacts(license, (contact, organization) -> emailService.sendKeyExpiring(contact, organization, license, cluster, key,
+                                                                                                  beyondSeats));
+        });
     }
 
     /**

@@ -123,13 +123,15 @@ public class EmailService {
 
     /**
      * Warns a contact that a cluster's newest key expires with no newer one issued, saying why.
+     *
+     * @param beyondSeats whether the cluster is one of the license's clusters beyond its seats
      */
     public Future<Void> sendKeyExpiring(CustomerContact contact, String organization, License license, LicensedCluster cluster,
-                                        IssuedKey key) {
+                                        IssuedKey key, boolean beyondSeats) {
         Map<String, Object> variables = licenseVariables(organization, license);
         variables.put("expiresOn", DATE.format(key.getExpiresAt()));
         variables.put("clusterName", cluster.getName());
-        variables.put("reason", expiryReason(license));
+        variables.put("reason", expiryReason(license, beyondSeats));
         return send(contact.getEmail(), contact.getName(), "Your Kinotic Enterprise license key expires soon",
                     KEY_EXPIRING_HTML, KEY_EXPIRING_TEXT, variables);
     }
@@ -279,21 +281,22 @@ public class EmailService {
         return ret;
     }
 
-    // why no newer key comes by itself, for the license states KeyEmailJob warns about
-    private static String expiryReason(License license) {
+    // why no newer key comes by itself, for the cluster and license states KeyEmailJob warns about; a cluster beyond the
+    // seats gets no newer key whatever the license's state, so that reason comes first
+    private static String expiryReason(License license, boolean beyondSeats) {
         String ret;
-        if (license.getStatus() == LicenseStatus.TRIAL) {
+        if (beyondSeats) {
+            ret = "the cluster is beyond your license's " + license.getSeats() + (license.getSeats() == 1 ? " seat" : " seats")
+                    + ". Release a cluster or add seats in your account to keep it licensed.";
+        } else if (license.getStatus() == LicenseStatus.TRIAL) {
             ret = "your trial of the " + planName(license.getPlan()) + " plan ends on " + DATE.format(license.getTermEnd())
                     + ". Buy the plan from your account to keep your license, its price list and its terms.";
         } else if (license.getStatus() == LicenseStatus.PAST_DUE) {
             ret = "a payment failed. Update your payment details from your account, and a new key is issued once it is paid.";
         } else if (license.getCancelsAt() != null) {
             ret = "your subscription is set to end on " + DATE.format(license.getCancelsAt()) + ".";
-        } else if (license.getPlan() == Plan.FREE) {
-            ret = "your free license's year is ending. Confirm your company's figures in your account so we can renew it.";
         } else {
-            ret = "the cluster is beyond your license's " + license.getSeats() + (license.getSeats() == 1 ? " seat" : " seats")
-                    + ". Release a cluster or add seats in your account to keep it licensed.";
+            ret = "your free license's year is ending. Confirm your company's figures in your account so we can renew it.";
         }
         return ret;
     }

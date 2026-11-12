@@ -8,6 +8,7 @@ import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseKeyClaims;
 import org.kinotic.licenses.api.model.LicensedCluster;
 import org.kinotic.licenses.api.model.Plan;
+import org.kinotic.licenses.internal.api.repositories.LicensedClusterRepository;
 import org.kinotic.licenses.internal.api.services.LicenseKeyIssuer;
 import org.kinotic.licenses.internal.api.services.LicenseService;
 import org.kinotic.licenses.support.ServerTest;
@@ -37,6 +38,8 @@ class LicensedClusterTest extends ServerTest {
     private LicenseService licenseService;
     @Autowired
     private LicenseKeyIssuer keyIssuer;
+    @Autowired
+    private LicensedClusterRepository licensedClusterRepository;
 
     @Test
     void anAddedClusterGetsAKeyBoundToIt() throws Exception {
@@ -101,6 +104,19 @@ class LicensedClusterTest extends ServerTest {
 
         asCustomer(contactOf(first), () -> customerAccount.releaseCluster(first.getId(), cluster.getId()));
         assertThat(add(second, clusterId, "production").getLicenseId()).isEqualTo(second.getId());
+    }
+
+    @Test
+    void aLicenseThatEndedGivesUpItsClusters() throws Exception {
+        License ended = paidLicense();
+        String clusterId = UUID.randomUUID().toString();
+        add(ended, clusterId, "production");
+        await(licenseService.revoke(ended));
+
+        License next = paidLicense();
+        assertThat(add(next, clusterId, "production").getLicenseId()).isEqualTo(next.getId());
+        assertThat(await(licensedClusterRepository.findByLicenseId(ended.getId()))).singleElement()
+                .satisfies(cluster -> assertThat(cluster.getReleasedAt()).isNotNull());
     }
 
     @Test

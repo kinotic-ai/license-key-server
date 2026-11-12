@@ -22,8 +22,8 @@ import java.util.UUID;
 
 /**
  * Free licenses: an organization requests one with the figures it certifies about itself, staff approve or reject
- * the request, and approval creates the license and issues its key. A free license renews the same way: the customer
- * re-certifies and staff approve again, which issues the next term's key.
+ * the request, and approval creates the license for one cluster. A free license renews the same way: the customer
+ * re-certifies and staff approve again, which issues its clusters' keys for the next term.
  */
 @Slf4j
 @Component
@@ -42,8 +42,8 @@ public class FreeLicenseService {
      * Records a free license request of the customer, which holds no active free license.
      *
      * @return the request, or a failure with {@link IllegalStateException} when the customer holds an active free license,
-     *         or with {@link AlreadyExistsException} when another request of the customer's is open: pending, or approved
-     *         with its key still being issued
+     *         or with {@link AlreadyExistsException} when another request of the customer's is open: pending, or being
+     *         approved
      */
     public Future<FreeLicenseRequest> request(String customerId, FreeLicenseCertification certification) {
         validate(certification);
@@ -77,7 +77,8 @@ public class FreeLicenseService {
     }
 
     /**
-     * The requests awaiting a decision, oldest first, including approvals that stopped before their key was issued.
+     * The requests awaiting a decision, oldest first, including approvals that stopped before the license was created
+     * or renewed.
      */
     public Future<List<FreeLicenseRequest>> findPending() {
         return requestRepository.findAwaitingDecision();

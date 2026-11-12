@@ -40,14 +40,24 @@ public class DefaultLicenseRenewalService implements LicenseRenewalService {
         LicenseParticipant caller = securityContext.requireParticipant(LicenseParticipant.class);
         return licenseRepository.findById(caller.getLicenseId())
                                 .compose(license -> clusterRepository.findById(caller.getLicensedClusterId())
-                                                                     .compose(cluster -> license.getStatus() == LicenseStatus.ACTIVE || license.getStatus() == LicenseStatus.TRIAL
-                                                                             ? seated(license, cluster)
-                                                                             : pastDue(caller, license, cluster)))
+                                                                     .compose(cluster -> renew(caller, license, cluster)))
                                 .compose(key -> clusterRepository.markRenewed(caller.getLicensedClusterId()).map(key.getKey()))
                                 .onSuccess(key -> log.debug("The cluster {} of license {} renewed its key", caller.getLicensedClusterId(),
                                                             caller.getLicenseId()))
                                 .toCompletionStage()
                                 .toCompletableFuture();
+    }
+
+    private Future<IssuedKey> renew(LicenseParticipant caller, License license, LicensedCluster cluster) {
+        // a session signed in before the cluster was released is still open
+        if (cluster.getReleasedAt() != null) {
+            return Future.failedFuture(new IllegalStateException(
+                    "This cluster was released from its license in your account at licenses.kinotic.ai, so no newer key is issued."
+                            + " Add the cluster again there to license it."));
+        }
+        return license.getStatus() == LicenseStatus.ACTIVE || license.getStatus() == LicenseStatus.TRIAL
+                ? seated(license, cluster)
+                : pastDue(caller, license, cluster);
     }
 
     // A seated cluster gets the key covering the license; one beyond the license's seats, as when its subscription

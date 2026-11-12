@@ -152,6 +152,27 @@ class KeyCoverageTest extends ServerTest {
         assertThat(warned(seated)).isFalse();
     }
 
+    @Test
+    void aClusterBeyondTheSeatsIsToldSoWhateverTheLicensesState(CapturedOutput output) throws Exception {
+        Instant periodEnd = Instant.now().plus(Duration.ofDays(3)).truncatedTo(ChronoUnit.SECONDS);
+        License license = await(licenseService.createLicense(seedCustomer(), subscription(Plan.SMALL, "sub_" + UUID.randomUUID(),
+                                                                                          "cs_" + UUID.randomUUID(), periodEnd)));
+        sql("UPDATE license SET seats = 2 WHERE id = $1", license.getId());
+        LicensedCluster seated = addCluster(license);
+        LicensedCluster beyond = addCluster(license);
+        // the subscription is set to end and drops a seat
+        sql("UPDATE license SET seats = 1, cancels_at = current_period_end WHERE id = $1", license.getId());
+        int seatReasons = count(output.getAll(), "the cluster is beyond your license's 1 seat");
+        int endReasons = count(output.getAll(), "your subscription is set to end");
+
+        await(keyEmailJob.run());
+
+        assertThat(warned(seated)).isTrue();
+        assertThat(warned(beyond)).isTrue();
+        assertThat(count(output.getAll(), "the cluster is beyond your license's 1 seat")).isEqualTo(seatReasons + 1);
+        assertThat(count(output.getAll(), "your subscription is set to end")).isEqualTo(endReasons + 1);
+    }
+
     private boolean warned(LicensedCluster cluster) throws Exception {
         return await(pool.preparedQuery("SELECT 1 FROM key_expiry_warning w JOIN issued_key k ON k.jti = w.jti WHERE k.licensed_cluster_id = $1")
                          .execute(Tuple.of(cluster.getId()))).size() > 0;

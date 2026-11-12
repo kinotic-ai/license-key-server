@@ -29,13 +29,15 @@ public class LicensedClusterRepository {
     private final Pool pool;
 
     /**
-     * Adds a cluster to a license that is active or a trial and has a seat free. The license row is locked while the
-     * seats are counted, so two clusters added at once never take more seats than it has.
+     * Adds a cluster to a license that is active or a trial and has a seat free; two clusters added at once never take
+     * more seats than it has. A license that has ended (expired, lapsed, canceled or revoked) gives up the cluster.
      *
      * @return the cluster as stored; a failure with {@link IllegalStateException} when the license is not active or a
-     *         trial, or every seat is taken, and with {@link AlreadyExistsException} when the cluster holds a seat already
+     *         trial, or every seat is taken, and with {@link AlreadyExistsException} when the cluster holds a seat of
+     *         another license that has not ended
      */
     public Future<LicensedCluster> add(LicensedCluster cluster) {
+        // the license row is locked while its seats are counted
         return pool.withTransaction(connection -> connection
                 .preparedQuery("SELECT seats FROM license WHERE id = $1 AND status IN ('ACTIVE', 'TRIAL') FOR UPDATE")
                 .execute(Tuple.of(cluster.getLicenseId()))
@@ -55,7 +57,11 @@ public class LicensedClusterRepository {
                                          return seats;
                                      });
                 })
-                .compose(seats -> connection.preparedQuery("INSERT INTO licensed_cluster (id, license_id, cluster_id, name)"
+                .compose(seats -> connection.preparedQuery("UPDATE licensed_cluster c SET released_at = now() FROM license l"
+                                                                   + " WHERE c.license_id = l.id AND c.cluster_id = $1 AND c.released_at IS NULL"
+                                                                   + " AND l.status IN ('EXPIRED', 'LAPSED', 'CANCELED', 'REVOKED')")
+                                            .execute(Tuple.of(cluster.getClusterId())))
+                .compose(released -> connection.preparedQuery("INSERT INTO licensed_cluster (id, license_id, cluster_id, name)"
                                                                    + " VALUES ($1, $2, $3, $4) RETURNING " + COLUMNS)
                                             .execute(Tuple.of(cluster.getId(), cluster.getLicenseId(), cluster.getClusterId(), cluster.getName())))
                 .map(rows -> PgValues.first(rows, LicensedClusterRepository::toCluster)))
