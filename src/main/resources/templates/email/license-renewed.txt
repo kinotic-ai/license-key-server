@@ -1,0 +1,7 @@
+The license for {{organization}} on the {{planName}} plan is renewed, and new keys valid until {{expiresOn}} are issued for its clusters.
+
+A cluster that can reach licenses.kinotic.ai installs its new key by itself. For one that cannot, copy its new key from your account and paste it into the cluster's system console License page before the current key expires:
+
+{{accountUrl}}
+
+— Minds Ignited, makers of Kinotic

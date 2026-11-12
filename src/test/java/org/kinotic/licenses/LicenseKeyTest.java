@@ -9,6 +9,7 @@ import org.kinotic.licenses.api.model.Customer;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseStatus;
+import org.kinotic.licenses.api.model.LicensedCluster;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.services.StaffCustomerService;
 import org.kinotic.licenses.internal.api.services.LicenseService;
@@ -31,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * A license key is the JWT Kinotic's license verifier accepts: parsed and verified with jjwt the way
  * {@code LicenseVerifier.verify} in kinotic-ai/kinotic does, against the public key the server publishes, it names the
- * customer's legal name as its licensee, expires, and turns on every Enterprise Feature.
+ * customer's legal name as its licensee, names the cluster it works on, expires, and turns on every Enterprise Feature.
  */
 class LicenseKeyTest extends ServerTest {
 
@@ -45,9 +46,11 @@ class LicenseKeyTest extends ServerTest {
     @Test
     void aKeyIsAJwtKinoticsVerifierAccepts() throws Exception {
         Customer customer = seedCustomer();
-        License license = await(licenseService.createLicense(customer, subscription(Plan.SMALL, "sub_" + UUID.randomUUID(), "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30))))).license();
+        License license = await(licenseService.createLicense(customer, subscription(Plan.SMALL, "sub_" + UUID.randomUUID(), "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30)))));
         assertThat(license.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
+        LicensedCluster cluster = addCluster(license);
         IssuedKey key = await(licenseService.keysOf(license.getId())).getFirst();
+        assertThat(key.getLicensedClusterId()).isEqualTo(cluster.getId());
 
         assertThat(new String(BASE64URL.decode(key.getKey().split("\\.")[0]), StandardCharsets.UTF_8))
                 .isEqualTo("{\"alg\":\"ES256\",\"typ\":\"JWT\"}");
@@ -63,13 +66,15 @@ class LicenseKeyTest extends ServerTest {
         assertThat(claims.getExpiration().toInstant()).isEqualTo(key.getExpiresAt());
         assertThat(claims.getIssuedAt().toInstant().getEpochSecond()).isEqualTo(key.getIssuedAt().getEpochSecond());
         assertThat(claims.getId()).isEqualTo(key.getJti());
+        assertThat(claims.get("clusterId", String.class)).isEqualTo(cluster.getClusterId());
         assertThat(claims.get("features", List.class)).containsExactly("*");
         assertThat(claims).doesNotContainKey("purpose");
     }
 
     @Test
     void aKeyWhosePayloadChangedDoesNotVerify() throws Exception {
-        License license = await(licenseService.createLicense(seedCustomer(), subscription(Plan.SMALL, "sub_" + UUID.randomUUID(), "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30))))).license();
+        License license = await(licenseService.createLicense(seedCustomer(), subscription(Plan.SMALL, "sub_" + UUID.randomUUID(), "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30)))));
+        addCluster(license);
         String[] parts = await(licenseService.keysOf(license.getId())).getFirst().getKey().split("\\.");
         JsonObject payload = new JsonObject(new String(BASE64URL.decode(parts[1]), StandardCharsets.UTF_8)).put("sub", "Someone Else Inc");
         String forged = parts[0] + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(payload.encode().getBytes(StandardCharsets.UTF_8))

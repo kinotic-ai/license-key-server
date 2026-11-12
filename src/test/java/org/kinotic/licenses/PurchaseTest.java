@@ -7,11 +7,12 @@ import org.kinotic.licenses.api.model.BillingPeriod;
 import org.kinotic.licenses.api.model.CheckoutRequest;
 import org.kinotic.licenses.api.model.CompanyFigures;
 import org.kinotic.licenses.api.model.CustomerContact;
+import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
+import org.kinotic.licenses.api.model.LicensedCluster;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.model.PlanPrice;
-import org.kinotic.licenses.api.services.CustomerAccountService;
 import org.kinotic.licenses.internal.api.repositories.AgreementAcceptanceRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.kinotic.licenses.internal.api.services.LicenseService;
@@ -38,8 +39,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class PurchaseTest extends ServerTest {
 
-    @Autowired
-    private CustomerAccountService customerAccount;
     @Autowired
     private LicenseRepository licenseRepository;
     @Autowired
@@ -70,7 +69,8 @@ class PurchaseTest extends ServerTest {
         assertThat(license.getPriceList()).isEqualTo(StripeStandIn.CURRENT_PRICE_LIST);
         assertThat(license.getTermsVersion()).isEqualTo(AgreementTerms.VERSION);
         assertThat(license.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
-        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
+        assertThat(license.getSeats()).isEqualTo(1);
+        assertThat(await(licenseService.keysOf(license.getId()))).isEmpty();
     }
 
     @Test
@@ -79,7 +79,16 @@ class PurchaseTest extends ServerTest {
         assertThat(license.getPlan()).isEqualTo(Plan.SMALL);
         assertThat(license.getBillingPeriod()).isEqualTo(BillingPeriod.ANNUAL);
         assertThat(license.getPriceList()).isEqualTo(StripeStandIn.CURRENT_PRICE_LIST);
-        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
+    }
+
+    @Test
+    void aPurchaseBuysASeatForEachCluster() throws Exception {
+        CustomerContact contact = contactOf();
+        StripeRequest created = checkout(contact, request(Plan.SMALL, BillingPeriod.MONTHLY, figures("3000000", null)).setSeats(3));
+        assertThat(created.params().get("line_items[0][quantity]")).isEqualTo("3");
+
+        assertThatThrownBy(() -> checkout(contact, request(Plan.SMALL, BillingPeriod.MONTHLY, figures("3000000", null)).setSeats(0)))
+                .hasCauseInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -127,7 +136,8 @@ class PurchaseTest extends ServerTest {
     void aFreeLicenseMovesOntoThePlanBoughtAtThePriceListItKeeps() throws Exception {
         CustomerContact contact = contactOf();
         License free = await(licenseService.createFreeLicense(await(customerRepository.findById(contact.getCustomerId())),
-                                                              StripeStandIn.OLDER_PRICE_LIST)).license();
+                                                              StripeStandIn.OLDER_PRICE_LIST, null));
+        LicensedCluster cluster = addCluster(free);
 
         StripeRequest created = checkout(contact, Plan.SMALL, BillingPeriod.ANNUAL, figures("1500000", null));
         assertThat(created.params().get("line_items[0][price]"))
@@ -140,6 +150,9 @@ class PurchaseTest extends ServerTest {
         assertThat(moved.getPriceList()).isEqualTo(StripeStandIn.OLDER_PRICE_LIST);
         assertThat(moved.getTermStart()).isEqualTo(free.getTermStart());
         assertThat(await(licenseRepository.findByCustomerId(contact.getCustomerId()))).hasSize(1);
+        // the cluster keeps its seat and its key
+        List<IssuedKey> keys = await(licenseService.keysOf(free.getId()));
+        assertThat(keys.getFirst().getLicensedClusterId()).isEqualTo(cluster.getId());
     }
 
     @Test
@@ -147,7 +160,7 @@ class PurchaseTest extends ServerTest {
         CustomerContact contact = contactOf();
         License old = await(licenseService.createLicense(await(customerRepository.findById(contact.getCustomerId())),
                                                          subscription(Plan.SMALL, "sub_" + UUID.randomUUID(), "cs_" + UUID.randomUUID(),
-                                                                      Instant.now().plus(Duration.ofDays(30))))).license();
+                                                                      Instant.now().plus(Duration.ofDays(30)))));
         sql("UPDATE license SET status = 'LAPSED', price_list = $2 WHERE id = $1", old.getId(), StripeStandIn.OLDER_PRICE_LIST);
 
         License bought = buy(contact, Plan.SMALL, BillingPeriod.MONTHLY, figures("1500000", null));
@@ -176,7 +189,11 @@ class PurchaseTest extends ServerTest {
     }
 
     private StripeRequest checkout(CustomerContact contact, Plan plan, BillingPeriod period, CompanyFigures figures) throws Exception {
-        String url = asCustomer(contact, () -> customerAccount.startCheckout(request(plan, period, figures), AgreementTerms.VERSION));
+        return checkout(contact, request(plan, period, figures));
+    }
+
+    private StripeRequest checkout(CustomerContact contact, CheckoutRequest checkout) throws Exception {
+        String url = asCustomer(contact, () -> customerAccount.startCheckout(checkout, AgreementTerms.VERSION));
         assertThat(url).startsWith("https://checkout.stripe.test/");
         return StripeStandIn.requests("POST", "/v1/checkout/sessions").stream()
                             .filter(request -> contact.getCustomerId().equals(request.params().get("client_reference_id")))

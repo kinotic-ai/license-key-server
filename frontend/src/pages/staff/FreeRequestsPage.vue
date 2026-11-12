@@ -54,7 +54,7 @@ async function decide(approve: boolean) {
   try {
     if (approve) {
       await staffFreeLicenseRequestService.approve(reviewing.value.id)
-      toast.add({ severity: 'success', summary: 'Request approved', detail: 'The key was issued and emailed.', life: 5000 })
+      toast.add({ severity: 'success', summary: 'Request approved', detail: 'The contacts were emailed to add their cluster.', life: 5000 })
     } else {
       await staffFreeLicenseRequestService.reject(reviewing.value.id)
       toast.add({ severity: 'success', summary: 'Request rejected', detail: 'The contact was told.', life: 5000 })
@@ -71,7 +71,7 @@ async function decide(approve: boolean) {
 
 <template>
   <div>
-    <PageHeader title="Free license requests" description="Requests awaiting review, oldest first. Approving issues the key; a renewal, made by a yearly confirmation that still qualifies, starts the license's next year." />
+    <PageHeader title="Free license requests" description="Requests awaiting review, oldest first. Approving creates the license for one cluster; a renewal, made by a yearly confirmation that still qualifies, starts the license's next year and issues its cluster's key." />
     <CrudTable ref="crudTable" :headers="headers" :data-source="dataSource" :search="tableSearch" :is-show-add-new="false"
                empty-state-text="No requests waiting" @update:search="tableSearch = $event" @on-row-click="reviewing = $event">
       <template #item.contact="{ item }">{{ item.contactName }} <span class="app-muted-text">&lt;{{ item.contactEmail }}&gt;</span></template>

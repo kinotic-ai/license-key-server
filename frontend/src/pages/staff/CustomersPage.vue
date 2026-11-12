@@ -22,8 +22,8 @@ import FlagTags from '@/components/FlagTags.vue'
 import { billingPeriodName, formatDate, planName } from '@/util/format'
 
 /**
- * Every customer with its newest license's plan, billing period, status, price list, paid-through date, next anniversary,
- * last payment, latest key and flags; and the signing public key.
+ * Every customer with its newest license's plan, billing period, status, clusters and seats, price list, paid-through
+ * date, next anniversary, last payment, latest key and flags; and the signing public key.
  */
 const router = useRouter()
 const toast = useToast()
@@ -32,6 +32,7 @@ const headers: CrudHeader[] = [
   { field: 'legalName', header: 'Customer', sortable: true },
   { field: 'plan', header: 'Plan' },
   { field: 'status', header: 'Status' },
+  { field: 'clusters', header: 'Clusters' },
   { field: 'priceList', header: 'Price list' },
   { field: 'paidThrough', header: 'Paid through' },
   { field: 'termEnd', header: 'Next anniversary' },
@@ -73,7 +74,7 @@ async function showSigningKey() {
 
 <template>
   <div>
-    <PageHeader title="Customers" description="Every licensee, with the state of its newest license and the key it holds.">
+    <PageHeader title="Customers" description="Every licensee, with the state of its newest license, its clusters and the newest key it holds.">
       <template #actions>
         <Button label="Signing key" icon="pi pi-key" severity="secondary" outlined :loading="loadingSigningKey" @click="showSigningKey" />
       </template>
@@ -82,6 +83,7 @@ async function showSigningKey() {
                empty-state-text="No customers yet" @update:search="tableSearch = $event"
                @on-row-click="router.push(`/customers/${$event.id}`)">
       <template #item.plan="{ item }">{{ planName(item.plan) }}<span v-if="item.billingPeriod" class="app-muted-text"> · {{ billingPeriodName(item.billingPeriod) }}</span></template>
+      <template #item.clusters="{ item }">{{ item.seats !== null ? `${item.clusters ?? 0} of ${item.seats}` : '—' }}</template>
       <template #item.priceList="{ item }">{{ item.priceList ?? '—' }}</template>
       <template #item.paidThrough="{ item }"><TimePill :date="item.paidThrough" /></template>
       <template #item.flags="{ item }"><FlagTags :flags="item.flags ?? []" /></template>

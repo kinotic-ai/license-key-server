@@ -59,8 +59,8 @@ async function submit() {
     <div v-if="submitted" class="app-card-surface rounded-xl border p-5 text-sm">
       <p class="app-heading-text font-medium">Thank you, your request is in.</p>
       <p class="app-muted-text mt-2">
-        We review requests within a few business days and email the result to {{ SESSION_STATE.participant?.email }}. An
-        approved license's key arrives in that email and in <RouterLink to="/account" class="underline">your account</RouterLink>.
+        We review requests within a few business days and email the result to {{ SESSION_STATE.participant?.email }}. Once
+        approved, add your cluster in <RouterLink to="/account" class="underline">your account</RouterLink> to get its key.
       </p>
     </div>
     <form v-else class="flex flex-col gap-5" @submit.prevent="submit">

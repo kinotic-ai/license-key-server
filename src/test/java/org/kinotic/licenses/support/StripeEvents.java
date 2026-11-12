@@ -29,9 +29,10 @@ public final class StripeEvents {
                 .put("data", new JsonObject().put("object", object));
     }
 
+    /** A subscription to one seat of the Price with the lookup key. */
     public static JsonObject subscription(String id, String status, String lookupKey, Instant periodEnd) {
         JsonObject price = new JsonObject().put("id", "price_" + lookupKey).put("object", "price").put("lookup_key", lookupKey);
-        JsonObject item = new JsonObject().put("id", "si_1").put("object", "subscription_item")
+        JsonObject item = new JsonObject().put("id", "si_1").put("object", "subscription_item").put("quantity", 1)
                                           .put("current_period_end", periodEnd.getEpochSecond()).put("price", price);
         return new JsonObject()
                 .put("id", id)

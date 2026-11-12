@@ -7,7 +7,6 @@ import org.apache.commons.lang3.Validate;
 import org.kinotic.core.api.security.SecurityContext;
 import org.kinotic.licenses.api.model.CustomerDetail;
 import org.kinotic.licenses.api.model.CustomerSummary;
-import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseFlag;
 import org.kinotic.licenses.api.security.LicenseParticipant;
@@ -80,25 +79,6 @@ public class DefaultStaffCustomerService implements StaffCustomerService {
     public Future<License> revokeLicense(String licenseId) {
         return license(licenseId).compose(licenseService::revoke)
                                  .onSuccess(license -> log.info("{} revoked the license {}", staff(), licenseId));
-    }
-
-    @Override
-    public Future<IssuedKey> issueReplacementKey(String licenseId) {
-        // the key is issued either way; a failed email is retried with resendKey rather than by issuing another key
-        return license(licenseId).compose(license -> licenseService.issueKey(license)
-                                                                   .compose(key -> licenseService.emailNewKey(license, key)
-                                                                                                 .recover(t -> {
-                                                                                                     log.error("The replacement key {} was issued but could not be emailed", key.getJti(), t);
-                                                                                                     return Future.succeededFuture();
-                                                                                                 })
-                                                                                                 .map(key)))
-                                 .onSuccess(key -> log.info("{} issued the replacement key {} for the license {}", staff(), key.getJti(), licenseId));
-    }
-
-    @Override
-    public Future<Void> resendKey(String licenseId) {
-        return license(licenseId).compose(licenseService::resendLatestKey)
-                                 .onSuccess(v -> log.info("{} resent the key of the license {}", staff(), licenseId));
     }
 
     @Override

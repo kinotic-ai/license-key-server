@@ -18,7 +18,6 @@ import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.model.PublicationType;
 import org.kinotic.licenses.api.model.PublicityConsent;
-import org.kinotic.licenses.api.services.CustomerAccountService;
 import org.kinotic.licenses.api.services.StaffDesignPartnerService;
 import org.kinotic.licenses.internal.api.repositories.AgreementAcceptanceRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
@@ -49,8 +48,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @ExtendWith(OutputCaptureExtension.class)
 class DesignPartnerTest extends ServerTest {
 
-    @Autowired
-    private CustomerAccountService customerAccount;
     @Autowired
     private StaffDesignPartnerService staffDesignPartners;
     @Autowired

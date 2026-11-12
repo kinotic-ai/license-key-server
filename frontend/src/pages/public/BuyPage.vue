@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Button from 'primevue/button'
+import InputNumber from 'primevue/inputnumber'
 import SelectButton from 'primevue/selectbutton'
 import Message from 'primevue/message'
 import { useToast } from 'primevue/usetoast'
@@ -16,10 +17,11 @@ import { formatMoney, planName } from '@/util/format'
 
 /**
  * Buying a paid plan for the signed-in customer's account, or starting a three-month trial of it when the account may
- * have one. The pricing page links here with `?plan=<small|medium|large>&billing=<monthly|annual>`. The customer gives
- * its company's figures, which must match the plan; when they set another plan, that one is offered instead, or Free.
- * Then the click-through acceptance, and either the trial, whose key the account then shows, or Stripe Checkout, where
- * the payment details are entered.
+ * have one. The pricing page links here with `?plan=<small|medium|large>&billing=<monthly|annual>`. The customer
+ * chooses how many clusters the license covers, each billed at the plan's price, and gives its company's figures, which
+ * must match the plan; when they set another plan, that one is offered instead, or Free. Then the click-through
+ * acceptance, and either the trial, for one cluster, which the account then adds, or Stripe Checkout, where the payment
+ * details are entered.
  */
 const route = useRoute()
 const router = useRouter()
@@ -30,6 +32,7 @@ const PERIODS: { label: string, value: BillingPeriod }[] = [{ label: 'Monthly', 
 
 const prices = ref<PlanPrice[]>([])
 const loading = ref(true)
+const seats = ref<number | null>(1)
 const annualRevenue = ref<number | null>(null)
 const capitalRaised = ref<number | null>(null)
 // the plan the figures set, when it is not the one chosen
@@ -45,6 +48,7 @@ const plan = computed<Plan | null>(() => {
 })
 const period = computed<BillingPeriod>(() => String(route.query.billing ?? '').toUpperCase() === 'ANNUAL' ? 'ANNUAL' : 'MONTHLY')
 const price = computed(() => prices.value.find(p => p.plan === plan.value && p.billingPeriod === period.value) ?? null)
+const seatsGiven = computed(() => seats.value !== null && seats.value >= 1)
 const figuresGiven = computed(() => annualRevenue.value !== null && (annualRevenue.value >= 1_000_000 || capitalRaised.value !== null))
 
 watch([annualRevenue, capitalRaised, plan], () => { matching.value = null })
@@ -79,7 +83,7 @@ async function fittingFigures(): Promise<CompanyFigures | null> {
 }
 
 async function submit() {
-  if (!plan.value || !figuresGiven.value || !accepted.value || submitting.value || startingTrial.value) {
+  if (!plan.value || !seatsGiven.value || !figuresGiven.value || !accepted.value || submitting.value || startingTrial.value) {
     return
   }
   submitting.value = true
@@ -87,7 +91,8 @@ async function submit() {
     const figures = await fittingFigures()
     if (figures) {
       // payment details are entered on Stripe's page, never here
-      window.location.assign(await customerAccountService.startCheckout({ plan: plan.value, billingPeriod: period.value, figures }, SITE.termsVersion))
+      const request = { plan: plan.value, billingPeriod: period.value, figures, seats: seats.value! }
+      window.location.assign(await customerAccountService.startCheckout(request, SITE.termsVersion))
     } else {
       submitting.value = false
     }
@@ -106,7 +111,7 @@ async function startTrial() {
     const figures = await fittingFigures()
     if (figures) {
       await customerAccountService.startTrial({ plan: plan.value, figures }, SITE.termsVersion)
-      toast.add({ severity: 'success', summary: 'Your trial has started', detail: 'Its key is below, and in your email.', life: 8000 })
+      toast.add({ severity: 'success', summary: 'Your trial has started', detail: 'Add your cluster below to get its key.', life: 8000 })
       await router.push('/account')
     }
   } catch (err) {
@@ -120,10 +125,10 @@ async function startTrial() {
 <template>
   <div class="mx-auto max-w-2xl">
     <PageHeader :title="plan ? `${trialAvailable ? 'Try or buy' : 'Buy'} the ${planName(plan)} plan` : 'Buy a plan'"
-                description="Your plan is set by your company's annual revenue. Stripe bills it; cancel any time, and the key you hold works until it expires." />
+                description="Your plan is set by your company's annual revenue, and you pay it for each cluster. Stripe bills it; cancel any time, and the keys you hold work until they expire." />
     <Message v-if="trialAvailable && !loading" severity="info" class="mb-5">
-      Try any paid plan free for three months, with no payment details. Buy it before the trial ends to keep your
-      license, on the price list you started on.
+      Try any paid plan free for three months on one cluster, with no payment details. Buy it before the trial ends to
+      keep your license, on the price list you started on.
     </Message>
     <div v-if="loading" class="app-muted-text text-sm">Loading prices…</div>
     <form v-else class="flex flex-col gap-5" @submit.prevent="submit">
@@ -136,10 +141,22 @@ async function startTrial() {
                       @update:model-value="choose({ billing: $event })" />
         <p v-if="price" class="app-heading-text text-2xl font-semibold tabular-nums">
           {{ formatMoney(price.amount, price.currency) }}
-          <span class="app-muted-text text-sm font-normal">{{ period === 'ANNUAL' ? 'a year' : 'a month' }}</span>
+          <span class="app-muted-text text-sm font-normal">a cluster {{ period === 'ANNUAL' ? 'a year' : 'a month' }}</span>
         </p>
         <p v-else-if="plan" class="app-muted-text text-sm">This plan is not on sale right now.</p>
         <p v-else class="app-muted-text text-sm">Choose a plan.</p>
+        <div class="flex flex-wrap items-end gap-4">
+          <div class="flex flex-col gap-2">
+            <label for="seats" class="app-heading-text text-sm font-medium">Clusters</label>
+            <InputNumber input-id="seats" v-model="seats" :min="1" show-buttons class="w-36" />
+          </div>
+          <p v-if="price && seatsGiven" class="app-muted-text pb-2 text-sm tabular-nums">
+            {{ formatMoney(price.amount * seats!, price.currency) }} {{ period === 'ANNUAL' ? 'a year' : 'a month' }} in all
+          </p>
+        </div>
+        <p class="app-muted-text text-sm">
+          Each Kinotic cluster gets a key of its own. Add or remove clusters later from your account.
+        </p>
       </section>
 
       <section class="app-card-surface flex flex-col gap-4 rounded-xl border p-5">
@@ -164,7 +181,7 @@ async function startTrial() {
         <Button v-if="trialAvailable" type="button" label="Start a 3-month trial" severity="secondary" outlined
                 :disabled="!accepted || !plan || !figuresGiven || submitting" :loading="startingTrial" @click="startTrial" />
         <Button type="submit" label="Continue to payment" icon="pi pi-arrow-right" icon-pos="right"
-                :disabled="!accepted || !price || !figuresGiven || startingTrial" :loading="submitting" />
+                :disabled="!accepted || !price || !seatsGiven || !figuresGiven || startingTrial" :loading="submitting" />
       </div>
     </form>
   </div>

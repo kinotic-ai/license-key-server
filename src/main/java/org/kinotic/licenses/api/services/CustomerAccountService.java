@@ -4,13 +4,13 @@ import io.vertx.core.Future;
 import org.kinotic.core.api.annotations.Publish;
 import org.kinotic.core.api.annotations.Version;
 import org.kinotic.core.api.annotations.Zone;
-import org.kinotic.licenses.api.model.CheckoutKey;
 import org.kinotic.licenses.api.model.CustomerAccount;
 import org.kinotic.licenses.api.model.DesignPartnerApplication;
 import org.kinotic.licenses.api.model.DesignPartnerApplicationForm;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.FreeLicenseRequest;
 import org.kinotic.licenses.api.model.License;
+import org.kinotic.licenses.api.model.LicensedCluster;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.model.PlanPrice;
 import org.kinotic.licenses.api.model.RevenueConfirmation;
@@ -30,7 +30,8 @@ import java.util.List;
 public interface CustomerAccountService {
 
     /**
-     * The calling customer's account: the customer, its contacts, and its licenses with every key issued.
+     * The calling customer's account: the customer, its contacts, and its licenses with their clusters and every key
+     * issued for them.
      */
     Future<CustomerAccount> getAccount();
 
@@ -58,11 +59,12 @@ public interface CustomerAccountService {
     Future<Plan> findPlanFor(CompanyFigures figures);
 
     /**
-     * Starts the purchase of a paid plan by the calling customer, and records that the calling contact accepted the
-     * terms. A customer holding an active free license or a trial moves it onto the plan bought, with the price list and
+     * Starts the purchase of a paid plan, for a number of clusters each billed at its price, by the calling customer, and
+     * records that the calling contact accepted the terms. A customer holding an active free license or a trial moves it onto the plan bought, with the price list and
      * terms it keeps.
      *
-     * @param request      the plan, billing period and the company's figures, which must match the plan
+     * @param request      the plan, billing period, number of clusters and the company's figures, which must match the
+     *                     plan
      * @param termsVersion the version of the terms the contact accepted, which must be the current version
      * @return the Stripe Checkout URL to send the browser to
      * @throws IllegalArgumentException when the plan is the free plan, the figures set another plan, or the terms
@@ -73,14 +75,14 @@ public interface CustomerAccountService {
     Future<String> startCheckout(CheckoutRequest request, String termsVersion);
 
     /**
-     * Starts a three-month trial of a paid plan for the calling customer, with no payment details, emails its key to the
-     * customer's contacts, and records that the calling contact accepted the terms. A customer has one trial, and only
+     * Starts a three-month trial of a paid plan, for one cluster, for the calling customer, with no payment details,
+     * tells the customer's contacts, and records that the calling contact accepted the terms. A customer has one trial, and only
      * while it has never held a paid license and holds no active free license. Buying a plan before the trial ends moves
      * the trial onto it, with the price list and terms the trial keeps; otherwise the trial expires.
      *
      * @param request      the plan and the company's figures, which must match the plan
      * @param termsVersion the version of the terms the contact accepted, which must be the current version
-     * @return the trial, whose key the account shows
+     * @return the trial, which the account adds the cluster to
      * @throws IllegalArgumentException when the plan is the free plan, the figures set another plan, or the terms
      *                                  version is not the current one
      * @throws IllegalStateException    when the customer has had a trial or a paid license, or holds an active free license
@@ -88,14 +90,33 @@ public interface CustomerAccountService {
     Future<License> startTrial(TrialRequest request, String termsVersion);
 
     /**
-     * What the success page of a purchase by the calling customer is told about the key the purchase bought: the key
-     * itself once, within an hour of the license's creation, and otherwise whether it is still pending or was shown.
+     * Adds a cluster to one of the calling customer's licenses, taking one of its seats, and issues the cluster's first
+     * key, which works on that cluster alone. The cluster then renews its key from this server by itself, or, where it
+     * cannot reach this server, gets each new key from the account.
      *
-     * @param checkoutSessionId the Stripe Checkout Session the purchase completed
-     * @return the key's status, {@link org.kinotic.licenses.api.model.CheckoutKeyStatus#PENDING} also when the session
-     *         bought nothing for the calling customer
+     * @param licenseId the license, which must be active or a trial
+     * @param clusterId the cluster's id, which the system console's License page shows: the UID of its kube-system
+     *                  namespace
+     * @param name      a name for the cluster, such as production
+     * @return the cluster, whose key the account shows
+     * @throws IllegalArgumentException when the customer has no license with the id, or the cluster id or name is not
+     *                                  valid
+     * @throws IllegalStateException    when the license is not active or a trial, or every seat is taken
+     * @throws org.kinotic.core.api.exceptions.AlreadyExistsException when the cluster holds a seat of a license already
      */
-    Future<CheckoutKey> findCheckoutKey(String checkoutSessionId);
+    Future<LicensedCluster> addCluster(String licenseId, String clusterId, String name);
+
+    /**
+     * Releases a cluster of one of the calling customer's licenses, freeing its seat. The cluster's keys work until they
+     * expire, and no newer one is issued for it.
+     *
+     * @param licenseId the license
+     * @param id        the licensed cluster's id
+     * @return the released cluster
+     * @throws IllegalArgumentException when the customer has no license with the id, or the license has no unreleased
+     *                                  cluster with the id
+     */
+    Future<LicensedCluster> releaseCluster(String licenseId, String id);
 
     /**
      * Applies for the calling customer to be a design partner, on the paid plan its figures set, and records that the
@@ -113,7 +134,7 @@ public interface CustomerAccountService {
 
     /**
      * Starts the purchase of the calling customer's approved design partner application: its plan and billing period
-     * at half off for 36 months.
+     * at half off for 36 months, for one cluster; more are added from the Customer Portal.
      *
      * @return the Stripe Checkout URL to send the browser to
      * @throws IllegalArgumentException when the customer has no approved application with the id

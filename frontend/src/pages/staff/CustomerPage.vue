@@ -7,14 +7,15 @@ import { FactList, PageHeader, TimePill, showErrorToast } from '@kinotic-ai/fron
 import { Building2, CreditCard, Mail } from '@lucide/vue'
 import type { CustomerDetail, LicenseWithKeys } from '@/api/model'
 import { staffCustomerService } from '@/api/services'
-import KeyBlock from '@/components/KeyBlock.vue'
+import ClusterList from '@/components/ClusterList.vue'
 import LicenseStatusTag from '@/components/LicenseStatusTag.vue'
 import FlagTags from '@/components/FlagTags.vue'
 import { billingPeriodName, formatDate, formatMoney, planName, publicityLabel } from '@/util/format'
 
 /**
- * One customer: its contacts, each license with its billing, price list, paid-through date, flags, yearly confirmations,
- * keys and the actions on it, and its agreement acceptances with their publicity consent.
+ * One customer: its contacts, each license with its billing, seats, price list, paid-through date, flags, yearly
+ * confirmations, clusters with their keys and the actions on it, and its agreement acceptances with their publicity
+ * consent.
  */
 const props = defineProps<{
   customerId: string
@@ -67,21 +68,6 @@ function revoke(entry: LicenseWithKeys) {
     accept: () => act(entry, () => staffCustomerService.revokeLicense(entry.license.id), 'License revoked', 'The license could not be revoked')
   })
 }
-
-function replace(entry: LicenseWithKeys) {
-  confirm.require({
-    header: 'Issue a replacement key?',
-    message: 'A new key covering the date the license is paid through is issued and emailed to the customer\'s contacts.',
-    icon: 'pi pi-key',
-    acceptProps: { label: 'Issue key' },
-    rejectProps: { label: 'Cancel', severity: 'secondary', outlined: true },
-    accept: () => act(entry, () => staffCustomerService.issueReplacementKey(entry.license.id), 'Replacement key issued', 'The key could not be issued')
-  })
-}
-
-function resend(entry: LicenseWithKeys) {
-  act(entry, () => staffCustomerService.resendKey(entry.license.id), 'Key email sent again', 'The key email could not be sent')
-}
 </script>
 
 <template>
@@ -103,15 +89,12 @@ function resend(entry: LicenseWithKeys) {
               <LicenseStatusTag :status="entry.license.status" />
             </div>
             <div class="flex flex-wrap gap-2">
-              <Button label="Resend key email" icon="pi pi-envelope" severity="secondary" outlined size="small"
-                      :disabled="!entry.keys.length" :loading="busy === entry.license.id" @click="resend(entry)" />
-              <Button label="Replacement key" icon="pi pi-key" severity="secondary" outlined size="small"
-                      :disabled="entry.license.status === 'REVOKED'" :loading="busy === entry.license.id" @click="replace(entry)" />
               <Button label="Revoke" icon="pi pi-ban" severity="danger" outlined size="small"
                       :disabled="entry.license.status === 'REVOKED'" :loading="busy === entry.license.id" @click="revoke(entry)" />
             </div>
           </div>
           <dl class="mt-4 grid gap-4 text-sm sm:grid-cols-4">
+            <div><dt class="app-muted-text">Clusters</dt><dd class="app-heading-text mt-1">{{ entry.clusters.filter(c => c.releasedAt === null).length }} of {{ entry.license.seats }} seats</dd></div>
             <div><dt class="app-muted-text">Billing</dt><dd class="app-heading-text mt-1">{{ billingPeriodName(entry.license.billingPeriod) }}</dd></div>
             <div><dt class="app-muted-text">Price list · terms</dt><dd class="app-heading-text mt-1">{{ entry.license.priceList }} · {{ entry.license.termsVersion }}</dd></div>
             <div><dt class="app-muted-text">Paid through</dt><dd class="mt-1"><TimePill :date="entry.paidThrough" /></dd></div>
@@ -140,7 +123,7 @@ function resend(entry: LicenseWithKeys) {
             </table>
           </div>
         </div>
-        <KeyBlock v-for="(key, index) in entry.keys" :key="key.jti" :issued-key="key" :collapsed="index > 0" />
+        <ClusterList :entry="entry" />
       </section>
       <p v-if="!detail.licenses.length" class="app-muted-text text-sm">No license yet.</p>
 

@@ -5,18 +5,14 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.HttpResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.kinotic.licenses.api.model.CheckoutKey;
-import org.kinotic.licenses.api.model.CheckoutKeyStatus;
 import org.kinotic.licenses.api.model.Customer;
-import org.kinotic.licenses.api.model.CustomerContact;
-import org.kinotic.licenses.api.services.CustomerAccountService;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseStatus;
+import org.kinotic.licenses.api.model.LicensedCluster;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.kinotic.licenses.internal.api.rest.StripeWebhookRoutes;
-import org.kinotic.licenses.internal.api.model.NewLicense;
 import org.kinotic.licenses.internal.api.services.LicenseService;
 import org.kinotic.licenses.support.ServerTest;
 import org.kinotic.licenses.support.StripeEvents;
@@ -36,8 +32,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Stripe's webhook events move a license between good standing, past due and cancelled, each handled once however
- * often it is delivered; the success page gets one look at a bought key; and a free license's year moves only together
- * with its key, and only while it is active.
+ * often it is delivered; a license whose payment has not cleared takes no cluster; and a free license's year moves only
+ * while it is active.
  */
 @ExtendWith(OutputCaptureExtension.class)
 class BillingWebhookTest extends ServerTest {
@@ -46,15 +42,13 @@ class BillingWebhookTest extends ServerTest {
     private LicenseService licenseService;
     @Autowired
     private LicenseRepository licenseRepository;
-    @Autowired
-    private CustomerAccountService customerAccount;
 
     @Test
     void eventsMoveTheLicenseAndAreHandledOnce(CapturedOutput output) throws Exception {
         Customer customer = seedCustomer();
         String subscriptionId = "sub_" + UUID.randomUUID();
         Instant periodEnd = Instant.now().plus(Duration.ofDays(30)).truncatedTo(ChronoUnit.SECONDS);
-        License license = await(licenseService.createLicense(customer, subscription(Plan.SMALL, subscriptionId, "cs_" + UUID.randomUUID(), periodEnd))).license();
+        License license = await(licenseService.createLicense(customer, subscription(Plan.SMALL, subscriptionId, "cs_" + UUID.randomUUID(), periodEnd)));
 
         StripeStandIn.report(StripeEvents.subscription(subscriptionId, "past_due", StripeStandIn.monthly(Plan.SMALL), periodEnd));
         JsonObject failed = StripeEvents.event("invoice.payment_failed", StripeEvents.invoice(subscriptionId, null));
@@ -96,7 +90,7 @@ class BillingWebhookTest extends ServerTest {
     void anEventDeliveredLateLeavesTheLicenseAsStripeHasIt() throws Exception {
         String subscriptionId = "sub_" + UUID.randomUUID();
         Instant periodEnd = Instant.now().plus(Duration.ofDays(20)).truncatedTo(ChronoUnit.SECONDS);
-        License license = await(licenseService.createLicense(seedCustomer(), subscription(Plan.SMALL, subscriptionId, "cs_" + UUID.randomUUID(), periodEnd))).license();
+        License license = await(licenseService.createLicense(seedCustomer(), subscription(Plan.SMALL, subscriptionId, "cs_" + UUID.randomUUID(), periodEnd)));
         // the customer scheduled the cancellation after moving to the business plan
         StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", StripeStandIn.monthly(Plan.SMALL), periodEnd).put("cancel_at_period_end", true));
 
@@ -113,7 +107,7 @@ class BillingWebhookTest extends ServerTest {
     void aRevokedLicenseStaysRevokedWhateverStripeSays() throws Exception {
         String subscriptionId = "sub_" + UUID.randomUUID();
         Instant periodEnd = Instant.now().plus(Duration.ofDays(60)).truncatedTo(ChronoUnit.SECONDS);
-        License license = await(licenseService.createLicense(seedCustomer(), subscription(Plan.SMALL, subscriptionId, "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30))))).license();
+        License license = await(licenseService.createLicense(seedCustomer(), subscription(Plan.SMALL, subscriptionId, "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30)))));
         await(licenseService.revoke(license));
         JsonObject active = StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", StripeStandIn.monthly(Plan.SMALL), periodEnd));
 
@@ -126,7 +120,7 @@ class BillingWebhookTest extends ServerTest {
     @Test
     void aCanceledLicenseStaysCanceledWhateverStripeSaysLater() throws Exception {
         String subscriptionId = "sub_" + UUID.randomUUID();
-        License license = await(licenseService.createLicense(seedCustomer(), subscription(Plan.SMALL, subscriptionId, "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30))))).license();
+        License license = await(licenseService.createLicense(seedCustomer(), subscription(Plan.SMALL, subscriptionId, "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30)))));
         Instant periodEnd = Instant.now().plus(Duration.ofDays(30)).truncatedTo(ChronoUnit.SECONDS);
         JsonObject canceled = StripeStandIn.report(StripeEvents.subscription(subscriptionId, "canceled", StripeStandIn.monthly(Plan.SMALL), periodEnd));
         assertThat(deliver(StripeEvents.event("customer.subscription.deleted", canceled)).statusCode()).isEqualTo(200);
@@ -164,29 +158,7 @@ class BillingWebhookTest extends ServerTest {
     }
 
     @Test
-    void theSuccessPageSeesTheBoughtKeyOnceAndOnlyTheBuyerSeesIt() throws Exception {
-        Customer customer = seedCustomer();
-        CustomerContact buyer = await(contactRepository.findByCustomerId(customer.getId())).getFirst();
-        CustomerContact other = await(contactRepository.findByCustomerId(seedCustomer().getId())).getFirst();
-        String sessionId = "cs_" + UUID.randomUUID();
-        assertThat(checkoutKey(buyer, sessionId).getStatus()).isEqualTo(CheckoutKeyStatus.PENDING);
-
-        License license = await(licenseService.createLicense(customer, subscription(Plan.SMALL, "sub_" + UUID.randomUUID(), sessionId, Instant.now().plus(Duration.ofDays(30))))).license();
-        IssuedKey key = await(licenseService.keysOf(license.getId())).getFirst();
-
-        // another customer that names the session is told nothing of it
-        assertThat(checkoutKey(other, sessionId).getStatus()).isEqualTo(CheckoutKeyStatus.PENDING);
-        CheckoutKey first = checkoutKey(buyer, sessionId);
-        assertThat(first.getStatus()).isEqualTo(CheckoutKeyStatus.READY);
-        assertThat(first.getKey()).isEqualTo(key.getKey());
-
-        CheckoutKey second = checkoutKey(buyer, sessionId);
-        assertThat(second.getStatus()).isEqualTo(CheckoutKeyStatus.SHOWN);
-        assertThat(second.getKey()).isNull();
-    }
-
-    @Test
-    void aPaidCheckoutCreatesTheLicenseWithItsKeyOnce(CapturedOutput output) throws Exception {
+    void aPaidCheckoutCreatesTheLicenseOnce(CapturedOutput output) throws Exception {
         Customer customer = seedCustomer();
         String subscriptionId = "sub_" + UUID.randomUUID();
         String sessionId = "cs_" + UUID.randomUUID();
@@ -201,16 +173,33 @@ class BillingWebhookTest extends ServerTest {
         assertThat(license.getPlan()).isEqualTo(Plan.MEDIUM);
         assertThat(license.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
         assertThat(license.getCurrentPeriodEnd()).isEqualTo(periodEnd);
-        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
+        assertThat(license.getSeats()).isEqualTo(1);
+        int readyEmails = count(output.getAll(), "Your Kinotic Enterprise license is ready");
+        assertThat(readyEmails).isPositive();
 
         assertThat(deliver(completed).statusCode()).isEqualTo(200);
-        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
+        assertThat(await(licenseRepository.findByCustomerId(customer.getId()))).hasSize(1);
+        assertThat(count(output.getAll(), "Your Kinotic Enterprise license is ready")).isEqualTo(readyEmails);
     }
 
     @Test
-    void aBankDebitGetsItsFirstKeyWhenThePaymentClears() throws Exception {
+    void aCheckoutForSeveralClustersHoldsThatManySeats() throws Exception {
         Customer customer = seedCustomer();
-        CustomerContact buyer = await(contactRepository.findByCustomerId(customer.getId())).getFirst();
+        String subscriptionId = "sub_" + UUID.randomUUID();
+        String sessionId = "cs_" + UUID.randomUUID();
+        Instant periodEnd = Instant.now().plus(Duration.ofDays(30)).truncatedTo(ChronoUnit.SECONDS);
+        JsonObject subscription = StripeEvents.subscription(subscriptionId, "active", StripeStandIn.monthly(Plan.SMALL), periodEnd);
+        subscription.getJsonObject("items").getJsonArray("data").getJsonObject(0).put("quantity", 3);
+        StripeStandIn.report(subscription);
+
+        assertThat(deliver(StripeEvents.event("checkout.session.completed",
+                                              StripeEvents.checkoutSession(sessionId, subscriptionId, customer.getId(), "paid"))).statusCode()).isEqualTo(200);
+        assertThat(await(licenseRepository.findByCheckoutSessionId(sessionId)).getSeats()).isEqualTo(3);
+    }
+
+    @Test
+    void aBankDebitTakesClustersWhenThePaymentClears(CapturedOutput output) throws Exception {
+        Customer customer = seedCustomer();
         String subscriptionId = "sub_" + UUID.randomUUID();
         String sessionId = "cs_" + UUID.randomUUID();
         Instant periodEnd = Instant.now().plus(Duration.ofDays(30)).truncatedTo(ChronoUnit.SECONDS);
@@ -222,26 +211,27 @@ class BillingWebhookTest extends ServerTest {
                                               StripeEvents.checkoutSession(sessionId, subscriptionId, customer.getId(), "unpaid"))).statusCode()).isEqualTo(200);
         License awaiting = await(licenseRepository.findByCheckoutSessionId(sessionId));
         assertThat(awaiting.getStatus()).isEqualTo(LicenseStatus.PAST_DUE);
-        assertThat(await(licenseService.keysOf(awaiting.getId()))).isEmpty();
-        assertThat(checkoutKey(buyer, sessionId).getStatus()).isEqualTo(CheckoutKeyStatus.PENDING);
+        assertThatThrownBy(() -> addCluster(awaiting)).hasCauseInstanceOf(IllegalStateException.class);
+        int readyEmails = count(output.getAll(), "Your Kinotic Enterprise license is ready");
 
         StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", StripeStandIn.monthly(Plan.SMALL), periodEnd));
         assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
 
         License paid = await(licenseRepository.findById(awaiting.getId()));
         assertThat(paid.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
+        assertThat(count(output.getAll(), "Your Kinotic Enterprise license is ready")).isEqualTo(readyEmails + 1);
+        addCluster(paid);
         List<IssuedKey> keys = await(licenseService.keysOf(awaiting.getId()));
         assertThat(keys).hasSize(1);
         assertThat(keys.getFirst().getExpiresAt()).isEqualTo(LicenseService.keyExpiry(periodEnd));
-        assertThat(checkoutKey(buyer, sessionId).getStatus()).isEqualTo(CheckoutKeyStatus.READY);
 
-        // the next invoice of a license that has its key issues no other
+        // the next invoice of a license whose cluster has its key issues no other
         assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
         assertThat(await(licenseService.keysOf(awaiting.getId()))).hasSize(1);
     }
 
     @Test
-    void aDebitThatClearedBeforeItsCheckoutWasHandledGetsItsKeyAtOnce() throws Exception {
+    void aDebitThatClearedBeforeItsCheckoutWasHandledIsActiveAtOnce() throws Exception {
         Customer customer = seedCustomer();
         String subscriptionId = "sub_" + UUID.randomUUID();
         String sessionId = "cs_" + UUID.randomUUID();
@@ -254,13 +244,12 @@ class BillingWebhookTest extends ServerTest {
                                               StripeEvents.checkoutSession(sessionId, subscriptionId, customer.getId(), "unpaid"))).statusCode()).isEqualTo(200);
         License license = await(licenseRepository.findByCheckoutSessionId(sessionId));
         assertThat(license.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
-        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
     }
 
     @Test
     void anEventWhoseDeliveryDiedIsHandledWhenStripeRedeliversIt() throws Exception {
         String subscriptionId = "sub_" + UUID.randomUUID();
-        License license = await(licenseService.createLicense(seedCustomer(), subscription(Plan.SMALL, subscriptionId, "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30))))).license();
+        License license = await(licenseService.createLicense(seedCustomer(), subscription(Plan.SMALL, subscriptionId, "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30)))));
         JsonObject event = StripeEvents.event("customer.subscription.deleted",
                                               StripeStandIn.report(StripeEvents.subscription(subscriptionId, "canceled", StripeStandIn.monthly(Plan.SMALL), Instant.now())));
         // a delivery that claimed the event and stopped before finishing it, long enough ago for its claim to expire
@@ -273,58 +262,48 @@ class BillingWebhookTest extends ServerTest {
 
     @Test
     void aRevokedLicenseIsNotRenewed() throws Exception {
-        License license = await(licenseService.createFreeLicense(seedCustomer(), StripeStandIn.CURRENT_PRICE_LIST)).license();
+        License license = await(licenseService.createFreeLicense(seedCustomer(), StripeStandIn.CURRENT_PRICE_LIST, null));
         // the renewal read the license before staff revoked it
         await(licenseService.revoke(license));
-        assertThatThrownBy(() -> await(licenseService.renewFreeTerm(license))).hasCauseInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> await(licenseService.renewFreeTerm(license, null))).hasCauseInstanceOf(IllegalStateException.class);
         License stored = await(licenseRepository.findById(license.getId()));
         assertThat(stored.getStatus()).isEqualTo(LicenseStatus.REVOKED);
         assertThat(stored.getTermEnd()).isEqualTo(license.getTermEnd());
-        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
     }
 
     @Test
-    void aRenewalOfALicenseThatChangedWhileItsKeyWasSignedIsNotStored() throws Exception {
-        License license = await(licenseService.createFreeLicense(seedCustomer(), StripeStandIn.CURRENT_PRICE_LIST)).license();
+    void aRenewalOfALicenseThatChangedSinceItWasReadIsNotStored() throws Exception {
+        License license = await(licenseService.createFreeLicense(seedCustomer(), StripeStandIn.CURRENT_PRICE_LIST, null));
         // the renewal read the license before another renewal moved its year
         sql("UPDATE license SET term_end = term_end + interval '1 day' WHERE id = $1", license.getId());
-        assertThatThrownBy(() -> await(licenseService.renewFreeTerm(license))).hasCauseInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> await(licenseService.renewFreeTerm(license, null))).hasCauseInstanceOf(IllegalStateException.class);
         assertThat(await(licenseRepository.findById(license.getId())).getTermEnd()).isEqualTo(license.getTermEnd().plus(Duration.ofDays(1)));
-        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
     }
 
     @Test
-    void aRevokedLicenseIsIssuedNoReplacementKey() throws Exception {
-        License license = await(licenseService.createLicense(seedCustomer(), subscription(Plan.SMALL, "sub_" + UUID.randomUUID(), "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30))))).license();
+    void aRevokedLicenseIsIssuedNoKey() throws Exception {
+        License license = await(licenseService.createLicense(seedCustomer(), subscription(Plan.SMALL, "sub_" + UUID.randomUUID(), "cs_" + UUID.randomUUID(), Instant.now().plus(Duration.ofDays(30)))));
+        LicensedCluster cluster = addCluster(license);
         await(licenseService.revoke(license));
-        assertThatThrownBy(() -> await(licenseService.issueKey(license))).hasCauseInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> await(licenseService.issueKey(license, cluster))).hasCauseInstanceOf(IllegalStateException.class);
         assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
     }
 
     @Test
-    void aRenewalWhoseKeyIsNotStoredLeavesTheTermToRenewAgain() throws Exception {
-        License license = await(licenseService.createFreeLicense(seedCustomer(), StripeStandIn.CURRENT_PRICE_LIST)).license();
-        // the database refuses this license's next key, as it would on a failure between moving the term and storing it
-        String trigger = "refuse_key_" + license.getId().replace("-", "");
-        sql("CREATE FUNCTION " + trigger + "() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN"
-            + " IF NEW.license_id = '" + license.getId() + "' THEN RAISE EXCEPTION 'key refused'; END IF; RETURN NEW; END $$");
-        sql("CREATE TRIGGER " + trigger + " BEFORE INSERT ON issued_key FOR EACH ROW EXECUTE FUNCTION " + trigger + "()");
-        try {
-            assertThatThrownBy(() -> await(licenseService.renewFreeTerm(license))).hasMessageContaining("key refused");
-        } finally {
-            sql("DROP TRIGGER " + trigger + " ON issued_key");
-            sql("DROP FUNCTION " + trigger + "()");
-        }
-        assertThat(await(licenseRepository.findById(license.getId())).getTermEnd()).isEqualTo(license.getTermEnd());
-        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(1);
+    void aNewFreeYearIssuesEachSeatedClusterOneKey() throws Exception {
+        License license = await(licenseService.createFreeLicense(seedCustomer(), StripeStandIn.CURRENT_PRICE_LIST, null));
+        addCluster(license);
+        sql("UPDATE license SET term_start = term_start - interval '1 year', term_end = date_trunc('second', now()) - interval '1 day' WHERE id = $1",
+            license.getId());
+        // the key the cluster holds covers the year that ended
+        sql("UPDATE issued_key SET expires_at = date_trunc('second', now()) + interval '6 days' WHERE license_id = $1", license.getId());
 
-        NewLicense renewed = await(licenseService.renewFreeTerm(license));
-        assertThat(renewed.license().getTermStart()).isEqualTo(license.getTermEnd());
-        assertThat(await(licenseService.keysOf(license.getId()))).hasSize(2);
-    }
-
-    private CheckoutKey checkoutKey(CustomerContact contact, String sessionId) throws Exception {
-        return asCustomer(contact, () -> customerAccount.findCheckoutKey(sessionId));
+        License renewed = await(licenseService.renewFreeTerm(await(licenseRepository.findById(license.getId())), null));
+        assertThat(await(licenseService.issueExtendedKeys(renewed))).isEqualTo(1);
+        assertThat(await(licenseService.issueExtendedKeys(renewed))).isZero();
+        List<IssuedKey> keys = await(licenseService.keysOf(license.getId()));
+        assertThat(keys).hasSize(2);
+        assertThat(keys.getFirst().getExpiresAt()).isEqualTo(LicenseService.keyExpiry(renewed.getTermEnd()));
     }
 
     private static int count(String text, String needle) {

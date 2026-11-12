@@ -1,13 +1,12 @@
 import { Kinotic, type IServiceProxy } from '@kinotic-ai/core'
 import type {
-    CheckoutKey,
     CustomerAccount,
     CustomerDetail,
     CustomerSummary,
     FreeLicenseCertification,
     FreeLicenseRequest,
-    IssuedKey,
     License,
+    LicensedCluster,
     Plan,
     PlanPrice,
     CheckoutRequest,
@@ -58,8 +57,14 @@ export class CustomerAccountService {
         return this.proxy.invoke('startCheckout', [request, termsVersion])
     }
 
-    findCheckoutKey(checkoutSessionId: string): Promise<CheckoutKey> {
-        return this.proxy.invoke('findCheckoutKey', [checkoutSessionId])
+    /** Adds a cluster, by the id its system console's License page shows, to a license; the cluster gets its first key. */
+    addCluster(licenseId: string, clusterId: string, name: string): Promise<LicensedCluster> {
+        return this.proxy.invoke('addCluster', [licenseId, clusterId, name])
+    }
+
+    /** Releases a cluster's seat; its keys work until they expire. */
+    releaseCluster(licenseId: string, id: string): Promise<LicensedCluster> {
+        return this.proxy.invoke('releaseCluster', [licenseId, id])
     }
 
     /** Applies to be a design partner; staff approve or reject the application. */
@@ -101,14 +106,6 @@ export class StaffCustomerService {
 
     revokeLicense(licenseId: string): Promise<License> {
         return this.proxy.invoke('revokeLicense', [licenseId])
-    }
-
-    issueReplacementKey(licenseId: string): Promise<IssuedKey> {
-        return this.proxy.invoke('issueReplacementKey', [licenseId])
-    }
-
-    resendKey(licenseId: string): Promise<void> {
-        return this.proxy.invoke('resendKey', [licenseId])
     }
 
 

@@ -2,17 +2,17 @@ package org.kinotic.licenses.internal.api.services;
 
 import io.vertx.core.Future;
 import lombok.RequiredArgsConstructor;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 import org.kinotic.core.api.security.SecurityContext;
 import org.kinotic.licenses.api.model.AgreementTerms;
-import org.kinotic.licenses.api.model.CheckoutKey;
-import org.kinotic.licenses.api.model.CheckoutKeyStatus;
 import org.kinotic.licenses.api.model.CustomerAccount;
 import org.kinotic.licenses.api.model.DesignPartnerApplication;
 import org.kinotic.licenses.api.model.DesignPartnerApplicationForm;
 import org.kinotic.licenses.api.model.FreeLicenseCertification;
 import org.kinotic.licenses.api.model.FreeLicenseRequest;
 import org.kinotic.licenses.api.model.License;
+import org.kinotic.licenses.api.model.LicensedCluster;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.model.PlanPrice;
 import org.kinotic.licenses.api.model.PublicityConsent;
@@ -28,13 +28,13 @@ import org.kinotic.licenses.internal.api.repositories.DesignPartnerApplicationRe
 import org.kinotic.licenses.internal.api.repositories.DesignPartnerRepository;
 import org.kinotic.licenses.internal.api.repositories.FreeLicenseRequestRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
+import org.kinotic.licenses.internal.api.repositories.LicensedClusterRepository;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Locale;
+import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * The customer account, scoped to the customer the calling contact belongs to.
@@ -43,17 +43,15 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class DefaultCustomerAccountService implements CustomerAccountService {
 
-    // how long after a license is created its success page may still show the key
-    private static final Duration KEY_SHOW_WINDOW = Duration.ofHours(1);
-
-    // the Checkout Sessions whose key the success page has already been shown, with when; this node is the whole
-    // cluster, and an entry past KEY_SHOW_WINDOW is dropped since its key is not shown again anyway
-    private final Map<String, Instant> shownKeys = new ConcurrentHashMap<>();
+    // a cluster id is the UID Kubernetes gives the cluster's kube-system namespace
+    private static final Pattern CLUSTER_ID = Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
+    private static final int NAME_LENGTH = 100;
 
     private final SecurityContext securityContext;
     private final CustomerRepository customerRepository;
     private final CustomerContactRepository contactRepository;
     private final LicenseRepository licenseRepository;
+    private final LicensedClusterRepository clusterRepository;
     private final FreeLicenseRequestRepository requestRepository;
     private final LicenseService licenseService;
     private final StripeBillingService billingService;
@@ -128,32 +126,26 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
     }
 
     @Override
-    public Future<CheckoutKey> findCheckoutKey(String checkoutSessionId) {
-        String customerId = callingCustomerId();
-        Instant now = Instant.now();
-        shownKeys.values().removeIf(shownAt -> shownAt.plus(KEY_SHOW_WINDOW).isBefore(now));
-        return licenseRepository.findByCheckoutSessionId(checkoutSessionId).compose(license -> {
-            Future<CheckoutKey> ret;
-            // a session that bought nothing for this customer reads as one whose license is not created yet
-            if (license == null || !license.getCustomerId().equals(customerId)) {
-                ret = Future.succeededFuture(new CheckoutKey().setStatus(CheckoutKeyStatus.PENDING));
-            } else {
-                ret = licenseService.keysOf(license.getId()).map(keys -> {
-                    CheckoutKey key;
-                    // a license with no key yet is one whose payment is still clearing
-                    if (keys.isEmpty()) {
-                        key = new CheckoutKey().setStatus(CheckoutKeyStatus.PENDING);
-                    } else if (license.getCreatedAt().plus(KEY_SHOW_WINDOW).isAfter(now) && shownKeys.putIfAbsent(checkoutSessionId, now) == null) {
-                        key = new CheckoutKey().setStatus(CheckoutKeyStatus.READY)
-                                               .setKey(keys.getFirst().getKey())
-                                               .setExpiresAt(keys.getFirst().getExpiresAt());
-                    } else {
-                        key = new CheckoutKey().setStatus(CheckoutKeyStatus.SHOWN);
-                    }
-                    return key;
-                });
-            }
-            return ret;
+    public Future<LicensedCluster> addCluster(String licenseId, String clusterId, String name) {
+        Validate.isTrue(clusterId != null && CLUSTER_ID.matcher(clusterId.trim()).matches(),
+                        "The cluster id is the one your system console's License page shows");
+        Validate.isTrue(StringUtils.isNotBlank(name) && name.trim().length() <= NAME_LENGTH,
+                        "A cluster needs a name of at most %s characters", NAME_LENGTH);
+        LicensedCluster cluster = new LicensedCluster().setId(UUID.randomUUID().toString())
+                                                       .setLicenseId(licenseId)
+                                                       .setClusterId(clusterId.trim().toLowerCase(Locale.ROOT))
+                                                       .setName(name.trim());
+        // a cluster whose first key cannot be issued gives its seat back, so adding it again starts over
+        return callersLicense(licenseId).compose(license -> clusterRepository.add(cluster).compose(added -> licenseService.issueKey(license, added)
+                .map(added)
+                .recover(t -> clusterRepository.release(licenseId, added.getId()).compose(v -> Future.failedFuture(t)))));
+    }
+
+    @Override
+    public Future<LicensedCluster> releaseCluster(String licenseId, String id) {
+        return callersLicense(licenseId).compose(license -> clusterRepository.release(licenseId, id)).map(released -> {
+            Validate.isTrue(released != null, "The license has no cluster %s holding a seat", id);
+            return released;
         });
     }
 
@@ -181,6 +173,15 @@ public class DefaultCustomerAccountService implements CustomerAccountService {
         requireCurrentTerms(termsVersion);
         return freeLicenseService.request(caller.getCustomerId(), certification)
                                  .compose(request -> recordAcceptance(caller, PublicityConsent.CUSTOMER_NAME).map(request));
+    }
+
+    // the calling customer's license with the id
+    private Future<License> callersLicense(String licenseId) {
+        String customerId = callingCustomerId();
+        return licenseRepository.findById(licenseId).map(license -> {
+            Validate.isTrue(license != null && license.getCustomerId().equals(customerId), "Your account has no license %s", licenseId);
+            return license;
+        });
     }
 
     private String callingCustomerId() {

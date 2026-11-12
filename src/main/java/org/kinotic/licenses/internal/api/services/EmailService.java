@@ -24,6 +24,7 @@ import org.kinotic.licenses.api.model.BillingPeriod;
 import org.kinotic.licenses.api.model.CustomerContact;
 import org.kinotic.licenses.api.model.DesignPartnerApplication;
 import org.kinotic.licenses.api.model.IssuedKey;
+import org.kinotic.licenses.api.model.LicensedCluster;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.model.LicenseStatus;
@@ -40,7 +41,7 @@ import java.util.Map;
 
 /**
  * Sends the server's transactional emails through Azure Communication Services, rendered from Handlebars templates
- * branded like kinotic.ai. A key only ever appears in a body, never in a subject. With
+ * branded like kinotic.ai. No email carries a key: each cluster's keys are in the account. With
  * {@code kinotic.licenses.email.enabled=false} nothing is sent and each email is logged instead.
  */
 @Slf4j
@@ -57,10 +58,10 @@ public class EmailService {
 
     private static final Template SIGN_IN_CODE_HTML = compile(HTML_TEMPLATES, "sign-in-code");
     private static final Template SIGN_IN_CODE_TEXT = compile(TEXT_TEMPLATES, "sign-in-code");
-    private static final Template NEW_KEY_HTML = compile(HTML_TEMPLATES, "new-key");
-    private static final Template NEW_KEY_TEXT = compile(TEXT_TEMPLATES, "new-key");
-    private static final Template RENEWAL_KEY_HTML = compile(HTML_TEMPLATES, "renewal-key");
-    private static final Template RENEWAL_KEY_TEXT = compile(TEXT_TEMPLATES, "renewal-key");
+    private static final Template LICENSE_READY_HTML = compile(HTML_TEMPLATES, "license-ready");
+    private static final Template LICENSE_READY_TEXT = compile(TEXT_TEMPLATES, "license-ready");
+    private static final Template LICENSE_RENEWED_HTML = compile(HTML_TEMPLATES, "license-renewed");
+    private static final Template LICENSE_RENEWED_TEXT = compile(TEXT_TEMPLATES, "license-renewed");
     private static final Template PAST_DUE_HTML = compile(HTML_TEMPLATES, "past-due");
     private static final Template PAST_DUE_TEXT = compile(TEXT_TEMPLATES, "past-due");
     private static final Template KEY_EXPIRING_HTML = compile(HTML_TEMPLATES, "key-expiring");
@@ -103,26 +104,31 @@ public class EmailService {
     }
 
     /**
-     * Emails a contact the first key of a license.
+     * Tells a contact a bought license is ready for its clusters, and how to add one.
      */
-    public Future<Void> sendNewKey(CustomerContact contact, String organization, License license, IssuedKey key) {
-        return send(contact.getEmail(), contact.getName(), "Your Kinotic Enterprise license key",
-                    NEW_KEY_HTML, NEW_KEY_TEXT, keyVariables(organization, license, key));
+    public Future<Void> sendLicenseReady(CustomerContact contact, String organization, License license) {
+        Map<String, Object> variables = licenseVariables(organization, license);
+        variables.put("seats", license.getSeats());
+        return send(contact.getEmail(), contact.getName(), "Your Kinotic Enterprise license is ready",
+                    LICENSE_READY_HTML, LICENSE_READY_TEXT, variables);
     }
 
     /**
-     * Emails a contact the renewal key of a license, issued ahead of the current key's expiry.
+     * Tells a contact a license is renewed and its clusters' new keys are issued.
      */
-    public Future<Void> sendRenewalKey(CustomerContact contact, String organization, License license, IssuedKey key) {
-        return send(contact.getEmail(), contact.getName(), "Your renewed Kinotic Enterprise license key",
-                    RENEWAL_KEY_HTML, RENEWAL_KEY_TEXT, keyVariables(organization, license, key));
+    public Future<Void> sendLicenseRenewed(CustomerContact contact, String organization, License license) {
+        return send(contact.getEmail(), contact.getName(), "Your Kinotic Enterprise license is renewed",
+                    LICENSE_RENEWED_HTML, LICENSE_RENEWED_TEXT, licenseVariables(organization, license));
     }
 
     /**
-     * Warns a contact that the license's newest key expires with no newer one issued, saying why.
+     * Warns a contact that a cluster's newest key expires with no newer one issued, saying why.
      */
-    public Future<Void> sendKeyExpiring(CustomerContact contact, String organization, License license, IssuedKey key) {
-        Map<String, Object> variables = keyVariables(organization, license, key);
+    public Future<Void> sendKeyExpiring(CustomerContact contact, String organization, License license, LicensedCluster cluster,
+                                        IssuedKey key) {
+        Map<String, Object> variables = licenseVariables(organization, license);
+        variables.put("expiresOn", DATE.format(key.getExpiresAt()));
+        variables.put("clusterName", cluster.getName());
         variables.put("reason", expiryReason(license));
         return send(contact.getEmail(), contact.getName(), "Your Kinotic Enterprise license key expires soon",
                     KEY_EXPIRING_HTML, KEY_EXPIRING_TEXT, variables);
@@ -202,11 +208,11 @@ public class EmailService {
     }
 
     /**
-     * Emails a contact a trial's key, with how to buy its plan before the trial ends.
+     * Tells a contact a trial started, how to add its cluster, and how to buy its plan before the trial ends.
      */
-    public Future<Void> sendTrialStarted(CustomerContact contact, String organization, License license, IssuedKey key) {
-        return send(contact.getEmail(), contact.getName(), "Your Kinotic Enterprise trial license key",
-                    TRIAL_STARTED_HTML, TRIAL_STARTED_TEXT, keyVariables(organization, license, key));
+    public Future<Void> sendTrialStarted(CustomerContact contact, String organization, License license) {
+        return send(contact.getEmail(), contact.getName(), "Your Kinotic Enterprise trial has started",
+                    TRIAL_STARTED_HTML, TRIAL_STARTED_TEXT, licenseVariables(organization, license));
     }
 
     /**
@@ -222,11 +228,11 @@ public class EmailService {
     }
 
     /**
-     * Emails a contact the key of an approved free license.
+     * Tells a contact its free license, or its renewal, is approved, and how to add its cluster.
      */
-    public Future<Void> sendFreeRequestApproved(CustomerContact contact, String organization, License license, IssuedKey key) {
+    public Future<Void> sendFreeRequestApproved(CustomerContact contact, String organization, License license) {
         return send(contact.getEmail(), contact.getName(), "Your free Kinotic Enterprise license is approved",
-                    FREE_APPROVED_HTML, FREE_APPROVED_TEXT, keyVariables(organization, license, key));
+                    FREE_APPROVED_HTML, FREE_APPROVED_TEXT, licenseVariables(organization, license));
     }
 
     /**
@@ -262,12 +268,12 @@ public class EmailService {
                     PARTNER_REJECTED_HTML, PARTNER_REJECTED_TEXT, variables);
     }
 
-    private Map<String, Object> keyVariables(String organization, License license, IssuedKey key) {
+    // expiresOn is when a key issued for the license now expires
+    private Map<String, Object> licenseVariables(String organization, License license) {
         Map<String, Object> ret = new HashMap<>();
         ret.put("organization", organization);
         ret.put("planName", planName(license.getPlan()));
-        ret.put("key", key.getKey());
-        ret.put("expiresOn", DATE.format(key.getExpiresAt()));
+        ret.put("expiresOn", DATE.format(LicenseService.keyExpiry(license)));
         ret.put("accountUrl", accountUrl());
         return ret;
     }

@@ -33,6 +33,8 @@ public class License {
     private String checkoutSessionId;
     /** The end of the current billing period, as Stripe reports it. */
     private Instant currentPeriodEnd;
+    /** How many clusters may hold the license's keys at once. */
+    private int seats = 1;
     /** When the subscription ends because the customer cancelled it; {@code null} while it renews. */
     private Instant cancelsAt;
     /** When the payment that left the license past due failed; {@code null} unless it is {@link LicenseStatus#PAST_DUE}. */

@@ -45,6 +45,8 @@ CREATE TABLE license (
     -- the Checkout Session that bought it, which the success page shows the first key for
     checkout_session_id    TEXT UNIQUE,
     current_period_end     TIMESTAMPTZ,
+    -- how many clusters may hold the license's keys at once
+    seats                  INTEGER     NOT NULL DEFAULT 1,
     -- when the subscription is set to end, as the customer scheduled it in the Customer Portal
     cancels_at             TIMESTAMPTZ,
     -- when the payment that left the license PAST_DUE failed; 30 days on, the license lapses
@@ -93,14 +95,14 @@ CREATE TABLE free_license_request (
     reviewed_at     TIMESTAMPTZ,
     -- when an approval last started issuing; an approval that stopped before recording its key is resumed after a while
     claimed_at      TIMESTAMPTZ,
-    -- the key the approval issued, which completes it
-    issued_key_jti  TEXT,
+    -- the license the approval created or started the next year of, which completes it
+    license_id      TEXT REFERENCES license (id),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX free_license_request_status_idx ON free_license_request (status, created_at);
 -- a customer has at most one open request: pending, or approved with its key not yet issued
 CREATE UNIQUE INDEX free_license_request_open_idx ON free_license_request (customer_id)
-    WHERE status = 'PENDING' OR (status = 'APPROVED' AND issued_key_jti IS NULL);
+    WHERE status = 'PENDING' OR (status = 'APPROVED' AND license_id IS NULL);
 
 -- Applications to be a design partner: the plan and billing period the figures set, and what the company uses Kinotic
 -- for. Staff approve or reject them; a customer has at most one pending.
@@ -143,15 +145,32 @@ CREATE TABLE design_partner_publication (
     UNIQUE (design_partner_id, type)
 );
 
--- Every key ever issued, appended to and never updated.
+-- A cluster a license's keys are bound to, by its id: the UID of the cluster's kube-system namespace, which Kubernetes
+-- assigns when the cluster is created. A cluster holds a seat of its license until it is released.
+CREATE TABLE licensed_cluster (
+    id              TEXT PRIMARY KEY,
+    license_id      TEXT        NOT NULL REFERENCES license (id),
+    cluster_id      TEXT        NOT NULL,
+    name            TEXT        NOT NULL,
+    added_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    released_at     TIMESTAMPTZ,
+    last_renewed_at TIMESTAMPTZ
+);
+CREATE INDEX licensed_cluster_license_idx ON licensed_cluster (license_id, added_at);
+-- a cluster holds one license's seat at a time
+CREATE UNIQUE INDEX licensed_cluster_active_idx ON licensed_cluster (cluster_id) WHERE released_at IS NULL;
+
+-- Every key ever issued, each bound to one cluster, appended to and never updated.
 CREATE TABLE issued_key (
-    jti        TEXT PRIMARY KEY,
-    license_id TEXT        NOT NULL REFERENCES license (id),
-    key        TEXT        NOT NULL,
-    issued_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at TIMESTAMPTZ NOT NULL
+    jti                 TEXT PRIMARY KEY,
+    license_id          TEXT        NOT NULL REFERENCES license (id),
+    licensed_cluster_id TEXT        NOT NULL REFERENCES licensed_cluster (id),
+    key                 TEXT        NOT NULL,
+    issued_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at          TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX issued_key_license_idx ON issued_key (license_id, issued_at);
+CREATE INDEX issued_key_cluster_idx ON issued_key (licensed_cluster_id, issued_at);
 
 -- An event is claimed while a delivery handles it and processed once that succeeds. A claim left by a delivery that
 -- died mid-way expires, so Stripe's redelivery handles the event again.
@@ -162,14 +181,13 @@ CREATE TABLE stripe_event (
     processed_at TIMESTAMPTZ
 );
 
--- Keys a payment extended a license with whose email has not gone out yet; the key email job sends them on its next run.
-CREATE TABLE unsent_key_email (
-    jti        TEXT PRIMARY KEY REFERENCES issued_key (jti),
-    license_id TEXT        NOT NULL REFERENCES license (id),
+-- Licenses a payment extended whose renewal email has not gone out yet; the key email job sends them on its next run.
+CREATE TABLE unsent_renewal_email (
+    license_id TEXT PRIMARY KEY REFERENCES license (id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- The keys whose contacts were warned that the key expires with no newer one issued, so each is warned once.
+-- The keys whose contacts were warned that the key expires with no newer one issued for its cluster, so each is warned once.
 CREATE TABLE key_expiry_warning (
     jti     TEXT PRIMARY KEY REFERENCES issued_key (jti),
     sent_at TIMESTAMPTZ NOT NULL DEFAULT now()

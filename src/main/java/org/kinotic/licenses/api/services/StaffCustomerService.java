@@ -6,7 +6,6 @@ import org.kinotic.core.api.annotations.Version;
 import org.kinotic.core.api.annotations.Zone;
 import org.kinotic.licenses.api.model.CustomerDetail;
 import org.kinotic.licenses.api.model.CustomerSummary;
-import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.security.LicenseZones;
 
@@ -33,7 +32,7 @@ public interface StaffCustomerService {
     Future<List<CustomerSummary>> findRevenueUnconfirmed();
 
     /**
-     * A customer with its contacts, licenses, keys and agreement acceptances.
+     * A customer with its contacts, licenses, their clusters and keys, and agreement acceptances.
      *
      * @throws IllegalArgumentException when no customer has the id
      */
@@ -45,21 +44,6 @@ public interface StaffCustomerService {
      * @throws IllegalArgumentException when no license has the id
      */
     Future<License> revokeLicense(String licenseId);
-
-    /**
-     * Issues and emails another key covering the date the license is paid through.
-     *
-     * @throws IllegalArgumentException when no license has the id
-     * @throws IllegalStateException    when the license is not active, which is issued no key
-     */
-    Future<IssuedKey> issueReplacementKey(String licenseId);
-
-    /**
-     * Emails the license's newest key to the customer's contacts again.
-     *
-     * @throws IllegalArgumentException when no license has the id or it has no key
-     */
-    Future<Void> resendKey(String licenseId);
 
     /**
      * The public key license keys are signed with: the X.509 SubjectPublicKeyInfo of the EC P-256 key in Base64, the
