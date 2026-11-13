@@ -46,8 +46,11 @@ A license has `seats`, how many Kinotic clusters it covers: the Stripe subscript
 which Checkout sets from the cluster count the customer chose and the Customer Portal changes, each seat billed at
 the plan's Price; one for Free and for a trial. The customer adds a cluster from the account with the id the cluster's
 system console License page shows, the UID of its `kube-system` namespace, and a name (`licensed_cluster`). The
-License page's "License this cluster" link opens `/account?clusterId=<uid>`, which opens the add-cluster form with the
-id filled in (directly when exactly one license has an open seat); an air-gapped cluster's id is copied by hand. Adding a
+License page's "License this cluster" link opens `/account?clusterId=<uid>&returnUrl=<License page>`, which opens the
+add-cluster form with the id filled in (directly when exactly one license has an open seat) and warns which console the
+key goes to; once the cluster is added, the browser returns to `returnUrl` with the key in the fragment (`#key=<key>`),
+which the License page installs. A cluster that holds a seat already offers to send its newest key back the same way.
+An air-gapped cluster's id is copied by hand. Adding a
 cluster takes a seat and issues its first key at once; the license row is locked while seats are counted, so clusters
 added together never take more seats than it has, and the partial unique index `licensed_cluster_active_idx` lets a
 cluster hold one seat at a time across every license. A cluster keeps its seat for good: the customer cannot release
