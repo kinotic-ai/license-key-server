@@ -18,7 +18,6 @@ import org.kinotic.licenses.api.model.LicenseFlag;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.model.RevenueConfirmation;
-import org.kinotic.licenses.api.services.CustomerAccountService;
 import org.kinotic.licenses.api.services.StaffCustomerService;
 import org.kinotic.licenses.api.services.StaffFreeLicenseRequestService;
 import org.kinotic.licenses.internal.api.repositories.FreeLicenseRequestRepository;
@@ -56,8 +55,6 @@ class YearlyConfirmationTest extends ServerTest {
     private static final String CONFIRMATION_DUE = "Confirm your figures for your Kinotic license";
     private static final String PLAN_CHANGING = "Your Kinotic plan is changing";
 
-    @Autowired
-    private CustomerAccountService customerAccount;
     @Autowired
     private StaffCustomerService staffCustomers;
     @Autowired
@@ -128,7 +125,7 @@ class YearlyConfirmationTest extends ServerTest {
     void figuresThatSetFreeEndThePaidSubscriptionAndTheLicenseContinuesAsFree() throws Exception {
         String subscriptionId = "sub_" + UUID.randomUUID();
         License license = paidLicense(seedCustomer(), subscriptionId);
-        sql("UPDATE license SET term_end = now() + interval '1 hour' WHERE id = $1", license.getId());
+        sql("UPDATE license SET term_end = now() + interval '1 hour', seats = 3 WHERE id = $1", license.getId());
         License due = await(licenseRepository.findById(license.getId()));
 
         RevenueConfirmation confirmed = confirm(contactOf(license), due, figures("400000", "1000000"));
@@ -142,6 +139,7 @@ class YearlyConfirmationTest extends ServerTest {
         assertThat(free.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
         assertThat(free.getStripeSubscriptionId()).isNull();
         assertThat(free.getBillingPeriod()).isNull();
+        assertThat(free.getSeats()).isEqualTo(1);
 
         // once the anniversary has passed, its next year starts as Free with the key covering it
         shiftAnniversary(license.getId());
@@ -162,7 +160,7 @@ class YearlyConfirmationTest extends ServerTest {
                                                                                                                   .setIntendedUse("Our scheduling app")
                                                                                                                   .setFigures(figures("100000", "0")))
                                                                                         .setStatus(FreeLicenseRequestStatus.PENDING)));
-        sql("UPDATE free_license_request SET status = 'APPROVED', issued_key_jti = (SELECT jti FROM issued_key WHERE license_id = $2 LIMIT 1)"
+        sql("UPDATE free_license_request SET status = 'APPROVED', license_id = $2"
                     + " WHERE id = $1", first.getId(), license.getId());
         sql("UPDATE license SET term_end = now() + interval '10 days' WHERE id = $1", license.getId());
         License due = await(licenseRepository.findById(license.getId()));
@@ -263,6 +261,7 @@ class YearlyConfirmationTest extends ServerTest {
     void aLateConfirmationThatSetsAPaidPlanLeavesAFreeLicenseToBuyItByTheNextAnniversary() throws Exception {
         License license = freeLicense(seedCustomer());
         sql("UPDATE license SET term_end = now() - interval '1 minute' WHERE id = $1", license.getId());
+        keysCoverTheYear(license.getId());
         await(anniversaryJob.run());
         License flagged = await(licenseRepository.findById(license.getId()));
         assertThat(await(licenseService.keysOf(license.getId()))).hasSize(2);
@@ -325,6 +324,12 @@ class YearlyConfirmationTest extends ServerTest {
 
     // Moves the license's anniversary to just past, with the confirmations for it and the plans that apply at it; a
     // subscription set to end at it ends at the new time.
+    // the keys of a free license expire as those issued for its current year would
+    private void keysCoverTheYear(String licenseId) throws Exception {
+        sql("UPDATE issued_key k SET expires_at = date_trunc('second', l.term_end) + interval '7 days' FROM license l"
+                    + " WHERE l.id = $1 AND k.license_id = l.id", licenseId);
+    }
+
     private void shiftAnniversary(String licenseId) throws Exception {
         sql("WITH old AS (SELECT term_end FROM license WHERE id = $1),"
                     + " moved AS (UPDATE license SET term_end = date_trunc('second', now()) - interval '1 minute' WHERE id = $1 RETURNING term_end)"
@@ -333,6 +338,9 @@ class YearlyConfirmationTest extends ServerTest {
                     + " applies_at = CASE WHEN applies_at = (SELECT term_end FROM old) THEN (SELECT term_end FROM moved) ELSE applies_at END"
                     + " WHERE license_id = $1 AND (anniversary = (SELECT term_end FROM old) OR applies_at = (SELECT term_end FROM old))", licenseId);
         License moved = await(licenseRepository.findById(licenseId));
+        if (moved.getPlan() == Plan.FREE) {
+            keysCoverTheYear(licenseId);
+        }
         if (moved.getStripeSubscriptionId() != null && StripeStandIn.subscription(moved.getStripeSubscriptionId()).getValue("cancel_at") != null) {
             StripeStandIn.report(StripeStandIn.subscription(moved.getStripeSubscriptionId()).copy().put("cancel_at", moved.getTermEnd().getEpochSecond()));
         }
@@ -355,13 +363,19 @@ class YearlyConfirmationTest extends ServerTest {
         return await(contactRepository.findByCustomerId(license.getCustomerId())).getFirst();
     }
 
+    // a paid license with one cluster
     private License paidLicense(Customer customer, String subscriptionId) throws Exception {
         StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", StripeStandIn.monthly(Plan.SMALL), periodEnd()));
-        return await(licenseService.createLicense(customer, subscription(Plan.SMALL, subscriptionId, "cs_" + UUID.randomUUID(), periodEnd()))).license();
+        License ret = await(licenseService.createLicense(customer, subscription(Plan.SMALL, subscriptionId, "cs_" + UUID.randomUUID(), periodEnd())));
+        addCluster(ret);
+        return ret;
     }
 
+    // a free license with one cluster
     private License freeLicense(Customer customer) throws Exception {
-        return await(licenseService.createFreeLicense(customer, StripeStandIn.CURRENT_PRICE_LIST)).license();
+        License ret = await(licenseService.createFreeLicense(customer, StripeStandIn.CURRENT_PRICE_LIST, null));
+        addCluster(ret);
+        return ret;
     }
 
     private static CompanyFigures figures(String revenue, String raised) {

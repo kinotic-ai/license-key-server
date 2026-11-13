@@ -113,7 +113,7 @@ class LapseTest extends ServerTest {
 
     private License paidLicense(String subscriptionId) throws Exception {
         return await(licenseService.createLicense(seedCustomer(), subscription(Plan.SMALL, subscriptionId, "cs_" + UUID.randomUUID(),
-                                                                               periodEnd()))).license();
+                                                                               periodEnd())));
     }
 
     private static Instant periodEnd() {

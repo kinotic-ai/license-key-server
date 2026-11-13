@@ -8,7 +8,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.internal.api.repositories.IssuedKeyRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
-import org.kinotic.licenses.internal.api.repositories.UnsentKeyEmailRepository;
+import org.kinotic.licenses.internal.api.repositories.LicensedClusterRepository;
+import org.kinotic.licenses.internal.api.repositories.UnsentRenewalEmailRepository;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -16,9 +17,9 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * Sends the key emails the server owes: the keys a payment extended a license with whose email failed, and a warning,
- * once per key, to the contacts of a license whose newest key expires within {@link #WARNING_WINDOW} with no newer one
- * coming by itself: one past due, set to end, or free. It runs daily, and once shortly after startup.
+ * Sends the key emails the server owes: the renewal emails of licenses a payment extended whose email failed, and a
+ * warning, once per key, to the contacts of a license whose cluster's newest key expires within {@link #WARNING_WINDOW}
+ * with no newer one coming by itself: one past due, set to end, or free. It runs daily, and once shortly after startup.
  */
 @Slf4j
 @Component
@@ -32,8 +33,9 @@ public class KeyEmailJob {
     private static final Duration INTERVAL = Duration.ofDays(1);
 
     private final LicenseRepository licenseRepository;
+    private final LicensedClusterRepository clusterRepository;
     private final IssuedKeyRepository issuedKeyRepository;
-    private final UnsentKeyEmailRepository unsentRepository;
+    private final UnsentRenewalEmailRepository unsentRepository;
     private final LicenseService licenseService;
     private final Vertx vertx;
 
@@ -43,7 +45,7 @@ public class KeyEmailJob {
     }
 
     /**
-     * Sends the key emails still owed, then the expiry warnings due now.
+     * Sends the renewal emails still owed, then the expiry warnings due now.
      *
      * @return how many expiry warnings were sent
      */
@@ -71,25 +73,25 @@ public class KeyEmailJob {
 
     private Future<Void> warn(IssuedKey key) {
         return licenseRepository.findById(key.getLicenseId())
-                                .compose(license -> licenseService.emailKeyExpiring(license, key))
+                                .compose(license -> clusterRepository.findById(key.getLicensedClusterId())
+                                                                     .compose(cluster -> licenseService.emailKeyExpiring(license, cluster, key)))
                                 .compose(v -> issuedKeyRepository.markWarned(key.getJti()));
     }
 
-    private Future<Void> sendAll(List<String> jtis) {
+    private Future<Void> sendAll(List<String> licenseIds) {
         Future<Void> ret = Future.succeededFuture();
-        for (String jti : jtis) {
-            ret = ret.compose(v -> send(jti).recover(t -> {
-                log.error("The key {} could still not be emailed", jti, t);
+        for (String licenseId : licenseIds) {
+            ret = ret.compose(v -> send(licenseId).recover(t -> {
+                log.error("The renewal of license {} could still not be emailed", licenseId, t);
                 return Future.succeededFuture();
             }));
         }
         return ret;
     }
 
-    private Future<Void> send(String jti) {
-        return issuedKeyRepository.findByJti(jti)
-                                  .compose(key -> licenseRepository.findById(key.getLicenseId())
-                                                                   .compose(license -> licenseService.emailRenewalKey(license, key)))
-                                  .compose(v -> unsentRepository.remove(jti));
+    private Future<Void> send(String licenseId) {
+        return licenseRepository.findById(licenseId)
+                                .compose(licenseService::emailRenewed)
+                                .compose(v -> unsentRepository.remove(licenseId));
     }
 }

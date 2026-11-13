@@ -9,12 +9,13 @@ import org.kinotic.core.api.security.Participant;
 import org.kinotic.core.api.security.SecurityService;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
-import org.kinotic.licenses.api.model.LicenseFlag;
+import org.kinotic.licenses.api.model.LicensedCluster;
 import org.kinotic.licenses.api.model.LicenseKeyClaims;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.security.LicenseParticipant;
 import org.kinotic.licenses.internal.api.repositories.IssuedKeyRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
+import org.kinotic.licenses.internal.api.repositories.LicensedClusterRepository;
 import org.kinotic.licenses.internal.api.services.LicenseKeyIssuer;
 import org.springframework.stereotype.Component;
 
@@ -25,11 +26,11 @@ import java.util.Map;
 /**
  * The gateway's {@link SecurityService}. A person signs in in a browser, bound to the browser session by the sign-in
  * routes, so a connection that presents that session is authenticated before it gets here. A Kinotic installation
- * signs in with a license key in the {@value #LICENSE_KEY_HEADER} header of its WebSocket upgrade, and is a licensee
- * of the key's license when the key is signed by this server, was issued by it, expired no more than
- * {@link #EXPIRED_KEY_ACCEPTED_FOR} ago, and its license is in good standing, past due or a trial. A key older than its
- * license's newest still signs in, and flags the license {@link LicenseFlag#POSSIBLY_COPIED}, so a restored backup
- * is never locked out.
+ * signs in with a license key in the {@value #LICENSE_KEY_HEADER} header of its WebSocket upgrade, and is the licensee
+ * of the cluster the key was issued for when the key is signed by this server, was issued by it, expired no more than
+ * {@link #EXPIRED_KEY_ACCEPTED_FOR} ago, its cluster still holds a seat, and its license is in good standing, past due
+ * or a trial. Any key of the cluster signs in, its older ones included, so a restored backup is never locked out; a key
+ * works only on its own cluster, so a copy of it renews nothing anywhere else.
  */
 @Slf4j
 @Component
@@ -46,6 +47,7 @@ public class LicenseSecurityService implements SecurityService {
 
     private final LicenseKeyIssuer keyIssuer;
     private final IssuedKeyRepository issuedKeyRepository;
+    private final LicensedClusterRepository clusterRepository;
     private final LicenseRepository licenseRepository;
 
     @Override
@@ -79,28 +81,26 @@ public class LicenseSecurityService implements SecurityService {
                 log.warn("The key {} is signed by this server but was never issued", claims.keyId());
                 ret = Future.failedFuture(new AuthenticationException(KEY_REFUSED));
             } else {
-                ret = licenseRepository.findById(issued.getLicenseId()).compose(license -> licenseeOf(license, issued, claims));
+                ret = licenseRepository.findById(issued.getLicenseId())
+                                       .compose(license -> clusterRepository.findById(issued.getLicensedClusterId())
+                                                                            .compose(cluster -> licenseeOf(license, cluster, issued, claims)));
             }
             return ret;
         });
     }
 
-    // the license's licensee, when the license still takes keys; an older key than its newest flags it
-    private Future<Participant> licenseeOf(License license, IssuedKey issued, LicenseKeyClaims claims) {
+    // the licensee of the key's cluster, when the cluster holds a seat and its license still takes keys
+    private Future<Participant> licenseeOf(License license, LicensedCluster cluster, IssuedKey issued, LicenseKeyClaims claims) {
         Future<Participant> ret;
         if (license.getStatus() != LicenseStatus.ACTIVE && license.getStatus() != LicenseStatus.PAST_DUE
                 && license.getStatus() != LicenseStatus.TRIAL) {
             log.info("The key {} signed in for license {}, which is {}", claims.keyId(), license.getId(), license.getStatus());
             ret = Future.failedFuture(new AuthenticationException(KEY_REFUSED));
+        } else if (cluster.getReleasedAt() != null) {
+            log.info("The key {} signed in for cluster {} of license {}, which was released", claims.keyId(), cluster.getId(), license.getId());
+            ret = Future.failedFuture(new AuthenticationException(KEY_REFUSED));
         } else {
-            ret = issuedKeyRepository.findLatestByLicenseId(license.getId()).compose(newest -> {
-                Future<Void> flagged = Future.succeededFuture();
-                if (!newest.getJti().equals(issued.getJti())) {
-                    log.info("The license {} signed in with its older key {}; its newest is {}", license.getId(), issued.getJti(), newest.getJti());
-                    flagged = licenseRepository.addFlag(license.getId(), LicenseFlag.POSSIBLY_COPIED).mapEmpty();
-                }
-                return flagged.map(v -> (Participant) LicenseParticipant.ofLicensee(license, issued.getJti(), claims.subject()));
-            });
+            ret = Future.succeededFuture(LicenseParticipant.ofLicensee(license, cluster, issued.getJti(), claims.subject()));
         }
         return ret;
     }

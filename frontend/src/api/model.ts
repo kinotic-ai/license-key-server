@@ -2,7 +2,7 @@
 
 export type Plan = 'FREE' | 'SMALL' | 'MEDIUM' | 'LARGE'
 export type BillingPeriod = 'MONTHLY' | 'ANNUAL'
-export type LicenseFlag = 'REVENUE_UNCONFIRMED' | 'POSSIBLY_COPIED'
+export type LicenseFlag = 'REVENUE_UNCONFIRMED'
 export type LicenseStatus = 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'LAPSED' | 'CANCELED' | 'EXPIRED' | 'REVOKED'
 export type ContactRole = 'BILLING' | 'TECHNICAL'
 export type FreeLicenseRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
@@ -37,6 +37,8 @@ export interface CheckoutRequest {
     plan: Plan
     billingPeriod: BillingPeriod
     figures: CompanyFigures
+    /** How many clusters the license covers, each billed at the plan's price. */
+    seats: number
 }
 
 export interface Customer {
@@ -83,6 +85,8 @@ export interface License {
     cancelsAt: string | null
     /** When the license fell past due; it lapses 30 days on. */
     pastDueSince: string | null
+    /** How many clusters may hold the license's keys at once. */
+    seats: number
     /** What staff should look at. */
     flags: LicenseFlag[]
     termStart: string
@@ -91,9 +95,25 @@ export interface License {
     createdAt: string
 }
 
+/** A cluster that holds, or held, a seat of a license. */
+export interface LicensedCluster {
+    id: string
+    licenseId: string
+    /** The UID of the cluster's kube-system namespace, which its system console's License page shows. */
+    clusterId: string
+    name: string
+    addedAt: string
+    /** Null while the cluster holds a seat. */
+    releasedAt: string | null
+    /** Null when the cluster never renewed its key from this server. */
+    lastRenewedAt: string | null
+}
+
 export interface IssuedKey {
     jti: string
     licenseId: string
+    /** The licensed cluster the key works on. */
+    licensedClusterId: string
     key: string
     issuedAt: string
     expiresAt: string
@@ -101,6 +121,9 @@ export interface IssuedKey {
 
 export interface LicenseWithKeys {
     license: License
+    /** Every cluster that holds or held a seat, oldest first. */
+    clusters: LicensedCluster[]
+    /** The keys of its clusters, newest first. */
     keys: IssuedKey[]
     /** The date the license is paid through, which its keys follow. */
     paidThrough: string | null
@@ -169,6 +192,10 @@ export interface CustomerSummary {
     /** The license's next anniversary. */
     termEnd: string | null
     lastPaymentAt: string | null
+    /** How many clusters the license may hold. */
+    seats: number | null
+    /** How many clusters hold a seat of the license. */
+    clusters: number | null
     flags: LicenseFlag[]
     latestKeyJti: string | null
     latestKeyExpiresAt: string | null
@@ -179,13 +206,6 @@ export interface CustomerDetail {
     contacts: CustomerContact[]
     licenses: LicenseWithKeys[]
     acceptances: AgreementAcceptance[]
-}
-
-/** The success page's view of the key a Checkout Session bought. */
-export interface CheckoutKey {
-    status: 'PENDING' | 'READY' | 'SHOWN'
-    key?: string
-    expiresAt?: string
 }
 
 export type DesignPartnerApplicationStatus = 'PENDING' | 'APPROVED' | 'REJECTED'

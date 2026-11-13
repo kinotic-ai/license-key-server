@@ -9,7 +9,6 @@ import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.model.TrialRequest;
 import org.kinotic.licenses.api.security.LicenseParticipant;
-import org.kinotic.licenses.internal.api.model.NewLicense;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.springframework.stereotype.Component;
@@ -33,8 +32,8 @@ public class TrialService {
     private final CustomerService customerService;
 
     /**
-     * Starts the calling contact's customer's trial, records that the contact accepted the current terms, and emails
-     * the trial's key.
+     * Starts the calling contact's customer's trial, records that the contact accepted the current terms, and tells its
+     * contacts the trial is ready for its cluster.
      *
      * @return the trial, or a failure with {@link IllegalArgumentException} when the plan is Free or the figures set
      *         another plan, with {@link IllegalStateException} when the customer has held a paid license or a trial, or
@@ -56,19 +55,18 @@ public class TrialService {
                                 .compose(accepted -> customerRepository.findById(customerId))
                                 .compose(customer -> billingService.currentPriceList()
                                                                    .compose(priceList -> licenseService.createTrial(customer, request.getPlan(), priceList)))
-                                .compose(created -> {
+                                .compose(trial -> {
                                     log.info("The customer {} started a trial of the {} plan, license {}", customerId, request.getPlan(),
-                                             created.license().getId());
-                                    return emailKey(created).map(created.license());
+                                             trial.getId());
+                                    return email(trial).map(trial);
                                 });
     }
 
-    // the trial stands once started; a failed email leaves the key in the account, which the customer is sent to
-    private Future<Void> emailKey(NewLicense created) {
-        return licenseService.emailTrialStarted(created.license(), created.key())
+    // the trial stands once started; a failed email leaves the trial in the account, which the customer is sent to
+    private Future<Void> email(License trial) {
+        return licenseService.emailTrialStarted(trial)
                              .recover(t -> {
-                                 log.error("The key {} of the trial {} could not be emailed", created.key().getJti(),
-                                           created.license().getId(), t);
+                                 log.error("The trial {} could not be emailed", trial.getId(), t);
                                  return Future.succeededFuture();
                              });
     }

@@ -8,7 +8,6 @@ import io.vertx.sqlclient.Tuple;
 import lombok.RequiredArgsConstructor;
 import org.kinotic.core.api.exceptions.AlreadyExistsException;
 import org.kinotic.licenses.api.model.BillingPeriod;
-import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.LicenseFlag;
 import org.kinotic.licenses.api.model.License;
 import org.kinotic.licenses.api.model.LicenseStatus;
@@ -29,13 +28,13 @@ import java.util.List;
 public class LicenseRepository {
 
     private static final String COLUMNS = "id, customer_id, plan, status, billing_period, price_list, terms_version, stripe_subscription_id,"
-            + " checkout_session_id, current_period_end, cancels_at, past_due_since, flags, term_start, term_end, last_payment_at, created_at";
+            + " checkout_session_id, current_period_end, seats, cancels_at, past_due_since, flags, term_start, term_end, last_payment_at, created_at";
     // the statuses a billing change never moves a license out of
     private static final String ENDED = "('REVOKED', 'CANCELED', 'LAPSED', 'EXPIRED')";
     private static final String UNIQUE_VIOLATION = "23505";
     private static final String INSERT = "INSERT INTO license (id, customer_id, plan, status, billing_period, price_list, terms_version,"
-            + " stripe_subscription_id, checkout_session_id, current_period_end, term_start, term_end, last_payment_at)"
-            + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING " + COLUMNS;
+            + " stripe_subscription_id, checkout_session_id, current_period_end, term_start, term_end, last_payment_at, seats)"
+            + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING " + COLUMNS;
     // The status a billing change sets, unless staff revoked the license or its subscription ended; Stripe never
     // reopens a canceled subscription, so a later write is an event delivered out of order. A license entering
     // PAST_DUE records when, and keeps that time through further failures until it leaves PAST_DUE.
@@ -52,25 +51,29 @@ public class LicenseRepository {
     }
 
     /**
-     * Stores a new {@link LicenseStatus#TRIAL} license together with its key, so either both are stored or neither is.
+     * Stores a new free license together with the approval of the free license request it was created for, so either
+     * both are stored or neither is.
      *
-     * @param key the trial's key, which belongs to the license
+     * @param requestId the approved request, which the license completes
+     * @return the license
+     */
+    public Future<License> saveFree(License license, String requestId) {
+        return pool.preparedQuery("WITH saved AS (" + INSERT + "),"
+                                          + " completed AS (UPDATE free_license_request SET license_id = (SELECT id FROM saved) WHERE id = $15)"
+                                          + " SELECT " + COLUMNS + " FROM saved")
+                   .execute(insertValues(license).addValue(requestId))
+                   .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
+    }
+
+    /**
+     * Stores a new {@link LicenseStatus#TRIAL} license.
+     *
      * @return the license, or a failure with {@link AlreadyExistsException} when the customer holds a trial already
      */
-    public Future<License> saveTrial(License trial, IssuedKey key) {
-        Tuple values = insertValues(trial).addValue(key.getJti())
-                                          .addValue(key.getKey())
-                                          .addValue(PgValues.timestamp(key.getIssuedAt()))
-                                          .addValue(PgValues.timestamp(key.getExpiresAt()));
-        return pool.preparedQuery("WITH saved AS (" + INSERT + "),"
-                                          + " stored AS (INSERT INTO issued_key (jti, license_id, key, issued_at, expires_at)"
-                                          + " SELECT $14, id, $15, $16, $17 FROM saved)"
-                                          + " SELECT " + COLUMNS + " FROM saved")
-                   .execute(values)
-                   .map(rows -> PgValues.first(rows, LicenseRepository::toLicense))
-                   .recover(t -> Future.failedFuture(t instanceof PgException pg && UNIQUE_VIOLATION.equals(pg.getSqlState())
-                                                             ? new AlreadyExistsException("This account already has a trial", t)
-                                                             : t));
+    public Future<License> saveTrial(License trial) {
+        return save(trial).recover(t -> Future.failedFuture(t instanceof PgException pg && UNIQUE_VIOLATION.equals(pg.getSqlState())
+                                                                    ? new AlreadyExistsException("This account already has a trial", t)
+                                                                    : t));
     }
 
     /**
@@ -92,37 +95,38 @@ public class LicenseRepository {
     }
 
     /**
-     * Writes what Stripe reports about the subscription: its plan and billing period, the end of the billing period,
-     * when it is set to end, and its status, unless the license is revoked, lapsed or canceled.
+     * Writes what Stripe reports about the subscription: its plan and billing period, the number of clusters it pays
+     * for, the end of the billing period, when it is set to end, and its status, unless the license is revoked, lapsed
+     * or canceled.
      *
      * @return the license as stored, or {@code null} when none has the id
      */
-    public Future<License> syncSubscription(String id, Plan plan, BillingPeriod billingPeriod, LicenseStatus status,
+    public Future<License> syncSubscription(String id, Plan plan, BillingPeriod billingPeriod, int seats, LicenseStatus status,
                                             Instant currentPeriodEnd, Instant cancelsAt) {
-        return updateOne("plan = $2, billing_period = $3, current_period_end = $4, cancels_at = $5, "
+        return updateOne("plan = $2, billing_period = $3, current_period_end = $4, cancels_at = $5, seats = $7, "
                                  + STATUS_UNLESS_ENDED.formatted("$6::text"),
                          id, PgValues.name(plan), PgValues.name(billingPeriod), PgValues.timestamp(currentPeriodEnd),
-                         PgValues.timestamp(cancelsAt), PgValues.name(status));
+                         PgValues.timestamp(cancelsAt), PgValues.name(status), seats);
     }
 
     /**
      * Moves an active free license or a trial onto the paid subscription its customer bought, keeping its price list and
-     * terms. A free license keeps its license year; a trial starts its first license year, from {@code termStart} to
-     * {@code termEnd}.
+     * terms, with the seats the subscription pays for and no payment recorded for it yet. A free license keeps its
+     * license year; a trial starts its first license year, from {@code termStart} to {@code termEnd}.
      *
      * @return the license as stored, or {@code null} when it is no longer an active free license or a trial
      */
-    public Future<License> attachSubscription(String id, Plan plan, BillingPeriod billingPeriod, String stripeSubscriptionId,
+    public Future<License> attachSubscription(String id, Plan plan, BillingPeriod billingPeriod, int seats, String stripeSubscriptionId,
                                               String checkoutSessionId, Instant currentPeriodEnd, Instant termStart, Instant termEnd) {
         // every CASE reads the status the row had before this update
         return pool.preparedQuery("UPDATE license SET plan = $2, billing_period = $3, stripe_subscription_id = $4,"
-                                          + " checkout_session_id = $5, current_period_end = $6,"
+                                          + " checkout_session_id = $5, current_period_end = $6, seats = $9, last_payment_at = NULL,"
                                           + " term_start = CASE WHEN status = 'TRIAL' THEN $7 ELSE term_start END,"
                                           + " term_end = CASE WHEN status = 'TRIAL' THEN $8 ELSE term_end END, status = 'ACTIVE'"
                                           + " WHERE id = $1 AND (status = 'TRIAL' OR (plan = 'FREE' AND status = 'ACTIVE')) RETURNING " + COLUMNS)
                    .execute(Tuple.from(Arrays.asList(id, PgValues.name(plan), PgValues.name(billingPeriod), stripeSubscriptionId,
                                                      checkoutSessionId, PgValues.timestamp(currentPeriodEnd),
-                                                     PgValues.timestamp(termStart), PgValues.timestamp(termEnd))))
+                                                     PgValues.timestamp(termStart), PgValues.timestamp(termEnd), seats)))
                    .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
     }
 
@@ -182,13 +186,13 @@ public class LicenseRepository {
     }
 
     /**
-     * Moves a paid license whose subscription ended at its anniversary onto Free, keeping its price list, terms and
-     * license year. It no longer refers to the ended subscription.
+     * Moves a paid license whose subscription ended at its anniversary onto Free, with Free's one seat, keeping its
+     * price list, terms and license year. It no longer refers to the ended subscription.
      *
      * @return the license as stored, or {@code null} when it is not a paid license in good standing or past due
      */
     public Future<License> moveToFree(String id) {
-        return pool.preparedQuery("UPDATE license SET plan = 'FREE', billing_period = NULL, stripe_subscription_id = NULL,"
+        return pool.preparedQuery("UPDATE license SET plan = 'FREE', seats = 1, billing_period = NULL, stripe_subscription_id = NULL,"
                                           + " current_period_end = NULL, cancels_at = NULL, past_due_since = NULL, status = 'ACTIVE'"
                                           + " WHERE id = $1 AND plan <> 'FREE' AND status IN ('ACTIVE', 'PAST_DUE') RETURNING " + COLUMNS)
                    .execute(Tuple.of(id))
@@ -269,27 +273,24 @@ public class LicenseRepository {
     }
 
     /**
-     * Moves the license to a new license year and stores that year's key, provided the license is active and is as it was
-     * read: the same term end, status, plan and scheduled cancellation. So two callers moving the same term leave it
-     * moved once, and a key is stored only for the standing it was signed for. The term moves only together with its key.
+     * Moves the license to a new license year, provided the license is active and is as it was read: the same term end,
+     * status, plan and scheduled cancellation, so two callers moving the same term leave it moved once. A free license
+     * request the move completes is completed in the same statement.
      *
-     * @param read the license as the caller read it
-     * @param key  the new term's key, which belongs to the license
+     * @param read      the license as the caller read it
+     * @param requestId the approved free license request the move completes, or {@code null} for none
      * @return the license as stored, or {@code null} when it is not active, or changed since it was read
      */
-    public Future<License> startTerm(License read, Instant termStart, Instant termEnd, IssuedKey key) {
-        // one statement, so a failed key insert also leaves the term where it was
+    public Future<License> startTerm(License read, Instant termStart, Instant termEnd, String requestId) {
         return pool.preparedQuery("WITH moved AS (UPDATE license SET term_start = $3, term_end = $4"
-                                          + " WHERE id = $1 AND term_end = $2 AND status = 'ACTIVE' AND status = $9 AND plan = $10"
-                                          + " AND cancels_at IS NOT DISTINCT FROM $11 RETURNING " + COLUMNS + "),"
-                                          + " stored AS (INSERT INTO issued_key (jti, license_id, key, issued_at, expires_at)"
-                                          + " SELECT $5, id, $6, $7, $8 FROM moved)"
+                                          + " WHERE id = $1 AND term_end = $2 AND status = 'ACTIVE' AND status = $5 AND plan = $6"
+                                          + " AND cancels_at IS NOT DISTINCT FROM $7 RETURNING " + COLUMNS + "),"
+                                          + " completed AS (UPDATE free_license_request SET license_id = (SELECT id FROM moved)"
+                                          + " WHERE id = $8 AND EXISTS (SELECT 1 FROM moved))"
                                           + " SELECT " + COLUMNS + " FROM moved")
                    .execute(Tuple.from(Arrays.asList(read.getId(), PgValues.timestamp(read.getTermEnd()), PgValues.timestamp(termStart),
-                                                     PgValues.timestamp(termEnd), key.getJti(),
-                                                     key.getKey(), PgValues.timestamp(key.getIssuedAt()),
-                                                     PgValues.timestamp(key.getExpiresAt()), PgValues.name(read.getStatus()),
-                                                     PgValues.name(read.getPlan()), PgValues.timestamp(read.getCancelsAt()))))
+                                                     PgValues.timestamp(termEnd), PgValues.name(read.getStatus()),
+                                                     PgValues.name(read.getPlan()), PgValues.timestamp(read.getCancelsAt()), requestId)))
                    .map(rows -> PgValues.first(rows, LicenseRepository::toLicense));
     }
 
@@ -337,7 +338,8 @@ public class LicenseRepository {
                                         license.getPriceList(), license.getTermsVersion(),
                                         license.getStripeSubscriptionId(), license.getCheckoutSessionId(),
                                         PgValues.timestamp(license.getCurrentPeriodEnd()), PgValues.timestamp(license.getTermStart()),
-                                        PgValues.timestamp(license.getTermEnd()), PgValues.timestamp(license.getLastPaymentAt())));
+                                        PgValues.timestamp(license.getTermEnd()), PgValues.timestamp(license.getLastPaymentAt()),
+                                        license.getSeats()));
     }
 
     private Future<License> updateOne(String assignments, String id, Object... values) {
@@ -368,6 +370,7 @@ public class LicenseRepository {
                 .setStripeSubscriptionId(row.getString("stripe_subscription_id"))
                 .setCheckoutSessionId(row.getString("checkout_session_id"))
                 .setCurrentPeriodEnd(PgValues.instant(row, "current_period_end"))
+                .setSeats(row.getInteger("seats"))
                 .setCancelsAt(PgValues.instant(row, "cancels_at"))
                 .setPastDueSince(PgValues.instant(row, "past_due_since"))
                 .setFlags(PgValues.enumSet(row, "flags", LicenseFlag.class))

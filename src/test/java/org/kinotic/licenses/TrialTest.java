@@ -10,12 +10,12 @@ import org.kinotic.licenses.api.model.CompanyFigures;
 import org.kinotic.licenses.api.model.CustomerContact;
 import org.kinotic.licenses.api.model.IssuedKey;
 import org.kinotic.licenses.api.model.License;
+import org.kinotic.licenses.api.model.LicensedCluster;
 import org.kinotic.licenses.api.model.LicenseKeyClaims;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.LicenseWithKeys;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.model.TrialRequest;
-import org.kinotic.licenses.api.services.CustomerAccountService;
 import org.kinotic.licenses.internal.api.repositories.AgreementAcceptanceRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.kinotic.licenses.internal.api.services.KeyEmailJob;
@@ -55,9 +55,8 @@ class TrialTest extends ServerTest {
 
     private static final CompanyFigures SMALL_FIGURES = figures("1500000");
     private static final CompanyFigures MEDIUM_FIGURES = figures("30000000");
+    private static final String READY = "Your Kinotic Enterprise license is ready";
 
-    @Autowired
-    private CustomerAccountService customerAccount;
     @Autowired
     private LicenseRepository licenseRepository;
     @Autowired
@@ -72,7 +71,7 @@ class TrialTest extends ServerTest {
     private KeyEmailJob keyEmailJob;
 
     @Test
-    void aTrialRunsThreeMonthsWithAKeyThatExpiresWhenItEnds(CapturedOutput output) throws Exception {
+    void aTrialRunsThreeMonthsForOneClusterWhoseKeyExpiresWhenItEnds(CapturedOutput output) throws Exception {
         CustomerContact contact = contactOf();
         assertThat(asCustomer(contact, customerAccount::getAccount).isTrialAvailable()).isTrue();
 
@@ -83,13 +82,17 @@ class TrialTest extends ServerTest {
         assertThat(trial.getStripeSubscriptionId()).isNull();
         assertThat(trial.getPriceList()).isEqualTo(StripeStandIn.CURRENT_PRICE_LIST);
         assertThat(trial.getTermEnd()).isEqualTo(trial.getTermStart().atZone(ZoneOffset.UTC).plusMonths(3).toInstant());
+        assertThat(trial.getSeats()).isEqualTo(1);
+        assertThat(output.getAll()).contains("Your Kinotic Enterprise trial has started");
+        LicensedCluster cluster = asCustomer(contact, () -> customerAccount.addCluster(trial.getId(), UUID.randomUUID().toString(), "staging"));
+        assertThatThrownBy(() -> addCluster(trial)).hasCauseInstanceOf(IllegalStateException.class).hasMessageContaining("seat");
         LicenseWithKeys inAccount = asCustomer(contact, customerAccount::getAccount).getLicenses().getFirst();
         assertThat(inAccount.getPaidThrough()).isNull();
         IssuedKey key = inAccount.getKeys().getFirst();
         assertThat(key.getExpiresAt()).isEqualTo(trial.getTermEnd().truncatedTo(ChronoUnit.SECONDS));
         LicenseKeyClaims claims = keyIssuer.verify(key.getKey());
         assertThat(claims.expiresAt()).isEqualTo(key.getExpiresAt());
-        assertThat(output.getAll()).contains("Your Kinotic Enterprise trial license key");
+        assertThat(claims.clusterId()).isEqualTo(cluster.getClusterId());
         assertThat(await(acceptanceRepository.findByCustomerId(contact.getCustomerId())))
                 .singleElement()
                 .satisfies(acceptance -> assertThat(acceptance.getPublicityConsent()).isNull());
@@ -136,7 +139,7 @@ class TrialTest extends ServerTest {
         assertThatThrownBy(() -> startTrial(paid, Plan.SMALL, SMALL_FIGURES)).hasMessageContaining("never had a trial or a paid plan");
 
         CustomerContact free = contactOf();
-        await(licenseService.createFreeLicense(await(customerRepository.findById(free.getCustomerId())), StripeStandIn.CURRENT_PRICE_LIST));
+        await(licenseService.createFreeLicense(await(customerRepository.findById(free.getCustomerId())), StripeStandIn.CURRENT_PRICE_LIST, null));
         assertThatThrownBy(() -> startTrial(free, Plan.SMALL, SMALL_FIGURES)).hasMessageContaining("no active free license");
         assertThat(asCustomer(free, customerAccount::getAccount).isTrialAvailable()).isFalse();
     }
@@ -155,9 +158,10 @@ class TrialTest extends ServerTest {
     }
 
     @Test
-    void buyingDuringTheTrialMovesItOntoThePlanAndStartsItsFirstYear() throws Exception {
+    void buyingDuringTheTrialMovesItOntoThePlanAndStartsItsFirstYear(CapturedOutput output) throws Exception {
         CustomerContact contact = contactOf();
         License trial = startTrial(contact, Plan.SMALL, SMALL_FIGURES);
+        addCluster(trial);
         sql("UPDATE license SET price_list = $2 WHERE id = $1", trial.getId(), StripeStandIn.OLDER_PRICE_LIST);
         String lookupKey = StripeStandIn.lookupKey(StripeStandIn.OLDER_PRICE_LIST, Plan.SMALL, BillingPeriod.ANNUAL);
 
@@ -177,8 +181,13 @@ class TrialTest extends ServerTest {
         String subscriptionId = "sub_" + UUID.randomUUID();
         StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", lookupKey,
                                                        Instant.now().plus(Duration.ofDays(365)).truncatedTo(ChronoUnit.SECONDS)));
+        int readyEmails = count(output.getAll(), READY);
         assertThat(deliver(StripeEvents.event("checkout.session.completed", StripeEvents.completedSession(created, subscriptionId, "paid")))
                            .statusCode()).isEqualTo(200);
+        assertThat(count(output.getAll(), READY)).isEqualTo(readyEmails + 1);
+        // the first invoice's payment arriving after the move tells the contacts nothing more
+        assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
+        assertThat(count(output.getAll(), READY)).isEqualTo(readyEmails + 1);
 
         License moved = await(licenseRepository.findById(trial.getId()));
         assertThat(moved.getStatus()).isEqualTo(LicenseStatus.ACTIVE);
@@ -194,9 +203,40 @@ class TrialTest extends ServerTest {
     }
 
     @Test
+    void aMoveWhileTheSubscriptionIsPastDueIsReadyWhenItsInvoiceIsPaid(CapturedOutput output) throws Exception {
+        CustomerContact contact = contactOf();
+        License trial = startTrial(contact, Plan.SMALL, SMALL_FIGURES);
+        String lookupKey = StripeStandIn.lookupKey(StripeStandIn.CURRENT_PRICE_LIST, Plan.SMALL, BillingPeriod.ANNUAL);
+        asCustomer(contact, () -> customerAccount.startCheckout(new CheckoutRequest().setPlan(Plan.SMALL)
+                                                                                     .setBillingPeriod(BillingPeriod.ANNUAL)
+                                                                                     .setFigures(SMALL_FIGURES),
+                                                               AgreementTerms.VERSION));
+        StripeRequest created = StripeStandIn.requests("POST", "/v1/checkout/sessions").stream()
+                                             .filter(request -> contact.getCustomerId().equals(request.params().get("client_reference_id")))
+                                             .reduce((first, second) -> second)
+                                             .orElseThrow();
+        String subscriptionId = "sub_" + UUID.randomUUID();
+        Instant periodEnd = Instant.now().plus(Duration.ofDays(365)).truncatedTo(ChronoUnit.SECONDS);
+        int readyEmails = count(output.getAll(), READY);
+
+        // the first invoice is paid but Stripe has the subscription past due when the checkout is handled
+        StripeStandIn.report(StripeEvents.subscription(subscriptionId, "past_due", lookupKey, periodEnd));
+        assertThat(deliver(StripeEvents.event("checkout.session.completed", StripeEvents.completedSession(created, subscriptionId, "paid")))
+                           .statusCode()).isEqualTo(200);
+        assertThat(count(output.getAll(), READY)).isEqualTo(readyEmails);
+        assertThat(await(licenseRepository.findById(trial.getId())).getLastPaymentAt()).isNull();
+
+        StripeStandIn.report(StripeEvents.subscription(subscriptionId, "active", lookupKey, periodEnd));
+        assertThat(deliver(StripeEvents.event("invoice.paid", StripeEvents.invoice(subscriptionId, Instant.now()))).statusCode()).isEqualTo(200);
+        assertThat(count(output.getAll(), READY)).isEqualTo(readyEmails + 1);
+        assertThat(await(licenseRepository.findById(trial.getId())).getLastPaymentAt()).isNotNull();
+    }
+
+    @Test
     void aTrialNobodyBoughtExpires(CapturedOutput output) throws Exception {
         CustomerContact contact = contactOf();
         License trial = startTrial(contact, Plan.SMALL, SMALL_FIGURES);
+        LicensedCluster cluster = addCluster(trial);
         sql("UPDATE license SET term_end = now() - interval '1 minute' WHERE id = $1", trial.getId());
 
         assertThat(await(trialExpiryJob.run())).isGreaterThanOrEqualTo(1);
@@ -204,7 +244,7 @@ class TrialTest extends ServerTest {
         License expired = await(licenseRepository.findById(trial.getId()));
         assertThat(expired.getStatus()).isEqualTo(LicenseStatus.EXPIRED);
         assertThat(output.getAll()).contains("Your Kinotic Enterprise trial has ended");
-        assertThatThrownBy(() -> await(licenseService.issueKey(expired))).hasCauseInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> await(licenseService.issueKey(expired, cluster))).hasCauseInstanceOf(IllegalStateException.class);
         assertThat(await(licenseRepository.findMovable(contact.getCustomerId()))).isNull();
     }
 
@@ -212,6 +252,7 @@ class TrialTest extends ServerTest {
     void theContactsAreWarnedBeforeTheTrialEnds(CapturedOutput output) throws Exception {
         CustomerContact contact = contactOf();
         License trial = startTrial(contact, Plan.SMALL, SMALL_FIGURES);
+        addCluster(trial);
         sql("UPDATE license SET term_end = now() + interval '10 days' WHERE id = $1", trial.getId());
         sql("UPDATE issued_key SET expires_at = now() + interval '10 days' WHERE license_id = $1", trial.getId());
 
@@ -243,5 +284,9 @@ class TrialTest extends ServerTest {
 
     private static CompanyFigures figures(String revenue) {
         return new CompanyFigures().setAnnualRevenue(new BigDecimal(revenue));
+    }
+
+    private static int count(String text, String needle) {
+        return (text.length() - text.replace(needle, "").length()) / needle.length();
     }
 }

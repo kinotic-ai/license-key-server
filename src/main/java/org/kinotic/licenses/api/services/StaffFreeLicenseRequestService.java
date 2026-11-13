@@ -23,8 +23,8 @@ public interface StaffFreeLicenseRequestService {
     Future<List<FreeLicenseRequest>> findPending();
 
     /**
-     * Approves a request: a first request creates the free license and issues its key, a renewal request starts the
-     * license's next term and issues that term's key; either emails the key.
+     * Approves a request: a first request creates the free license for one cluster, a renewal request starts the
+     * license's next term and issues its clusters' keys for it; either emails the customer's contacts.
      *
      * @throws IllegalArgumentException when no request has the id
      * @throws IllegalStateException    when the request is not pending

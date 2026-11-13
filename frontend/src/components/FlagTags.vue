@@ -7,7 +7,7 @@ defineProps<{
   flags: LicenseFlag[]
 }>()
 
-const LABELS: Record<LicenseFlag, string> = { REVENUE_UNCONFIRMED: 'Revenue unconfirmed', POSSIBLY_COPIED: 'Possibly copied' }
+const LABELS: Record<LicenseFlag, string> = { REVENUE_UNCONFIRMED: 'Revenue unconfirmed' }
 </script>
 
 <template>

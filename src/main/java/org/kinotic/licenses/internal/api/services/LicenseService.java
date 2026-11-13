@@ -14,11 +14,12 @@ import org.kinotic.licenses.api.model.LicenseWithKeys;
 import org.kinotic.licenses.api.model.RevenueConfirmation;
 import org.kinotic.licenses.api.model.LicenseStatus;
 import org.kinotic.licenses.api.model.Plan;
-import org.kinotic.licenses.internal.api.model.NewLicense;
+import org.kinotic.licenses.api.model.LicensedCluster;
 import org.kinotic.licenses.internal.api.model.PaidSubscription;
 import org.kinotic.licenses.internal.api.model.PriceLookupKey;
 import org.kinotic.licenses.internal.api.repositories.CustomerRepository;
 import org.kinotic.licenses.internal.api.repositories.IssuedKeyRepository;
+import org.kinotic.licenses.internal.api.repositories.LicensedClusterRepository;
 import org.kinotic.licenses.internal.api.repositories.LicenseRepository;
 import org.kinotic.licenses.internal.api.repositories.RevenueConfirmationRepository;
 import org.springframework.stereotype.Component;
@@ -34,12 +35,13 @@ import java.util.UUID;
 import java.util.function.BiFunction;
 
 /**
- * The lifecycle of a license and the keys issued for it. A license runs in twelve-month license years from its start.
- * Its keys follow the date it is paid through, the end of the Stripe billing period for a paid plan and the end of
- * the license year for Free: each key expires {@link #KEY_GRACE} after that date, is emailed to the customer's contacts,
- * and is kept in the append-only key log. A trial's key expires when the trial ends, {@link #TRIAL} after it starts.
- * A key is issued only for an active license or a trial. A key, once issued, is never withdrawn: it is verified
- * offline and works until it expires, so revoking, cancelling or lapsing a license only stops new keys.
+ * The lifecycle of a license and the keys issued for its clusters. A license runs in twelve-month license years from
+ * its start, and holds as many clusters as it has seats. Each key is bound to one cluster and follows the date the
+ * license is paid through, the end of the Stripe billing period for a paid plan and the end of the license year for
+ * Free: it expires {@link #KEY_GRACE} after that date, and is kept in the append-only key log. A trial's keys expire
+ * when the trial ends, {@link #TRIAL} after it starts. A key is issued only for a seated cluster of an active license or
+ * a trial. A key, once issued, is never withdrawn: it is verified offline and works until it expires, so revoking,
+ * cancelling or lapsing a license, or releasing a cluster, only stops new keys.
  */
 @Slf4j
 @Component
@@ -56,6 +58,7 @@ public class LicenseService {
     public static final Duration KEY_GRACE = Duration.ofDays(7);
 
     private final LicenseRepository licenseRepository;
+    private final LicensedClusterRepository clusterRepository;
     private final IssuedKeyRepository issuedKeyRepository;
     private final CustomerRepository customerRepository;
     private final CustomerService customerService;
@@ -65,54 +68,44 @@ public class LicenseService {
 
     /**
      * Creates a paid license whose first payment has cleared, its year starting now on the subscription's price list
-     * and the current terms, and issues its first key. The caller emails the key.
+     * and the current terms. The caller emails that it is ready for its clusters.
      *
-     * @return the license and its key
+     * @return the license
      */
-    public Future<NewLicense> createLicense(Customer customer, PaidSubscription subscription) {
-        License license = paidLicense(customer, subscription).setStatus(LicenseStatus.ACTIVE).setLastPaymentAt(Instant.now());
-        return licenseRepository.save(license)
-                                .compose(saved -> issueKey(saved).map(key -> new NewLicense(saved, key)));
+    public Future<License> createLicense(Customer customer, PaidSubscription subscription) {
+        return licenseRepository.save(paidLicense(customer, subscription).setStatus(LicenseStatus.ACTIVE).setLastPaymentAt(Instant.now()));
     }
 
     /**
-     * Creates a free license, its year starting now on the given price list and the current terms, and issues its first
-     * key. The caller emails the key.
+     * Creates a free license, its year starting now on the given price list and the current terms, completing the
+     * approval of the free license request it was created for. The caller emails that it is ready for its clusters.
      *
      * @param priceList the current price list, which the license keeps should it move to a paid plan
-     * @return the license and its key
+     * @param requestId the approved free license request
+     * @return the license
      */
-    public Future<NewLicense> createFreeLicense(Customer customer, int priceList) {
-        License license = newLicense(customer).setPlan(Plan.FREE).setPriceList(priceList).setStatus(LicenseStatus.ACTIVE);
-        return licenseRepository.save(license)
-                                .compose(saved -> issueKey(saved).map(key -> new NewLicense(saved, key)));
+    public Future<License> createFreeLicense(Customer customer, int priceList, String requestId) {
+        return licenseRepository.saveFree(newLicense(customer).setPlan(Plan.FREE).setPriceList(priceList).setStatus(LicenseStatus.ACTIVE),
+                                          requestId);
     }
 
     /**
-     * Creates a trial of a paid plan, running {@link #TRIAL} from now on the given price list and the current terms,
-     * together with its key, which expires when the trial ends: a trial is created with its key or not at all. The
-     * caller emails the key.
+     * Creates a trial of a paid plan, running {@link #TRIAL} from now on the given price list and the current terms. Its
+     * clusters' keys expire when the trial ends. The caller emails that it is ready for its cluster.
      *
      * @param priceList the current price list, which the license keeps when its plan is bought
-     * @return the license and its key, or a failure with {@link org.kinotic.core.api.exceptions.AlreadyExistsException}
-     *         when the customer holds a trial already
+     * @return the license, or a failure with {@link org.kinotic.core.api.exceptions.AlreadyExistsException} when the
+     *         customer holds a trial already
      */
-    public Future<NewLicense> createTrial(Customer customer, Plan plan, int priceList) {
+    public Future<License> createTrial(Customer customer, Plan plan, int priceList) {
         License license = newLicense(customer).setPlan(plan).setPriceList(priceList).setStatus(LicenseStatus.TRIAL);
         license.setTermEnd(license.getTermStart().atZone(ZoneOffset.UTC).plus(TRIAL).toInstant());
-        // signed before anything is stored, so a signing failure leaves no trial behind to block a retry
-        return claims(license, keyExpiry(license)).compose(claims -> keyIssuer.issue(claims).compose(key -> {
-            IssuedKey issued = issuedKey(claims, key, license.getId());
-            return licenseRepository.saveTrial(license, issued).map(saved -> {
-                logIssued(issued);
-                return new NewLicense(saved, issued);
-            });
-        }));
+        return licenseRepository.saveTrial(license);
     }
 
     /**
-     * Creates a paid license whose first payment has not cleared, as with a bank debit. It holds no key and is
-     * {@link LicenseStatus#PAST_DUE} until the payment succeeds, when {@link #issueKeyIfExtended(License)} issues its first.
+     * Creates a paid license whose first payment has not cleared, as with a bank debit. It is
+     * {@link LicenseStatus#PAST_DUE}, and takes no cluster, until the payment succeeds.
      *
      * @return the license
      */
@@ -121,67 +114,77 @@ public class LicenseService {
     }
 
     /**
-     * Issues a key covering the date the license is paid through, or the trial.
+     * Issues a key for the cluster covering the date the license is paid through, or the trial.
      *
-     * @return the key, or a failure with {@link IllegalStateException} when the license is neither active nor a trial
+     * @return the key, or a failure with {@link IllegalStateException} when the license is neither active nor a trial,
+     *         or the cluster holds a seat of another license
      */
-    public Future<IssuedKey> issueKey(License license) {
-        return claims(license, keyExpiry(license)).compose(claims -> sign(claims, license.getId()));
+    public Future<IssuedKey> issueKey(License license, LicensedCluster cluster) {
+        return claims(license, cluster, keyExpiry(license)).compose(claims -> sign(claims, license.getId(), cluster.getId()));
     }
 
     /**
-     * Issues a key when the license is paid through a later date than its newest key covers, or it has none, as when a
-     * payment extends it. Repeated calls issue one key for each extension.
+     * Issues a key for the cluster when the license is paid through a later date than the cluster's newest key covers,
+     * or the cluster has none, as when a payment extends the license. Repeated calls issue one key for each extension.
      *
-     * @return the key issued, or {@code null} when the newest key already covers the paid-through date or the trial; a
-     *         failure with {@link IllegalStateException} when the license is neither active nor a trial
+     * @return the key issued, or {@code null} when the cluster's newest key already covers the paid-through date or the
+     *         trial; a failure with {@link IllegalStateException} when the license is neither active nor a trial, or the
+     *         cluster holds a seat of another license
      */
-    public Future<IssuedKey> issueKeyIfExtended(License license) {
+    public Future<IssuedKey> issueKeyIfExtended(License license, LicensedCluster cluster) {
         Instant coverage = keyExpiry(license);
-        return issuedKeyRepository.findLatestByLicenseId(license.getId())
+        return issuedKeyRepository.findLatestByClusterId(cluster.getId())
                                   .compose(newest -> newest == null || newest.getExpiresAt().isBefore(coverage)
-                                          ? issueKey(license)
+                                          ? issueKey(license, cluster)
                                           : Future.succeededFuture());
     }
 
     /**
-     * Starts a free license's next license year and issues the key covering it. The year starts at an anniversary of the
-     * license: when the current year ends, or the latest anniversary since when that is more than a year past.
+     * Issues each seated cluster of the license the key covering the date it is paid through, where its newest key
+     * does not, as when a payment extends it.
      *
-     * @return the license and its key, or a failure with {@link IllegalStateException} when the license is not active,
-     *         or changed since the caller read it
+     * @return how many keys were issued
      */
-    public Future<NewLicense> renewFreeTerm(License license) {
+    public Future<Integer> issueExtendedKeys(License license) {
+        return clusterRepository.findSeated(license.getId()).compose(clusters -> {
+            Future<Integer> ret = Future.succeededFuture(0);
+            for (LicensedCluster cluster : clusters) {
+                ret = ret.compose(count -> issueKeyIfExtended(license, cluster).map(key -> key != null ? count + 1 : count));
+            }
+            return ret;
+        });
+    }
+
+    /**
+     * Starts a free license's next license year. The year starts at an anniversary of the license: when the current year
+     * ends, or the latest anniversary since when that is more than a year past. The caller issues its clusters' keys.
+     *
+     * @param requestId the approved free license request the new year completes, or {@code null} for none
+     * @return the license, or a failure with {@link IllegalStateException} when the license is not active, or changed
+     *         since the caller read it
+     */
+    public Future<License> renewFreeTerm(License license, String requestId) {
         Instant now = Instant.now();
         Instant start = license.getTermEnd();
         while (!termEnd(start).isAfter(now)) {
             start = termEnd(start);
         }
-        return startFreeTerm(license, start);
+        return startFreeTerm(license, start, requestId);
     }
 
     /**
-     * Starts a free license's license year now and issues the key covering it, for a free license that holds no key.
-     *
-     * @return the license and its key, or a failure with {@link IllegalStateException} when the license is not active,
-     *         or changed since the caller read it
+     * Tells the licensee's contacts the license is ready for its clusters, as a purchase, trial or approval makes it.
      */
-    public Future<NewLicense> startFreeTerm(License license) {
-        return startFreeTerm(license, Instant.now());
+    public Future<Void> emailLicenseReady(License license) {
+        return emailContacts(license, (contact, organization) -> emailService.sendLicenseReady(contact, organization, license));
     }
 
     /**
-     * Emails a key to the licensee's contacts as the license's first key or a replacement.
+     * Tells the licensee's contacts that a payment, or a free license's new year, extended the license, and that its
+     * clusters' new keys are issued.
      */
-    public Future<Void> emailNewKey(License license, IssuedKey key) {
-        return emailContacts(license, (contact, organization) -> emailService.sendNewKey(contact, organization, license, key));
-    }
-
-    /**
-     * Emails the key a payment extended the license with to the licensee's contacts.
-     */
-    public Future<Void> emailRenewalKey(License license, IssuedKey key) {
-        return emailContacts(license, (contact, organization) -> emailService.sendRenewalKey(contact, organization, license, key));
+    public Future<Void> emailRenewed(License license) {
+        return emailContacts(license, (contact, organization) -> emailService.sendLicenseRenewed(contact, organization, license));
     }
 
     /**
@@ -213,17 +216,21 @@ public class LicenseService {
     }
 
     /**
-     * Warns the licensee's contacts that the license's newest key expires with no newer one issued.
+     * Warns the licensee's contacts that a cluster's newest key expires with no newer one issued.
      */
-    public Future<Void> emailKeyExpiring(License license, IssuedKey key) {
-        return emailContacts(license, (contact, organization) -> emailService.sendKeyExpiring(contact, organization, license, key));
+    public Future<Void> emailKeyExpiring(License license, LicensedCluster cluster, IssuedKey key) {
+        return clusterRepository.findSeated(license.getId()).compose(seated -> {
+            boolean beyondSeats = seated.stream().noneMatch(held -> held.getId().equals(cluster.getId()));
+            return emailContacts(license, (contact, organization) -> emailService.sendKeyExpiring(contact, organization, license, cluster, key,
+                                                                                                  beyondSeats));
+        });
     }
 
     /**
-     * Emails a trial's key to the licensee's contacts.
+     * Tells the licensee's contacts the trial started and is ready for its cluster.
      */
-    public Future<Void> emailTrialStarted(License license, IssuedKey key) {
-        return emailContacts(license, (contact, organization) -> emailService.sendTrialStarted(contact, organization, license, key));
+    public Future<Void> emailTrialStarted(License license) {
+        return emailContacts(license, (contact, organization) -> emailService.sendTrialStarted(contact, organization, license));
     }
 
     /**
@@ -234,10 +241,10 @@ public class LicenseService {
     }
 
     /**
-     * Emails the key of an approved free license, or of its approved renewal, to the licensee's contacts.
+     * Tells the licensee's contacts their free license, or its renewal, is approved.
      */
-    public Future<Void> emailFreeApproval(License license, IssuedKey key) {
-        return emailContacts(license, (contact, organization) -> emailService.sendFreeRequestApproved(contact, organization, license, key));
+    public Future<Void> emailFreeApproval(License license) {
+        return emailContacts(license, (contact, organization) -> emailService.sendFreeRequestApproved(contact, organization, license));
     }
 
     /**
@@ -248,20 +255,6 @@ public class LicenseService {
     }
 
     /**
-     * Emails the license's newest key to the licensee's contacts again, as a trial's key for a trial.
-     *
-     * @throws IllegalArgumentException when the license has no key
-     */
-    public Future<Void> resendLatestKey(License license) {
-        return issuedKeyRepository.findLatestByLicenseId(license.getId()).compose(key -> {
-            if (key == null) {
-                throw new IllegalArgumentException("The license " + license.getId() + " has no key to resend");
-            }
-            return license.getStatus() == LicenseStatus.TRIAL ? emailTrialStarted(license, key) : emailNewKey(license, key);
-        });
-    }
-
-    /**
      * Revokes the license: no further key is issued for it.
      */
     public Future<License> revoke(License license) {
@@ -269,20 +262,21 @@ public class LicenseService {
     }
 
     /**
-     * Each license with its keys, its yearly confirmations and the anniversary its figures are due for, in the order
-     * given.
+     * Each license with its clusters, their keys, its yearly confirmations and the anniversary its figures are due for,
+     * in the order given.
      */
     public Future<List<LicenseWithKeys>> withKeys(List<License> licenses) {
         Future<List<LicenseWithKeys>> ret = Future.succeededFuture(new ArrayList<>());
         for (License license : licenses) {
-            ret = ret.compose(list -> keysOf(license.getId()).compose(keys -> confirmationRepository.findByLicenseId(license.getId()).map(confirmations -> {
+            ret = ret.compose(list -> clusterRepository.findByLicenseId(license.getId()).compose(clusters -> keysOf(license.getId()).compose(keys -> confirmationRepository.findByLicenseId(license.getId()).map(confirmations -> {
                 list.add(new LicenseWithKeys().setLicense(license)
+                                              .setClusters(clusters)
                                               .setKeys(keys)
                                               .setPaidThrough(paidThrough(license))
                                               .setConfirmations(confirmations)
                                               .setConfirmationDueFor(confirmationDueFor(license, confirmations)));
                 return list;
-            })));
+            }))));
         }
         return ret;
     }
@@ -317,7 +311,7 @@ public class LicenseService {
     }
 
     /**
-     * The license's keys, newest first.
+     * The keys of the license's clusters, newest first.
      */
     public Future<List<IssuedKey>> keysOf(String licenseId) {
         return issuedKeyRepository.findByLicenseId(licenseId);
@@ -374,6 +368,7 @@ public class LicenseService {
                 .setPlan(price.plan())
                 .setBillingPeriod(price.period())
                 .setPriceList(price.priceList())
+                .setSeats(subscription.seats())
                 .setStripeSubscriptionId(subscription.stripeSubscriptionId())
                 .setCheckoutSessionId(subscription.checkoutSessionId())
                 .setCurrentPeriodEnd(subscription.currentPeriodEnd());
@@ -389,57 +384,40 @@ public class LicenseService {
                 .setTermEnd(termEnd(now));
     }
 
-    // Signed first, so a signing failure leaves the year where it was for the next attempt. The year then moves only if
-    // the license is active and nobody moved its year meanwhile, and the key is logged only once it has.
-    private Future<NewLicense> startFreeTerm(License license, Instant termStart) {
-        Instant termEnd = termEnd(termStart);
-        return claims(license, keyExpiry(termEnd)).compose(claims -> keyIssuer.issue(claims)
-                        .compose(key -> {
-                            IssuedKey issued = issuedKey(claims, key, license.getId());
-                            return licenseRepository.startTerm(license, termStart, termEnd, issued)
-                                                    .map(moved -> {
-                                                        if (moved == null) {
-                                                            throw new IllegalStateException("The license " + license.getId()
-                                                                    + " is not active, or changed while its key was issued");
-                                                        }
-                                                        logIssued(issued);
-                                                        return new NewLicense(moved, issued);
-                                                    });
-                        }));
-    }
-
-    // A key names its licensee by the customer's legal name, which Kinotic shows on its License page
-    private Future<LicenseKeyClaims> claims(License license, Instant expiresAt) {
-        return customerRepository.findById(license.getCustomerId())
-                                 .map(customer -> new LicenseKeyClaims(customer.getLegalName(), UUID.randomUUID().toString(),
-                                                                       Instant.now(), expiresAt));
-    }
-
-    private Future<IssuedKey> sign(LicenseKeyClaims claims, String licenseId) {
-        return keyIssuer.issue(claims).compose(key -> append(claims, key, licenseId));
-    }
-
-    private Future<IssuedKey> append(LicenseKeyClaims claims, String key, String licenseId) {
-        return issuedKeyRepository.append(issuedKey(claims, key, licenseId)).map(issued -> {
-            if (issued == null) {
-                throw new IllegalStateException("The license " + licenseId + " is neither active nor a trial, so it is issued no key");
+    // The year moves only if the license is active and nobody moved its year meanwhile
+    private Future<License> startFreeTerm(License license, Instant termStart, String requestId) {
+        return licenseRepository.startTerm(license, termStart, termEnd(termStart), requestId).map(moved -> {
+            if (moved == null) {
+                throw new IllegalStateException("The license " + license.getId() + " is not active, or changed while its year was moved");
             }
-            logIssued(issued);
-            return issued;
+            return moved;
         });
     }
 
-    private static IssuedKey issuedKey(LicenseKeyClaims claims, String key, String licenseId) {
-        return new IssuedKey()
-                .setJti(claims.keyId())
-                .setLicenseId(licenseId)
-                .setKey(key)
-                .setIssuedAt(claims.issuedAt())
-                .setExpiresAt(claims.expiresAt());
+    // A key names its licensee by the customer's legal name, which Kinotic shows on its License page, and the one
+    // cluster it works on
+    private Future<LicenseKeyClaims> claims(License license, LicensedCluster cluster, Instant expiresAt) {
+        return customerRepository.findById(license.getCustomerId())
+                                 .map(customer -> new LicenseKeyClaims(customer.getLegalName(), UUID.randomUUID().toString(),
+                                                                       cluster.getClusterId(), Instant.now(), expiresAt));
     }
 
-    private static void logIssued(IssuedKey issued) {
-        log.info("Issued key {} for license {}", issued.getJti(), issued.getLicenseId());
+    private Future<IssuedKey> sign(LicenseKeyClaims claims, String licenseId, String licensedClusterId) {
+        return keyIssuer.issue(claims).compose(key -> issuedKeyRepository.append(new IssuedKey()
+                                                                                         .setJti(claims.keyId())
+                                                                                         .setLicenseId(licenseId)
+                                                                                         .setLicensedClusterId(licensedClusterId)
+                                                                                         .setKey(key)
+                                                                                         .setIssuedAt(claims.issuedAt())
+                                                                                         .setExpiresAt(claims.expiresAt())))
+                        .map(issued -> {
+                            if (issued == null) {
+                                throw new IllegalStateException("The license " + licenseId + " is neither active nor a trial, or its cluster "
+                                                                        + licensedClusterId + " gave up its seat, so it is issued no key");
+                            }
+                            log.info("Issued key {} for cluster {} of license {}", issued.getJti(), licensedClusterId, licenseId);
+                            return issued;
+                        });
     }
 
     // every contact of the licensee gets the email; a failure to send fails the caller, which retries or reports it

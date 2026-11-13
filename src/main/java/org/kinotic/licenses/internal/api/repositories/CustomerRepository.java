@@ -24,10 +24,11 @@ public class CustomerRepository {
 
     private static final String COLUMNS = "id, legal_name, stripe_customer_id, created_at";
 
-    // one row per customer: its newest license and that license's newest key
+    // one row per customer: its newest license, the clusters holding its seats, and that license's newest key
     private static final String SUMMARY_SQL = """
             SELECT c.id, c.legal_name, c.stripe_customer_id, c.created_at,
-                   l.id AS license_id, l.plan, l.status, l.billing_period, l.price_list, l.current_period_end, l.term_end, l.last_payment_at, l.flags,
+                   l.id AS license_id, l.plan, l.status, l.billing_period, l.price_list, l.current_period_end, l.term_end, l.last_payment_at, l.flags, l.seats,
+                   (SELECT count(*) FROM licensed_cluster WHERE license_id = l.id AND released_at IS NULL) AS clusters,
                    k.jti AS latest_key_jti, k.expires_at AS latest_key_expires_at,
                    (SELECT email FROM customer_contact WHERE customer_id = c.id AND role = 'BILLING' LIMIT 1) AS billing_email
             FROM customer c
@@ -103,6 +104,8 @@ public class CustomerRepository {
                 .setTermEnd(PgValues.instant(row, "term_end"))
                 .setLastPaymentAt(PgValues.instant(row, "last_payment_at"))
                 .setFlags(PgValues.enumSet(row, "flags", LicenseFlag.class))
+                .setSeats(row.getInteger("seats"))
+                .setClusters(row.getString("license_id") != null ? Math.toIntExact(row.getLong("clusters")) : null)
                 .setLatestKeyJti(row.getString("latest_key_jti"))
                 .setLatestKeyExpiresAt(PgValues.instant(row, "latest_key_expires_at"));
     }

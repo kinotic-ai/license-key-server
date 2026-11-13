@@ -24,7 +24,8 @@ import java.util.Base64;
 /**
  * Issues license keys, and verifies the ones it issued, in the format Kinotic verifies: a JWT signed with ES256, whose header is
  * {@code {"alg":"ES256","typ":"JWT"}} and whose payload carries {@code sub} (the licensee's legal name), {@code jti},
- * {@code iat}, {@code exp} and {@code features: ["*"]}, which turns on every Enterprise Feature. The signature is over
+ * {@code clusterId} (the UID of the kube-system namespace of the one cluster the key works on), {@code iat}, {@code exp}
+ * and {@code features: ["*"]}, which turns on every Enterprise Feature. The signature is over
  * the signing input in IEEE P1363 form ({@code R||S}), as JWS requires and Azure Key Vault returns it.
  * <p>
  * Kinotic's verifier is {@code org.kinotic.domain.internal.api.ee.license.LicenseVerifier} in kinotic-ai/kinotic; this
@@ -75,8 +76,8 @@ public class LicenseKeyIssuer {
             verifier.update((parts[0] + "." + parts[1]).getBytes(StandardCharsets.US_ASCII));
             Validate.isTrue(verifier.verify(BASE64URL_DECODER.decode(parts[2])), "The key is not signed by this server");
             JsonObject payload = new JsonObject(new String(BASE64URL_DECODER.decode(parts[1]), StandardCharsets.UTF_8));
-            return new LicenseKeyClaims(payload.getString("sub"), payload.getString("jti"), Instant.ofEpochSecond(payload.getLong("iat")),
-                                        Instant.ofEpochSecond(payload.getLong("exp")));
+            return new LicenseKeyClaims(payload.getString("sub"), payload.getString("jti"), payload.getString("clusterId"),
+                                        Instant.ofEpochSecond(payload.getLong("iat")), Instant.ofEpochSecond(payload.getLong("exp")));
         } catch (GeneralSecurityException | RuntimeException e) {
             throw e instanceof IllegalArgumentException illegal ? illegal : new IllegalArgumentException("The key cannot be read", e);
         }
@@ -90,6 +91,7 @@ public class LicenseKeyIssuer {
         return new JsonObject()
                 .put("sub", claims.subject())
                 .put("jti", claims.keyId())
+                .put("clusterId", claims.clusterId())
                 .put("iat", claims.issuedAt().getEpochSecond())
                 .put("exp", claims.expiresAt().getEpochSecond())
                 .put("features", new JsonArray().add(ALL_FEATURES));

@@ -17,7 +17,7 @@ import java.util.List;
 
 /**
  * Stores free license requests. A customer has at most one open request: one that is pending, or approved with its
- * key not yet issued. Every decision is a single conditional statement, so two decisions on one request leave exactly
+ * license not yet recorded. Every decision is a single conditional statement, so two decisions on one request leave exactly
  * one recorded.
  */
 @Repository
@@ -28,7 +28,7 @@ public class FreeLicenseRequestRepository {
     public static final String ALREADY_OPEN = "A free license request of this account is already being reviewed";
 
     private static final String UNIQUE_VIOLATION = "23505";
-    // how long an approval may take to issue its key before another approval may take it over
+    // how long an approval may take to create or renew its license before another approval may take it over
     private static final String CLAIM_LIFETIME = "5 minutes";
 
     // the organization and contact are the customer the request was made for and its billing contact; the rows come
@@ -67,8 +67,8 @@ public class FreeLicenseRequestRepository {
     }
 
     /**
-     * The requests awaiting a decision, oldest first: the pending ones, and the approvals that stopped before their key
-     * was issued, which approving again completes.
+     * The requests awaiting a decision, oldest first: the pending ones, and the approvals that stopped before their license
+     * was recorded, which approving again completes.
      */
     public Future<List<FreeLicenseRequest>> findAwaitingDecision() {
         return pool.preparedQuery(SELECT_ALL + " WHERE r.status = $1 OR (" + stalledApproval("r.") + ") ORDER BY r.created_at")
@@ -86,11 +86,11 @@ public class FreeLicenseRequestRepository {
     }
 
     /**
-     * Takes the approval of a request for the caller to issue its key: a pending request is approved by
-     * {@code reviewedBy}, and an approval that stopped before its key was issued is taken over, keeping its reviewer
+     * Takes the approval of a request for the caller to create or renew its license: a pending request is approved by
+     * {@code reviewedBy}, and an approval that stopped before its license was recorded is taken over, keeping its reviewer
      * and time.
      *
-     * @return the approved request, or {@code null} when it was decided already, another approval is issuing its key,
+     * @return the approved request, or {@code null} when it was decided already, another approval is recording its license,
      *         or no request has the id
      */
     public Future<FreeLicenseRequest> claimApproval(String id, String reviewedBy) {
@@ -100,15 +100,6 @@ public class FreeLicenseRequestRepository {
                                  + " status = 'APPROVED', claimed_at = now()"
                                  + " WHERE id = $1 AND (status = 'PENDING' OR (" + stalledApproval("") + "))",
                          Tuple.of(id, reviewedBy));
-    }
-
-    /**
-     * Completes an approval with the key it issued.
-     */
-    public Future<Void> markIssued(String id, String jti) {
-        return pool.preparedQuery("UPDATE free_license_request SET issued_key_jti = $2 WHERE id = $1")
-                   .execute(Tuple.of(id, jti))
-                   .mapEmpty();
     }
 
     /**
@@ -123,18 +114,18 @@ public class FreeLicenseRequestRepository {
     }
 
     /**
-     * Returns an approval whose key could not be issued to pending, with no reviewer.
+     * Returns an approval whose license could not be created or renewed to pending, with no reviewer.
      */
     public Future<Void> reopen(String id) {
         return pool.preparedQuery("UPDATE free_license_request SET status = 'PENDING', reviewed_by = NULL, reviewed_at = NULL,"
-                                          + " claimed_at = NULL WHERE id = $1 AND issued_key_jti IS NULL")
+                                          + " claimed_at = NULL WHERE id = $1 AND license_id IS NULL")
                    .execute(Tuple.of(id))
                    .mapEmpty();
     }
 
-    // an approval that claimed a request long enough ago and has still not recorded its key, the columns named with prefix
+    // an approval that claimed a request long enough ago and has still not recorded its license, the columns named with prefix
     private static String stalledApproval(String prefix) {
-        return "%1$sstatus = 'APPROVED' AND %1$sissued_key_jti IS NULL AND %1$sclaimed_at < now() - interval '%2$s'"
+        return "%1$sstatus = 'APPROVED' AND %1$slicense_id IS NULL AND %1$sclaimed_at < now() - interval '%2$s'"
                 .formatted(prefix, CLAIM_LIFETIME);
     }
 

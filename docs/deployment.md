@@ -24,8 +24,9 @@ whatever it likes to the left of it. A second proxy in the chain would make ever
   `Contributor` role on the Communication Services resource to send.
 - **Stripe**: the price lists described under [Price lists](#price-lists); Link enabled under payment methods; the
   Kinotic logo and brand colour under branding, which Checkout and the Customer Portal use; the Customer Portal
-  enabled with payment method updates, invoice history and cancellation, and with **subscription updates (switching
-  plans) turned off**: a license changes plan only at its yearly confirmation. Prices live only in Stripe.
+  enabled with payment method updates, invoice history and cancellation, with **subscription updates allowing quantity
+  changes** (the quantity is the license's seats, one for each cluster) and **with no products to switch to**: a license
+  changes plan only at its yearly confirmation. Prices live only in Stripe.
 - **Stripe webhook**: an endpoint at `https://licenses.kinotic.ai/api/stripe/webhook` delivering
   `checkout.session.completed`, `invoice.paid`, `invoice.payment_failed`, `customer.subscription.updated` and
   `customer.subscription.deleted`, pinned to the API version of the `stripe-java` release in `gradle.properties`.
@@ -35,26 +36,47 @@ whatever it likes to the left of it. A second proxy in the chain would make ever
   prices, products and invoices, and write access to customers, subscriptions (a lapsed license's subscription is
   cancelled, and one whose figures set Free ends at its anniversary), subscription schedules (plan moves), coupons (the
   design partner coupon is created on first use) and Checkout and Customer Portal sessions. A card
-  payment gets its key from `checkout.session.completed`; a bank debit through Link completes Checkout unpaid, and
-  its key is issued and emailed once Stripe reports the first invoice paid. A subscription the customer cancels in
-  the Customer Portal keeps its key until it expires and is not renewed.
+  payment makes the license ready for its clusters at `checkout.session.completed`; a bank debit through Link
+  completes Checkout unpaid, and the license takes clusters once Stripe reports the first invoice paid. A subscription
+  the customer cancels in the Customer Portal keeps its keys until they expire and is not renewed.
+
+## Clusters and seats
+
+A license has `seats`, how many Kinotic clusters it covers: the Stripe subscription item's quantity for a paid plan,
+which Checkout sets from the cluster count the customer chose and the Customer Portal changes, each seat billed at
+the plan's Price; one for Free and for a trial. The customer adds a cluster from the account with the id the cluster's
+system console License page shows, the UID of its `kube-system` namespace, and a name (`licensed_cluster`). The
+License page's "License this cluster" link opens `/account?clusterId=<uid>`, which opens the add-cluster form with the
+id filled in (directly when exactly one license has an open seat); an air-gapped cluster's id is copied by hand. Adding a
+cluster takes a seat and issues its first key at once; the license row is locked while seats are counted, so clusters
+added together never take more seats than it has, and the partial unique index `licensed_cluster_active_idx` lets a
+cluster hold one seat at a time across every license. A cluster keeps its seat for good: the customer cannot release
+it, so a seat licenses one cluster. A cluster gives up its seat only when its license ends (expires, lapses, is canceled
+or revoked) and the cluster is added to another license.
+
+A license's seated clusters are its oldest unreleased ones, as many as it has seats. When the customer lowers the
+quantity below the clusters it holds, the newest clusters beyond it get no new keys, and renewing from one says why,
+until the customer adds seats again.
 
 ## Keys
 
-A key expires seven days after the date its license is paid through: the end of the Stripe billing period for a paid
-plan, the end of the license year for Free. A trial's key expires when the trial ends. Every `invoice.paid` that extends the paid-through date issues and emails
-the key covering the new date, once however often Stripe delivers it; an email that fails is sent by the daily key
-email job. A license that is past due, lapsed, cancelled, expired or revoked is issued no key, and the key it holds works until
-it expires (Kinotic keeps its features on for 14 days more). The same daily job warns, once per key, the contacts of a
-license whose newest key expires within 14 days with no newer one coming by itself: one past due, one set to end, a
-trial, or a free license, whose next year staff approve.
+Each key is bound to one cluster by its `clusterId` claim. A key expires seven days after the date its license is paid
+through: the end of the Stripe billing period for a paid plan, the end of the license year for Free. A trial's key
+expires when the trial ends. Every `invoice.paid` that extends the paid-through date, and every new year of a free
+license, issues each seated cluster the key covering the new date, once however often Stripe delivers it, and emails
+the contacts that the license is renewed; an email that fails is sent by the daily key email job. No email carries a
+key: a cluster that reaches this server installs each new key by renewing, and the customer copies one for a cluster
+that cannot from the account. A license that is past due, lapsed, cancelled, expired or revoked is issued no key, and
+the keys it holds work until they expire (Kinotic keeps its features on for 14 days more). The same daily job warns,
+once per key, the contacts of a cluster whose newest key expires within 14 days with no newer one coming by itself: one
+of a license past due, set to end, a trial, or a free license, whose next year staff approve.
 
 ## Trials
 
 A customer that has never held a paid license or a trial, and holds no active free license, may start a trial of the
 paid plan its figures set from `/buy`, with no payment details and no Stripe call beyond reading the current price
 list. The trial is a license in status `TRIAL` on that plan and the current price list, running three months
-(`term_end`); its one key is emailed at once and expires when the trial ends. A customer holds one trial: the start
+(`term_end`), for one cluster, whose key expires when the trial ends. A customer holds one trial: the start
 checks the customer's licenses, and the partial unique index `license_one_trial_idx` refuses a second trial started at
 the same moment. Buying a plan before the trial ends moves the trial onto the subscription, as it moves a free license:
 it keeps its price list and terms, and its first license year starts at the purchase. An hourly job marks a trial
@@ -105,7 +127,7 @@ plan:
   license to the new plan.
 - **Free** (under $1M revenue and under $5M raised): the subscription's `cancel_at` is set to the anniversary, after
   releasing any schedule. When Stripe ends it, the license continues as Free with the same price list and terms, and
-  the job starts its next year with a Free key.
+  the job starts its next year as Free and issues its clusters' keys.
 - **A Free license whose figures set a paid plan:** the customer must buy that plan by the anniversary; buying it
   moves the free license onto the subscription at the price list it keeps. Otherwise the license is not renewed.
 - **A Free license that still qualifies:** a renewal request goes to the staff queue, and approving it starts the
@@ -145,11 +167,11 @@ of the customer through Azure Communication Services:
 | Template | When |
 |---|---|
 | `sign-in-code` | a sign-in or sign-up code is requested |
-| `new-key`, `renewal-key` | a license's first key, and each key a payment extends it with |
-| `trial-started`, `trial-expired` | a trial starts, with its key, and once it ends without its plan bought |
+| `license-ready`, `license-renewed` | a license is bought and ready for its clusters, and each payment or free year that issues its clusters new keys |
+| `trial-started`, `trial-expired` | a trial starts, ready for its cluster, and once it ends without its plan bought |
 | `past-due` | a payment fails and the license leaves good standing |
 | `lapse-warning`, `lapsed` | a license past due for 20 days, and once it lapses at 30 |
-| `key-expiring` | the newest key expires within 14 days with no newer one coming by itself, as a trial's does before it ends |
+| `key-expiring` | a cluster's newest key expires within 14 days with no newer one coming by itself, as a trial's does before it ends |
 | `confirmation-due` | 30 days before an anniversary, to confirm the figures |
 | `plan-changed` | the confirmed figures move the plan, end the subscription for Free, or require a free license to buy one |
 | `free-request-approved`, `free-request-rejected` | staff decide a free license request |
@@ -191,7 +213,7 @@ KINOTIC_CORS_ALLOWEDORIGINPATTERN='https://(licenses\.kinotic\.ai|<staff host>)'
 
 `kinotic.cors.allowCredentials` is `true` in `application.yml`, so the session cookie flows.
 
-A Kinotic installation renewing its key connects with `kinotic-client`, whose WebSocket upgrade sends the gateway's
+A Kinotic cluster renewing its key connects with `kinotic-client`, whose WebSocket upgrade sends the gateway's
 own origin, `https://licenses.kinotic.ai`, as its `Origin`; the pattern above already admits it.
 
 ## Running the image

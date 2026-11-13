@@ -7,8 +7,8 @@ import lombok.experimental.Accessors;
 import java.time.Instant;
 
 /**
- * A request for a free license, with the figures the organization reported about itself. Staff approve or reject
- * it; approving creates the free license and issues its key.
+ * A request for a free license, or its next year, with the figures the organization reported about itself. Staff
+ * approve or reject it; approving creates the free license, or starts its next year and issues its clusters' keys.
  */
 @Data
 @Accessors(chain = true)

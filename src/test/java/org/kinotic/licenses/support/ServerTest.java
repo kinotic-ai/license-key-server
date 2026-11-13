@@ -24,9 +24,12 @@ import org.kinotic.licenses.api.model.BillingPeriod;
 import org.kinotic.licenses.api.model.ContactRole;
 import org.kinotic.licenses.api.model.Customer;
 import org.kinotic.licenses.api.model.CustomerContact;
+import org.kinotic.licenses.api.model.License;
+import org.kinotic.licenses.api.model.LicensedCluster;
 import org.kinotic.licenses.api.model.Plan;
 import org.kinotic.licenses.api.security.LicenseParticipant;
 import org.kinotic.licenses.api.security.ParticipantType;
+import org.kinotic.licenses.api.services.CustomerAccountService;
 import org.kinotic.core.api.security.SecurityContext;
 import org.kinotic.licenses.internal.api.repositories.CustomerContactRepository;
 import org.kinotic.licenses.internal.api.model.PaidSubscription;
@@ -74,6 +77,8 @@ public abstract class ServerTest {
     protected CustomerRepository customerRepository;
     @Autowired
     protected CustomerContactRepository contactRepository;
+    @Autowired
+    protected CustomerAccountService customerAccount;
 
     @DynamicPropertySource
     static void database(DynamicPropertyRegistry registry) {
@@ -201,10 +206,19 @@ public abstract class ServerTest {
         return securityContext.callAs(participant, () -> (CompletionStage<T>) call.get().toCompletionStage()).get();
     }
 
-    /** A monthly subscription to the plan on the current price list, as a Checkout Session would have bought it. */
+    /** A monthly one-seat subscription to the plan on the current price list, as a Checkout Session would have bought it. */
     protected static PaidSubscription subscription(Plan plan, String stripeSubscriptionId, String checkoutSessionId, Instant currentPeriodEnd) {
-        return new PaidSubscription(new PriceLookupKey(StripeStandIn.CURRENT_PRICE_LIST, plan, BillingPeriod.MONTHLY),
+        return new PaidSubscription(new PriceLookupKey(StripeStandIn.CURRENT_PRICE_LIST, plan, BillingPeriod.MONTHLY), 1,
                                     stripeSubscriptionId, checkoutSessionId, currentPeriodEnd);
+    }
+
+    /**
+     * Adds a cluster with a new id to the license as its customer's first contact does from the account, which issues
+     * the cluster its first key.
+     */
+    protected LicensedCluster addCluster(License license) throws Exception {
+        CustomerContact contact = await(contactRepository.findByCustomerId(license.getCustomerId())).getFirst();
+        return asCustomer(contact, () -> customerAccount.addCluster(license.getId(), UUID.randomUUID().toString(), "production"));
     }
 
     /** A customer with one billing contact whose email is unique to the test. */

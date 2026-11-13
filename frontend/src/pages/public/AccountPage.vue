@@ -1,24 +1,31 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import { useToast } from 'primevue/usetoast'
 import { FormDrawer, PageHeader, showErrorToast } from '@kinotic-ai/frontend-common'
 import type { CustomerAccount, LicenseWithKeys, Plan } from '@/api/model'
 import { customerAccountService } from '@/api/services'
+import ClusterList from '@/components/ClusterList.vue'
 import CompanyFiguresFields from '@/components/CompanyFiguresFields.vue'
-import KeyBlock from '@/components/KeyBlock.vue'
 import LicenseStatusTag from '@/components/LicenseStatusTag.vue'
 import { billingPeriodName, formatDate, formatMoney, planName } from '@/util/format'
 
 /**
- * The customer account: each license's status, plan, billing period, paid-through date and next anniversary, when a
- * trial ends and how to buy its plan, the
- * yearly confirmation of the company's figures when it is due, the design partner discount, every key issued with copy
- * and download and how to install it on the system console's License page, and the Stripe Customer Portal for payment
- * details and receipts.
+ * The customer account: each license's status, plan, seats, billing period, paid-through date and next anniversary,
+ * when a trial ends and how to buy its plan, the yearly confirmation of the company's figures when it is due, the design
+ * partner discount, the license's clusters with adding them, started from a cluster's License page link that names the
+ * cluster in its clusterId query parameter, and every key issued for each with copy and
+ * download and how to install it on the system console's License page, and the Stripe Customer Portal for payment
+ * details, receipts and seats.
  */
+const CLUSTER_ID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+
 const toast = useToast()
+const route = useRoute()
+const router = useRouter()
 const account = ref<CustomerAccount | null>(null)
 const loading = ref(true)
 const openingPortal = ref(false)
@@ -28,6 +35,19 @@ const confirming = ref<LicenseWithKeys | null>(null)
 const annualRevenue = ref<number | null>(null)
 const capitalRaised = ref<number | null>(null)
 const submitting = ref(false)
+
+// the license a cluster is being added to
+const addingTo = ref<LicenseWithKeys | null>(null)
+const clusterId = ref('')
+const clusterName = ref('')
+const adding = ref(false)
+// the cluster id a cluster's system console License page sends with its "License this cluster" link, until it is added
+const linkedClusterId = ref<string | null>(null)
+const addableLicenses = computed(() => account.value?.licenses.filter(canAddCluster) ?? [])
+// the license the linked cluster holds a seat of already
+const linkedHolder = computed(() => account.value?.licenses.find(entry => entry.clusters.some(
+    cluster => cluster.releasedAt === null && cluster.clusterId === linkedClusterId.value)))
+const clusterReady = computed(() => CLUSTER_ID.test(clusterId.value.trim()) && clusterName.value.trim().length > 0)
 
 const subscribed = computed(() => account.value?.licenses.some(l => l.license.plan !== 'FREE'
     && (l.license.status === 'ACTIVE' || l.license.status === 'PAST_DUE')) ?? false)
@@ -39,7 +59,10 @@ const confirmingFree = computed(() => confirming.value?.license.plan === 'FREE')
 const needsCapital = computed(() => confirmingFree.value || (annualRevenue.value !== null && annualRevenue.value < 1_000_000))
 const figuresReady = computed(() => annualRevenue.value !== null && (!needsCapital.value || capitalRaised.value !== null))
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  takeLinkedCluster()
+})
 
 async function load() {
   loading.value = true
@@ -49,6 +72,20 @@ async function load() {
     showErrorToast(toast, 'Your account could not be loaded', err)
   } finally {
     loading.value = false
+  }
+}
+
+// Takes the cluster id of the link once: opens the add-cluster drawer when exactly one license has an open seat, and
+// otherwise leaves the id for the drawer of whichever license the customer picks
+function takeLinkedCluster() {
+  const linked = typeof route.query.clusterId === 'string' ? route.query.clusterId.trim().toLowerCase() : ''
+  if (!account.value || !CLUSTER_ID.test(linked)) {
+    return
+  }
+  router.replace({ query: { ...route.query, clusterId: undefined } })
+  linkedClusterId.value = linked
+  if (!linkedHolder.value && addableLicenses.value.length === 1) {
+    startAddingCluster(addableLicenses.value[0]!)
   }
 }
 
@@ -86,6 +123,48 @@ async function submitConfirmation() {
   }
 }
 
+/** How many clusters hold a seat of the license. */
+function seated(entry: LicenseWithKeys): number {
+  return entry.clusters.filter(cluster => cluster.releasedAt === null).length
+}
+
+/** Whether a cluster can be added to the license now: it is active or a trial and has an open seat. */
+function canAddCluster(entry: LicenseWithKeys): boolean {
+  return (entry.license.status === 'ACTIVE' || entry.license.status === 'TRIAL') && seated(entry) < entry.license.seats
+}
+
+function startAddingCluster(entry: LicenseWithKeys) {
+  addingTo.value = entry
+  clusterId.value = linkedClusterId.value ?? ''
+  clusterName.value = ''
+}
+
+// the drawer stays open while an add is in flight, so the add's completion closes the drawer it was made from
+function closeAddCluster() {
+  if (!adding.value) {
+    addingTo.value = null
+  }
+}
+
+async function submitCluster() {
+  if (!addingTo.value || !clusterReady.value) {
+    return
+  }
+  const entry = addingTo.value
+  adding.value = true
+  try {
+    await customerAccountService.addCluster(entry.license.id, clusterId.value.trim(), clusterName.value.trim())
+    toast.add({ severity: 'success', summary: 'Cluster added', detail: 'Its key is below. Paste it into the cluster\'s License page.', life: 6000 })
+    addingTo.value = null
+    linkedClusterId.value = null
+    await load()
+  } catch (err) {
+    showErrorToast(toast, 'The cluster could not be added', err, { life: 8000 })
+  } finally {
+    adding.value = false
+  }
+}
+
 /** The paid plan a free license's latest confirmed figures set, which it must buy by its anniversary. */
 function planToBuy(entry: LicenseWithKeys): Plan | null {
   const latest = entry.confirmations[0]
@@ -95,9 +174,9 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
 
 <template>
   <div>
-    <PageHeader :title="account?.customer.legalName ?? 'Your account'" description="Your Kinotic Enterprise licenses and every key issued for them.">
+    <PageHeader :title="account?.customer.legalName ?? 'Your account'" description="Your Kinotic Enterprise licenses, their clusters and every key issued for them.">
       <template #actions>
-        <Button v-if="account?.customer.stripeCustomerId" label="Payment details and receipts" icon="pi pi-credit-card" severity="secondary" outlined
+        <Button v-if="account?.customer.stripeCustomerId" label="Billing, receipts and seats" icon="pi pi-credit-card" severity="secondary" outlined
                 :loading="openingPortal" @click="openPortal" />
         <RouterLink v-if="account && !subscribed" to="/buy?plan=small&billing=monthly">
           <Button :label="account.trialAvailable ? 'Try or buy a plan' : 'Buy a plan'" icon="pi pi-shopping-cart" />
@@ -107,6 +186,19 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
 
     <div v-if="loading" class="app-muted-text text-sm">Loading…</div>
     <div v-else-if="account" class="flex flex-col gap-8">
+      <template v-if="linkedClusterId && !addingTo">
+        <Message v-if="linkedHolder" severity="info">
+          Cluster <span class="font-mono">{{ linkedClusterId }}</span> holds a seat of your {{ planName(linkedHolder.license.plan) }} plan
+          already; its key is below.
+        </Message>
+        <Message v-else-if="addableLicenses.length === 0" severity="warn">
+          No license has an open seat for cluster <span class="font-mono">{{ linkedClusterId }}</span>. Buy a plan, or add seats under
+          Billing, receipts and seats.
+        </Message>
+        <Message v-else severity="info">
+          Select Add a cluster on the license that should cover cluster <span class="font-mono">{{ linkedClusterId }}</span>.
+        </Message>
+      </template>
       <section v-if="account.licenses.length === 0" class="app-card-surface rounded-xl border p-5 text-sm">
         <p class="app-heading-text">No license yet.</p>
         <p class="app-muted-text mt-2">
@@ -141,6 +233,10 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
             <LicenseStatusTag :status="entry.license.status" />
           </div>
           <dl class="mt-4 grid gap-4 text-sm sm:grid-cols-3">
+            <div>
+              <dt class="app-muted-text">Clusters</dt>
+              <dd class="app-heading-text mt-1">{{ seated(entry) }} of {{ entry.license.seats }} {{ entry.license.seats === 1 ? 'seat' : 'seats' }}</dd>
+            </div>
             <div v-if="entry.license.billingPeriod">
               <dt class="app-muted-text">Billing</dt>
               <dd class="app-heading-text mt-1">{{ billingPeriodName(entry.license.billingPeriod) }}</dd>
@@ -163,10 +259,10 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
             </div>
             <div v-if="entry.license.status === 'PAST_DUE'">
               <dt class="app-muted-text">Payment</dt>
-              <dd v-if="entry.keys.length" class="mt-1 text-orange-600 dark:text-orange-400">
+              <dd v-if="entry.license.lastPaymentAt" class="mt-1 text-orange-600 dark:text-orange-400">
                 A payment failed; update your payment details to keep receiving keys. Unpaid for 30 days, the license lapses.
               </dd>
-              <dd v-else class="app-heading-text mt-1">Waiting for your payment to clear; your key is emailed the moment it does.</dd>
+              <dd v-else class="app-heading-text mt-1">Waiting for your payment to clear; we email you the moment it does, and you can add your clusters then.</dd>
             </div>
           </dl>
           <Message v-if="entry.license.status === 'TRIAL'" severity="info" class="mt-4">
@@ -191,19 +287,27 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
             </li>
           </ul>
         </div>
-        <h3 class="app-heading-text text-sm font-medium">Keys</h3>
-        <KeyBlock v-for="(key, index) in entry.keys" :key="key.jti" :issued-key="key" :collapsed="index > 0" />
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <h3 class="app-heading-text text-sm font-medium">Clusters</h3>
+          <div class="flex flex-wrap items-center gap-3">
+            <span v-if="!canAddCluster(entry) && seated(entry) >= entry.license.seats && entry.license.stripeSubscriptionId"
+                  class="app-muted-text text-xs">Every seat is taken; add seats under Billing, receipts and seats.</span>
+            <Button label="Add a cluster" icon="pi pi-plus" size="small" :disabled="!canAddCluster(entry)" @click="startAddingCluster(entry)" />
+          </div>
+        </div>
+        <ClusterList :entry="entry" />
       </section>
 
-      <section v-if="account.licenses.some(l => l.keys.length)" class="app-card-surface rounded-xl border p-5 text-sm">
-        <h3 class="app-heading-text font-medium">Installing a key</h3>
+      <section v-if="account.licenses.length" class="app-card-surface rounded-xl border p-5 text-sm">
+        <h3 class="app-heading-text font-medium">Licensing a cluster</h3>
         <ol class="app-muted-text mt-2 list-decimal space-y-1 pl-5">
-          <li>Copy the newest key above, or download it.</li>
-          <li>Sign in to your Kinotic system console as a system user and open its <strong>License</strong> page.</li>
-          <li>Paste the key and install it. Kinotic shows your organization as the licensee and turns on every Enterprise feature.</li>
+          <li>Sign in to the cluster's Kinotic system console as a system user, open its <strong>License</strong> page and copy its cluster id.</li>
+          <li>Add the cluster above with that id. Its key works on that cluster alone.</li>
+          <li>Copy the cluster's key, or download it, then paste it into the License page and install it. Kinotic shows your organization as the licensee and turns on every Enterprise feature.</li>
         </ol>
         <p class="app-muted-text mt-2">
-          Each key expires seven days after the date your license is paid through, and a new one is emailed with every
+          Each key expires seven days after the date your license is paid through. A cluster that can reach
+          licenses.kinotic.ai installs each new key by itself; for one that cannot, copy its new key from here after each
           payment. A trial's key expires when the trial ends. Kinotic keeps its Enterprise features on for 14 days after a
           key expires.
         </p>
@@ -218,6 +322,25 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
         </ul>
       </section>
     </div>
+
+    <FormDrawer :visible="addingTo !== null" title="Add a cluster"
+                description="The cluster id is on the License page of the cluster's Kinotic system console. The cluster takes one of the license's seats for good."
+                @close="closeAddCluster">
+      <form id="cluster-form" class="flex flex-col gap-5" @submit.prevent="submitCluster">
+        <div class="flex flex-col gap-2">
+          <label for="cluster-id" class="app-heading-text text-sm font-medium">Cluster id</label>
+          <InputText id="cluster-id" v-model="clusterId" class="w-full font-mono" placeholder="00000000-0000-0000-0000-000000000000" />
+        </div>
+        <div class="flex flex-col gap-2">
+          <label for="cluster-name" class="app-heading-text text-sm font-medium">Name</label>
+          <InputText id="cluster-name" v-model="clusterName" class="w-full" placeholder="production" maxlength="100" />
+        </div>
+      </form>
+      <template #footer>
+        <Button type="button" label="Cancel" severity="secondary" outlined :disabled="adding" @click="closeAddCluster" />
+        <Button type="submit" form="cluster-form" label="Add cluster" :disabled="!clusterReady" :loading="adding" />
+      </template>
+    </FormDrawer>
 
     <FormDrawer :visible="confirming !== null" title="Confirm your figures"
                 description="Your plan is set by your company's figures. If they set another plan, your license moves to it at its anniversary, on the price list it keeps."

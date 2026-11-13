@@ -1,11 +1,11 @@
-Here is the trial license key for {{organization}} on the {{planName}} plan. Paste it into your Kinotic system console's License page to enable every Enterprise feature.
+Your trial of the {{planName}} plan for {{organization}} has started, for one cluster, and runs until {{expiresOn}}. To turn on every Enterprise feature:
 
-{{key}}
+1. Copy the cluster id from your Kinotic system console's License page.
+2. In your account, add the cluster to this license with that id.
+3. Paste the key your account issues for the cluster into the License page.
 
-The key is valid until {{expiresOn}}, when your trial ends. Buy the {{planName}} plan from your account before then to keep your license, with the price list and terms you started your trial on. Your key is always available in your account:
+Buy the {{planName}} plan from your account before the trial ends to keep your license, with the price list and terms you started your trial on:
 
 {{accountUrl}}
-
-Keep this key with your deployment configuration. Anyone holding it can run Kinotic Enterprise under your license.
 
 — Minds Ignited, makers of Kinotic

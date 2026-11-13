@@ -8,8 +8,8 @@ import java.time.Instant;
 import java.util.Set;
 
 /**
- * A row of the staff customer list: the customer, its newest license and that license's newest key. The license
- * and key fields are {@code null} for a customer that has no license yet.
+ * A row of the staff customer list: the customer, its newest license with how many clusters hold its seats, and that
+ * license's newest key. The license and key fields are {@code null} for a customer that has no license yet.
  */
 @Data
 @Accessors(chain = true)
@@ -33,6 +33,10 @@ public class CustomerSummary {
     private Instant lastPaymentAt;
     /** What staff should look at on the license; empty when nothing or when the customer has no license. */
     private Set<LicenseFlag> flags;
+    /** How many clusters the license may hold. */
+    private Integer seats;
+    /** How many clusters hold a seat of the license. */
+    private Integer clusters;
     private String latestKeyJti;
     private Instant latestKeyExpiresAt;
 }

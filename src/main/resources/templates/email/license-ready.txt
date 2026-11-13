@@ -1,0 +1,11 @@
+Thank you for licensing Kinotic Enterprise. The license for {{organization}} on the {{planName}} plan is ready for {{seats}} cluster(s). Each cluster gets a key of its own, which works on that cluster alone:
+
+1. Copy the cluster id from your Kinotic system console's License page.
+2. In your account, add the cluster to this license with that id.
+3. Paste the key your account issues for the cluster into the License page.
+
+A cluster that can reach licenses.kinotic.ai renews its key by itself. For one that cannot, get each new key from your account:
+
+{{accountUrl}}
+
+— Minds Ignited, makers of Kinotic

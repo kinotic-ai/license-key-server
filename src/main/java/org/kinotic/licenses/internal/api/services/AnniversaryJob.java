@@ -113,13 +113,16 @@ public class AnniversaryJob {
         return ret;
     }
 
-    // a paid license's year moves on its own, its keys following the payments; a free license's year moves with the key
-    // covering it, which is emailed
+    // a paid license's year moves on its own, its keys following the payments; a free license's year moves with its
+    // clusters' keys covering it, which is emailed when keys were issued
     private Future<Void> nextYear(License license) {
         Future<Void> ret;
         if (license.getPlan() == Plan.FREE) {
-            ret = licenseService.renewFreeTerm(license)
-                                .compose(renewed -> licenseService.emailRenewalKey(renewed.license(), renewed.key()));
+            ret = licenseService.renewFreeTerm(license, null)
+                                .compose(renewed -> licenseService.issueExtendedKeys(renewed)
+                                                                  .compose(issued -> issued > 0
+                                                                          ? licenseService.emailRenewed(renewed)
+                                                                          : Future.succeededFuture()));
         } else {
             ret = licenseRepository.advanceTerm(license.getId(), license.getTermEnd(), LicenseService.termEnd(license.getTermEnd())).mapEmpty();
         }
