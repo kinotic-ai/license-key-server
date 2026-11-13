@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
@@ -26,7 +26,6 @@ const CLUSTER_ID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}
 
 const toast = useToast()
 const route = useRoute()
-const router = useRouter()
 const account = ref<CustomerAccount | null>(null)
 const loading = ref(true)
 const openingPortal = ref(false)
@@ -68,26 +67,30 @@ onMounted(async () => {
   takeLinkedCluster()
 })
 
-async function load() {
+/** Loads the account, returning whether it loaded. */
+async function load(): Promise<boolean> {
+  let loaded = false
   loading.value = true
   try {
     account.value = await customerAccountService.getAccount()
+    loaded = true
   } catch (err) {
     showErrorToast(toast, 'Your account could not be loaded', err)
   } finally {
     loading.value = false
   }
+  return loaded
 }
 
-// Takes the cluster id of the link once: opens the add-cluster drawer when exactly one license has an open seat, and
-// otherwise leaves the id for the drawer of whichever license the customer picks
+// Takes the cluster id of the link: opens the add-cluster drawer when exactly one license has an open seat, and
+// otherwise leaves the id for the drawer of whichever license the customer picks. The link stays in the address so a
+// reload after an add whose account refresh failed offers the hand-back of the added cluster's key.
 function takeLinkedCluster() {
   const linked = typeof route.query.clusterId === 'string' ? route.query.clusterId.trim().toLowerCase() : ''
   if (!account.value || !CLUSTER_ID.test(linked)) {
     return
   }
   returnUrl.value = parseReturnUrl(route.query.returnUrl)
-  router.replace({ query: { ...route.query, clusterId: undefined, returnUrl: undefined } })
   linkedClusterId.value = linked
   if (!linkedHolder.value && addableLicenses.value.length === 1) {
     startAddingCluster(addableLicenses.value[0]!)
@@ -190,9 +193,11 @@ async function submitCluster() {
     }
     addingTo.value = null
     linkedClusterId.value = null
-    await load()
-    if (handingBack) {
+    const loaded = await load()
+    if (handingBack && loaded) {
       handBackKey(added.id)
+    } else if (handingBack) {
+      toast.add({ severity: 'warn', summary: 'Cluster added', detail: `Reload this page to send its key to ${returnUrl.value!.host}.`, life: 10000 })
     }
   } catch (err) {
     showErrorToast(toast, 'The cluster could not be added', err, { life: 8000 })
