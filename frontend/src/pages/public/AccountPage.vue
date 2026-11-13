@@ -75,7 +75,7 @@ async function load() {
   }
 }
 
-// Takes the cluster id of the link once: opens the add-cluster drawer when exactly one license has a seat free, and
+// Takes the cluster id of the link once: opens the add-cluster drawer when exactly one license has an open seat, and
 // otherwise leaves the id for the drawer of whichever license the customer picks
 function takeLinkedCluster() {
   const linked = typeof route.query.clusterId === 'string' ? route.query.clusterId.trim().toLowerCase() : ''
@@ -128,7 +128,7 @@ function seated(entry: LicenseWithKeys): number {
   return entry.clusters.filter(cluster => cluster.releasedAt === null).length
 }
 
-/** Whether a cluster can be added to the license now: it is active or a trial and has a seat free. */
+/** Whether a cluster can be added to the license now: it is active or a trial and has an open seat. */
 function canAddCluster(entry: LicenseWithKeys): boolean {
   return (entry.license.status === 'ACTIVE' || entry.license.status === 'TRIAL') && seated(entry) < entry.license.seats
 }
@@ -192,7 +192,7 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
           already; its key is below.
         </Message>
         <Message v-else-if="addableLicenses.length === 0" severity="warn">
-          No license has a seat free for cluster <span class="font-mono">{{ linkedClusterId }}</span>. Buy a plan, or add seats under
+          No license has an open seat for cluster <span class="font-mono">{{ linkedClusterId }}</span>. Buy a plan, or add seats under
           Billing, receipts and seats.
         </Message>
         <Message v-else severity="info">

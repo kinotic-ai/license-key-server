@@ -29,7 +29,7 @@ public class LicensedClusterRepository {
     private final Pool pool;
 
     /**
-     * Adds a cluster to a license that is active or a trial and has a seat free; two clusters added at once never take
+     * Adds a cluster to a license that is active or a trial and has an open seat; two clusters added at once never take
      * more seats than it has. A license that has ended (expired, lapsed, canceled or revoked) gives up the cluster.
      *
      * @return the cluster as stored; a failure with {@link IllegalStateException} when the license is not active or a
