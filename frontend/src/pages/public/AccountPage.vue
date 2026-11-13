@@ -17,7 +17,8 @@ import { billingPeriodName, formatDate, formatMoney, planName } from '@/util/for
  * The customer account: each license's status, plan, seats, billing period, paid-through date and next anniversary,
  * when a trial ends and how to buy its plan, the yearly confirmation of the company's figures when it is due, the design
  * partner discount, the license's clusters with adding them, started from a cluster's License page link that names the
- * cluster in its clusterId query parameter, and every key issued for each with copy and
+ * cluster in its clusterId query parameter and the page to hand the key back to in its returnUrl, and every key issued
+ * for each with copy and
  * download and how to install it on the system console's License page, and the Stripe Customer Portal for payment
  * details, receipts and seats.
  */
@@ -43,10 +44,13 @@ const clusterName = ref('')
 const adding = ref(false)
 // the cluster id a cluster's system console License page sends with its "License this cluster" link, until it is added
 const linkedClusterId = ref<string | null>(null)
+// the License page the link came from, which the linked cluster's key is handed back to
+const returnUrl = ref<URL | null>(null)
 const addableLicenses = computed(() => account.value?.licenses.filter(canAddCluster) ?? [])
-// the license the linked cluster holds a seat of already
-const linkedHolder = computed(() => account.value?.licenses.find(entry => entry.clusters.some(
-    cluster => cluster.releasedAt === null && cluster.clusterId === linkedClusterId.value)))
+// the linked cluster when it holds a seat of one of the customer's licenses already, and that license
+const linkedCluster = computed(() => account.value?.licenses.flatMap(entry => entry.clusters)
+    .find(cluster => cluster.releasedAt === null && cluster.clusterId === linkedClusterId.value))
+const linkedHolder = computed(() => account.value?.licenses.find(entry => entry.license.id === linkedCluster.value?.licenseId))
 const clusterReady = computed(() => CLUSTER_ID.test(clusterId.value.trim()) && clusterName.value.trim().length > 0)
 
 const subscribed = computed(() => account.value?.licenses.some(l => l.license.plan !== 'FREE'
@@ -82,11 +86,37 @@ function takeLinkedCluster() {
   if (!account.value || !CLUSTER_ID.test(linked)) {
     return
   }
-  router.replace({ query: { ...route.query, clusterId: undefined } })
+  returnUrl.value = parseReturnUrl(route.query.returnUrl)
+  router.replace({ query: { ...route.query, clusterId: undefined, returnUrl: undefined } })
   linkedClusterId.value = linked
   if (!linkedHolder.value && addableLicenses.value.length === 1) {
     startAddingCluster(addableLicenses.value[0]!)
   }
+}
+
+// only a web address can take the key back; anything else, such as a javascript: URL, leaves the key on this page
+function parseReturnUrl(value: unknown): URL | null {
+  let ret: URL | null = null
+  if (typeof value === 'string') {
+    try {
+      const url = new URL(value)
+      ret = url.protocol === 'https:' || url.protocol === 'http:' ? url : null
+    } catch {
+      ret = null
+    }
+  }
+  return ret
+}
+
+/** Sends the browser back to the License page the link came from, with the cluster's newest key in the URL fragment. */
+function handBackKey(licensedClusterId: string) {
+  const key = account.value?.licenses.flatMap(entry => entry.keys).find(issued => issued.licensedClusterId === licensedClusterId)
+  if (!returnUrl.value || !key) {
+    return
+  }
+  const target = new URL(returnUrl.value)
+  target.hash = `key=${encodeURIComponent(key.key)}`
+  window.location.assign(target.toString())
 }
 
 async function openPortal() {
@@ -136,7 +166,7 @@ function canAddCluster(entry: LicenseWithKeys): boolean {
 function startAddingCluster(entry: LicenseWithKeys) {
   addingTo.value = entry
   clusterId.value = linkedClusterId.value ?? ''
-  clusterName.value = ''
+  clusterName.value = linkedClusterId.value && returnUrl.value ? returnUrl.value.hostname : ''
 }
 
 // the drawer stays open while an add is in flight, so the add's completion closes the drawer it was made from
@@ -153,11 +183,17 @@ async function submitCluster() {
   const entry = addingTo.value
   adding.value = true
   try {
-    await customerAccountService.addCluster(entry.license.id, clusterId.value.trim(), clusterName.value.trim())
-    toast.add({ severity: 'success', summary: 'Cluster added', detail: 'Its key is below. Paste it into the cluster\'s License page.', life: 6000 })
+    const added = await customerAccountService.addCluster(entry.license.id, clusterId.value.trim(), clusterName.value.trim())
+    const handingBack = returnUrl.value !== null && added.clusterId === linkedClusterId.value
+    if (!handingBack) {
+      toast.add({ severity: 'success', summary: 'Cluster added', detail: 'Its key is below. Paste it into the cluster\'s License page.', life: 6000 })
+    }
     addingTo.value = null
     linkedClusterId.value = null
     await load()
+    if (handingBack) {
+      handBackKey(added.id)
+    }
   } catch (err) {
     showErrorToast(toast, 'The cluster could not be added', err, { life: 8000 })
   } finally {
@@ -190,6 +226,8 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
         <Message v-if="linkedHolder" severity="info">
           Cluster <span class="font-mono">{{ linkedClusterId }}</span> holds a seat of your {{ planName(linkedHolder.license.plan) }} plan
           already; its key is below.
+          <Button v-if="returnUrl" class="mt-2" size="small" :label="`Send its key to ${returnUrl.host}`"
+                  @click="handBackKey(linkedCluster!.id)" />
         </Message>
         <Message v-else-if="addableLicenses.length === 0" severity="warn">
           No license has an open seat for cluster <span class="font-mono">{{ linkedClusterId }}</span>. Buy a plan, or add seats under
@@ -327,6 +365,10 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
                 description="The cluster id is on the License page of the cluster's Kinotic system console. The cluster takes one of the license's seats for good."
                 @close="closeAddCluster">
       <form id="cluster-form" class="flex flex-col gap-5" @submit.prevent="submitCluster">
+        <Message v-if="returnUrl && clusterId.trim().toLowerCase() === linkedClusterId" severity="warn">
+          Its key goes to the system console at <span class="font-medium">{{ returnUrl.host }}</span>, which installs it. Add the cluster
+          only if that console is yours.
+        </Message>
         <div class="flex flex-col gap-2">
           <label for="cluster-id" class="app-heading-text text-sm font-medium">Cluster id</label>
           <InputText id="cluster-id" v-model="clusterId" class="w-full font-mono" placeholder="00000000-0000-0000-0000-000000000000" />
