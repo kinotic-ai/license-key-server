@@ -36,9 +36,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Signs staff in through Minds Ignited's OpenID Connect provider with the authorization code flow and PKCE. The
- * provider is discovered from its issuer on the first sign-in. A signed-in account is accepted only when the
- * provider says its email is verified and the email is on the allowed domain.
+ * Signs staff in through Minds Ignited's Microsoft Entra tenant with the authorization code flow and PKCE. The
+ * tenant is discovered from its issuer on the first sign-in. A signed-in account is accepted only when its email is
+ * on the allowed domain.
  */
 @Slf4j
 @Component
@@ -124,12 +124,12 @@ public class StaffOidcService {
         Future<LicenseParticipant> ret;
         if (!flow.nonce().equals(claims.getString("nonce"))) {
             ret = Future.failedFuture(new AuthenticationException("The id token's nonce does not match the sign-in"));
-        } else if (!emailVerified(claims, oidc.getIssuer())) {
-            ret = Future.failedFuture(new AuthenticationException("The provider has not verified the account's email"));
         } else if (domain == null || !domain.equalsIgnoreCase(oidc.getAllowedEmailDomain())) {
             log.warn("A staff sign-in from outside {} was refused", oidc.getAllowedEmailDomain());
             ret = Future.failedFuture(new AuthenticationException("The account is not a staff account"));
         } else {
+            // Entra sends no email_verified: the tenant's administrator issues its accounts' addresses, and the domain
+            // check above confines staff to Minds Ignited's own tenant
             ret = Future.succeededFuture(LicenseParticipant.builder()
                                                            .id(email.toLowerCase())
                                                            .type(ParticipantType.STAFF)
@@ -138,19 +138,6 @@ public class StaffOidcService {
                                                            .metadata(Map.of())
                                                            .roles(List.of())
                                                            .build());
-        }
-        return ret;
-    }
-
-    // Google states email_verified. Entra never sends it: a tenant's administrator issues its accounts' addresses, and the
-    // allowed email domain check that follows confines staff to Minds Ignited's own tenant.
-    private static boolean emailVerified(JsonObject claims, String issuer) {
-        Object verified = claims.getValue("email_verified");
-        boolean ret;
-        if (verified != null) {
-            ret = Boolean.TRUE.equals(verified) || "true".equals(verified);
-        } else {
-            ret = ENTRA_HOST.equalsIgnoreCase(URI.create(issuer).getHost());
         }
         return ret;
     }
@@ -165,6 +152,8 @@ public class StaffOidcService {
                     StaffOidcProperties oidc = properties.getLicenses().getStaffOidc();
                     Validate.validState(StringUtils.isNoneBlank(oidc.getIssuer(), oidc.getClientId(), oidc.getAllowedEmailDomain()),
                                         "kinotic.licenses.staffOidc needs an issuer, a clientId and an allowedEmailDomain");
+                    Validate.validState(ENTRA_HOST.equalsIgnoreCase(URI.create(oidc.getIssuer()).getHost()),
+                                        "kinotic.licenses.staffOidc.issuer must be a Microsoft Entra issuer on %s", ENTRA_HOST);
                     OAuth2Options options = new OAuth2Options()
                             .setClientId(oidc.getClientId())
                             .setClientSecret(oidc.getClientSecret())
