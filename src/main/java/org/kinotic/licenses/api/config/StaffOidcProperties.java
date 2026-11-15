@@ -6,8 +6,8 @@ import lombok.Setter;
 import lombok.experimental.Accessors;
 
 /**
- * The OpenID Connect provider staff sign in with, Minds Ignited's Google Workspace or Entra tenant, bound under
- * {@code kinotic.licenses.staffOidc}. Discovery runs against the issuer.
+ * The Microsoft Entra tenant staff sign in with, Minds Ignited's own, bound under {@code kinotic.licenses.staffOidc}.
+ * Discovery runs against the issuer.
  */
 @Getter
 @Setter
@@ -16,8 +16,7 @@ import lombok.experimental.Accessors;
 public class StaffOidcProperties {
 
     /**
-     * The issuer, such as {@code https://accounts.google.com} or
-     * {@code https://login.microsoftonline.com/<tenant-id>/v2.0}.
+     * The Entra tenant's issuer, {@code https://login.microsoftonline.com/<tenant-id>/v2.0}.
      */
     private String issuer;
 

@@ -85,10 +85,11 @@ the same moment. Buying a plan before the trial ends moves the trial onto the su
 it keeps its price list and terms, and its first license year starts at the purchase. An hourly job marks a trial
 whose term has ended `EXPIRED` and emails its contacts; buying afterwards starts a new license on the current price
 list.
-- **Staff OIDC**: a web application in Minds Ignited's Google Workspace (or Entra tenant) with the redirect URI
-  `https://<staff host>/api/auth/staff/callback`, scopes `openid email profile`. With Entra, add `email` as an
-  optional ID token claim: Entra sends no `email_verified`, so the server takes the tenant's own address for
-  verified, and accepts only accounts on `KINOTIC_LICENSES_STAFFOIDC_ALLOWEDEMAILDOMAIN`.
+- **Staff OIDC**: staff sign in only with Microsoft Entra. Register a web application in Minds Ignited's Entra tenant
+  with the redirect URI `https://<staff host>/api/auth/staff/callback`, scopes `openid email profile`, and add
+  `email` as an optional ID token claim. Entra sends no `email_verified`, so the server takes the tenant's own address
+  for verified and accepts only accounts on `KINOTIC_LICENSES_STAFFOIDC_ALLOWEDEMAILDOMAIN`. The server refuses any
+  issuer that is not on `login.microsoftonline.com`.
 
 ## Customer sign-in providers
 
@@ -215,7 +216,7 @@ Every setting is a Spring property, set through the environment:
 | `KINOTIC_LICENSES_STRIPE_WEBHOOKSECRET` | `whsec_…` |
 | `KINOTIC_LICENSES_EMAIL_ENDPOINT` | `https://<acs>.communication.azure.com` |
 | `KINOTIC_LICENSES_EMAIL_SENDERADDRESS` | `licenses@kinotic.ai` |
-| `KINOTIC_LICENSES_STAFFOIDC_ISSUER` | `https://accounts.google.com`, or the Entra tenant's `v2.0` issuer |
+| `KINOTIC_LICENSES_STAFFOIDC_ISSUER` | the Entra tenant's issuer, `https://login.microsoftonline.com/<tenant-id>/v2.0` |
 | `KINOTIC_LICENSES_STAFFOIDC_CLIENTID`, `_CLIENTSECRET` | the OIDC application |
 | `KINOTIC_LICENSES_STAFFOIDC_ALLOWEDEMAILDOMAIN` | `mindsignited.com` |
 | `KINOTIC_LICENSES_CUSTOMEROIDC_GITHUB_CLIENTID`, `_CLIENTSECRET` | the GitHub OAuth app customers sign in with; leave unset to offer no GitHub sign-in |

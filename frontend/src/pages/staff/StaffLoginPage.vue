@@ -5,7 +5,7 @@ import Button from 'primevue/button'
 import { useToast } from 'primevue/usetoast'
 import { AuthPageShell, apiUrl } from '@kinotic-ai/frontend-common'
 
-/** Staff sign-in: a redirect through Minds Ignited's identity provider, which returns to the page asked for. */
+/** Staff sign-in: a redirect through Minds Ignited's Microsoft Entra tenant, which returns to the page asked for. */
 const route = useRoute()
 const toast = useToast()
 
@@ -27,7 +27,7 @@ function signIn() {
     <div class="login-form">
       <div class="login-form__step">
         <p class="app-muted-text mb-2 text-center text-sm">The license key server's staff dashboard.</p>
-        <Button label="Sign in with Minds Ignited" class="login-submit" icon="pi pi-sign-in" @click="signIn" />
+        <Button label="Sign in with Microsoft" class="login-submit" icon="pi pi-microsoft" @click="signIn" />
       </div>
     </div>
   </AuthPageShell>
