@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { LogOut, Shield } from '@lucide/vue'
 import type { MenuItem } from 'primevue/menuitem'
 import { SideBar, SidebarScope, SidebarUserMenu, ThemeToggleButton, avatarInitials, isDark } from '@kinotic-ai/frontend-common'
-import headerLogo from '@/assets/header-logo.svg'
+import headerLogo from '@/assets/staff-header-logo.svg'
 import { SESSION_STATE } from '@/states/LicenseSessionState'
 
 /** The staff dashboard's shell: a header, the sidebar built from the route meta, and the signed-in staff member. */

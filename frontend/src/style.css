@@ -16,3 +16,16 @@ html,
 body {
   overscroll-behavior: none;
 }
+
+/* The staff dashboard's auth pages take the brand red where the shared auth styles use the mint of the customers' site.
+   :root outranks the preset's .login-page and html.dark .login-page selectors. */
+:root.staff-site .login-page {
+  --lp-link-color: var(--p-primary-600);
+  --lp-footer-link: var(--p-primary-500);
+}
+
+:root.staff-site.dark .login-page {
+  --lp-link-color: var(--p-primary-400);
+  --lp-footer-link: var(--p-primary-400);
+  --lp-footer-divider: var(--p-primary-400);
+}
