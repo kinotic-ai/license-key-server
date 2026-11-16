@@ -199,6 +199,7 @@ Every setting is a Spring property, set through the environment:
 | `KINOTIC_LICENSES_STAFFOIDC_CLIENTID`, `_CLIENTSECRET` | the OIDC application |
 | `KINOTIC_LICENSES_STAFFOIDC_ALLOWEDEMAILDOMAIN` | `mindsignited.com` |
 | `KINOTIC_CORS_ALLOWEDORIGINPATTERN` | see below |
+| `KINOTIC_APIGATEWAY_SSL_ENABLED`, `_CERTPATH`, `_KEYPATH` | `true` and the PEM certificate chain and key, when the server terminates TLS itself behind a proxy that re-encrypts; one certificate names both hostnames |
 | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_FEDERATED_TOKEN_FILE` | set by the platform for the workload identity `DefaultAzureCredential` uses |
 
 `KINOTIC_LICENSES_SIGNINGKEYID` is required: without it the server refuses to start. The one exception is
@@ -220,6 +221,10 @@ A Kinotic cluster renewing its key connects with `kinotic-client`, whose WebSock
 own origin, `https://licenses.kinotic.ai`, as its `Origin`; the pattern above already admits it.
 
 ## Running the image
+
+Every push to `main` publishes the image to the private package `ghcr.io/kinotic-ai/license-key-server`, tagged
+`main` and `sha-<commit>` (`.github/workflows/publish.yml`); a host pulls it with a token holding `read:packages`.
+The server runs as uid and gid 10001. To build it locally:
 
 ```bash
 docker build -t kinoticai/license-key-server .
