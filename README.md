@@ -87,3 +87,7 @@ LICENSES_TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5433/license
 
 runs the suite against that database; without the variable the suite starts a Testcontainers Postgres, and skips
 when Docker is unavailable too.
+
+## License
+
+Licensed under the [Elastic License 2.0](LICENSE.md).
