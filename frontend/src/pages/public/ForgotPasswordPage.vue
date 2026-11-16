@@ -32,8 +32,9 @@ async function submit() {
   }
   loading.value = true
   try {
-    await requestPasswordReset(email.value.trim(), route.query.referer as string | undefined)
-    sentTo.value = email.value.trim()
+    const submitted = email.value.trim()
+    await requestPasswordReset(submitted, route.query.referer as string | undefined)
+    sentTo.value = submitted
   } catch (err) {
     displayError(err instanceof Error ? err.message : 'The link could not be sent')
   } finally {

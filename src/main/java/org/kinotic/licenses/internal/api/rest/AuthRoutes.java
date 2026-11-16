@@ -69,7 +69,7 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
     private void signIn(RoutingContext ctx) {
         JsonObject body = RestSupport.jsonBody(ctx);
         String email = RestSupport.requiredString(body, "email");
-        String password = RestSupport.requiredString(body, "password");
+        String password = RestSupport.requiredUntrimmedString(body, "password");
         respondSignedIn(ctx, signInService.signIn(email, password, RestSupport.clientAddress(ctx)));
     }
 
@@ -96,7 +96,7 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
         String token = RestSupport.requiredString(body, "token");
         String organization = RestSupport.requiredString(body, "organization");
         String contactName = RestSupport.requiredString(body, "contactName");
-        String password = RestSupport.requiredString(body, "password");
+        String password = RestSupport.requiredUntrimmedString(body, "password");
         respondSignedIn(ctx, signInService.completeSignUp(token, organization, contactName, password));
     }
 
@@ -117,7 +117,7 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
     private void resetPassword(RoutingContext ctx) {
         JsonObject body = RestSupport.jsonBody(ctx);
         String token = RestSupport.requiredString(body, "token");
-        String password = RestSupport.requiredString(body, "password");
+        String password = RestSupport.requiredUntrimmedString(body, "password");
         respondSignedIn(ctx, signInService.resetPassword(token, password));
     }
 

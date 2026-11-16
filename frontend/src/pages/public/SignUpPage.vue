@@ -35,8 +35,9 @@ async function submit() {
   }
   loading.value = true
   try {
-    await requestSignUp(email.value.trim(), route.query.referer as string | undefined)
-    sentTo.value = email.value.trim()
+    const submitted = email.value.trim()
+    await requestSignUp(submitted, route.query.referer as string | undefined)
+    sentTo.value = submitted
   } catch (err) {
     displayError(err instanceof Error ? err.message : 'The link could not be sent')
   } finally {
@@ -71,8 +72,7 @@ function displayError(text: string) {
         <h2 class="text-2xl font-semibold mb-3">Check your email</h2>
         <p class="my-1">We've sent a link to</p>
         <p class="mt-1 mb-4 font-semibold break-all">{{ sentTo }}</p>
-        <p class="my-1">Open it to name your organization and set your password.</p>
-        <p class="mt-4 app-muted-text text-sm">The link expires in 24 hours.</p>
+        <p class="my-1">Open it to continue. The email says what the link does and how long it lasts.</p>
         <Button label="Use another address" severity="secondary" text size="small" class="mt-2" @click="sentTo = null" />
       </div>
     </div>

@@ -41,16 +41,25 @@ final class RestSupport {
     }
 
     /**
-     * A string field of a body that is required to be present and non-blank.
+     * A string field of a body that is required to be present and non-blank, trimmed.
      *
      * @throws IllegalArgumentException when it is missing, blank or not a string
      */
     static String requiredString(JsonObject body, String name) {
+        return requiredUntrimmedString(body, name).trim();
+    }
+
+    /**
+     * A string field of a body that is required to be present and non-blank, exactly as sent, as a password is.
+     *
+     * @throws IllegalArgumentException when it is missing, blank or not a string
+     */
+    static String requiredUntrimmedString(JsonObject body, String name) {
         Object value = body.getValue(name);
         if (!(value instanceof String string) || string.isBlank()) {
             throw new IllegalArgumentException("The field " + name + " is required");
         }
-        return string.trim();
+        return string;
     }
 
     /**

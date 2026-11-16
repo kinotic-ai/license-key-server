@@ -94,9 +94,10 @@ public class CustomerSignInService {
         Validate.notBlank(organization, "The organization's legal name is required");
         Validate.notBlank(contactName, "Your name is required");
         validatePassword(password);
-        return hashPassword(password)
-                .compose(hash -> useLink(EmailLinkType.SIGN_UP, token)
-                        .compose(link -> customerService.createCustomer(organization, contactName, link.getEmail(), hash)))
+        // the link is used before the hash, so a request without a usable link costs no bcrypt work
+        return useLink(EmailLinkType.SIGN_UP, token)
+                .compose(link -> hashPassword(password)
+                        .compose(hash -> customerService.createCustomer(organization, contactName, link.getEmail(), hash)))
                 .map(LicenseParticipant::ofContact);
     }
 
@@ -146,9 +147,9 @@ public class CustomerSignInService {
      */
     public Future<LicenseParticipant> resetPassword(String token, String password) {
         validatePassword(password);
-        return hashPassword(password)
-                .compose(hash -> useLink(EmailLinkType.PASSWORD_RESET, token)
-                        .compose(link -> contactRepository.updatePasswordHash(link.getEmail(), hash)))
+        return useLink(EmailLinkType.PASSWORD_RESET, token)
+                .compose(link -> hashPassword(password)
+                        .compose(hash -> contactRepository.updatePasswordHash(link.getEmail(), hash)))
                 .compose(contact -> contact == null
                         ? Future.failedFuture(new AuthenticationException(INVALID_LINK))
                         : Future.succeededFuture(LicenseParticipant.ofContact(contact)));

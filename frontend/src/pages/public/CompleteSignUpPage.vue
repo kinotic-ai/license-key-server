@@ -41,11 +41,19 @@ async function submit() {
   loading.value = true
   try {
     await completeSignUp(token, organization.value.trim(), contactName.value.trim(), password.value)
+  } catch (err) {
+    displayError(err instanceof Error ? err.message : 'The account could not be created')
+    loading.value = false
+    return
+  }
+  try {
     // open the realtime connection, authenticated by the session cookie the server just set
     await SESSION_STATE.login()
     await router.push((route.query.referer as string | undefined) || '/account')
-  } catch (err) {
-    displayError(err instanceof Error ? err.message : 'The account could not be created')
+  } catch {
+    // the link is used by now, so the page sends the contact to sign in rather than letting it retry
+    toast.add({ severity: 'warn', summary: 'Sign in to continue', detail: 'Your account is created. Sign in with your email and password.', life: 10000 })
+    await router.push({ path: '/login', query: route.query.referer ? { referer: route.query.referer } : {} })
   } finally {
     loading.value = false
   }
