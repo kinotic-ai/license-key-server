@@ -1,5 +1,5 @@
 import { apiUrl, readAuthError } from '@kinotic-ai/frontend-common'
-import type { SiteInfo } from './model'
+import type { PendingProviderSignUp, SiteInfo } from './model'
 
 /** What a page reads before it signs in, and the customer sign-in, sign-up and password routes. */
 
@@ -51,6 +51,16 @@ export async function requestSignUp(email: string, referer?: string): Promise<vo
 /** Creates the account of the address the sign-up link was emailed to, and signs the page in to it. */
 export async function completeSignUp(token: string, organization: string, contactName: string, password: string): Promise<void> {
     await postJson('/api/auth/signup/complete', { token, organization, contactName, password }, 'The account could not be created')
+}
+
+/** The sign-up a provider started in this browser; refused with 404 when there is none or it has expired. */
+export function fetchPendingProviderSignUp(): Promise<PendingProviderSignUp> {
+    return getJson('/api/auth/signup/provider')
+}
+
+/** Creates the account of the sign-up a provider started in this browser, and signs the page in to it. */
+export async function completeProviderSignUp(organization: string, contactName: string): Promise<void> {
+    await postJson('/api/auth/signup/provider/complete', { organization, contactName }, 'The account could not be created')
 }
 
 /** Asks for a link to set a new password; the answer is the same whether or not the address has an account. */

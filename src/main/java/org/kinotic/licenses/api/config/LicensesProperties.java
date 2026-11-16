@@ -62,4 +62,9 @@ public class LicensesProperties {
      */
     private StaffOidcProperties staffOidc = new StaffOidcProperties();
 
+    /**
+     * The providers customers sign up and sign in with.
+     */
+    private CustomerOidcProperties customerOidc = new CustomerOidcProperties();
+
 }

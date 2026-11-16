@@ -7,10 +7,12 @@ import InputText from 'primevue/inputtext'
 import { useToast } from 'primevue/usetoast'
 import { AuthPageShell } from '@kinotic-ai/frontend-common'
 import { requestSignUp } from '@/api/rest'
+import ProviderButtons from '@/components/ProviderButtons.vue'
 
 /**
- * Starting a license account: the email address only. The link emailed to it opens the form that names the
- * organization and sets the password.
+ * Starting a license account, through a provider or with the email address only. The link emailed to the address
+ * opens the form that names the organization and sets the password; a provider leads to the same form with no
+ * password to set.
  */
 const toast = useToast()
 const route = useRoute()
@@ -57,6 +59,7 @@ function displayError(text: string) {
         <p class="app-muted-text mb-2 text-center text-sm">
           Create a Kinotic license account to buy a plan or request a free license.
         </p>
+        <ProviderButtons intent="sign-up" :referer="route.query.referer as string | undefined" />
         <IconField class="login-field">
           <InputText ref="emailInput" v-model="email" class="login-input" placeholder="Your email" type="email" autocomplete="email"
                      @keyup.enter="submit" />

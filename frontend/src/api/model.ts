@@ -258,8 +258,17 @@ export interface DesignPartner {
     publications: DesignPartnerPublication[]
 }
 
-/** The site a page was served on and the terms version it shows. */
+/** The site a page was served on, the terms version it shows, and the providers customers sign up and sign in with. */
 export interface SiteInfo {
     site: Site
     termsVersion: string
+    /** The key of each provider offered: `github`, `azure-ad` or `google`. */
+    signInProviders: string[]
+}
+
+/** A sign-up a provider started: the provider proved the email is the person's, and the email has no account yet. */
+export interface PendingProviderSignUp {
+    email: string
+    /** The person's name as the provider gives it; null when it gives none. */
+    name: string | null
 }

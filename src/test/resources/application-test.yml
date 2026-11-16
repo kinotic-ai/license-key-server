@@ -25,3 +25,8 @@ kinotic:
       clientId: test-client
       clientSecret: test-secret
       allowedEmailDomain: mindsignited.com
+    # GitHub alone, which names its endpoints, so a sign-in starts without reading a discovery document
+    customerOidc:
+      github:
+        clientId: test-github-client
+        clientSecret: test-github-secret

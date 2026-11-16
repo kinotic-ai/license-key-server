@@ -8,9 +8,13 @@ import Password from 'primevue/password'
 import { useToast } from 'primevue/usetoast'
 import { AuthPageShell } from '@kinotic-ai/frontend-common'
 import { signIn } from '@/api/rest'
+import ProviderButtons from '@/components/ProviderButtons.vue'
 import { SESSION_STATE } from '@/states/LicenseSessionState'
 
-/** Customer sign-in with the email and password of a contact of the account. */
+/**
+ * Customer sign-in, through a provider or with the email and password of a contact of the account. A provider
+ * sign-in that fails returns here with the reason in {@code error}.
+ */
 const toast = useToast()
 const route = useRoute()
 const router = useRouter()
@@ -21,6 +25,10 @@ const loading = ref(false)
 const emailInput = ref<any>()
 
 onMounted(() => {
+  const error = route.query.error as string | undefined
+  if (error) {
+    toast.add({ severity: 'error', summary: 'Sign-in failed', detail: error, life: 12000 })
+  }
   nextTick(() => emailInput.value?.$el?.focus?.())
 })
 
@@ -61,6 +69,7 @@ const refererQuery = () => (route.query.referer ? { referer: route.query.referer
         <p class="app-muted-text mb-2 text-center text-sm">
           Sign in to your Kinotic license account.
         </p>
+        <ProviderButtons intent="sign-in" :referer="route.query.referer as string | undefined" />
         <IconField class="login-field">
           <InputText ref="emailInput" v-model="email" class="login-input" placeholder="Email" type="email" autocomplete="email"
                      @keyup.enter="submit" />

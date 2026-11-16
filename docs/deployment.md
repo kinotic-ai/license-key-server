@@ -90,6 +90,25 @@ list.
   optional ID token claim: Entra sends no `email_verified`, so the server takes the tenant's own address for
   verified, and accepts only accounts on `KINOTIC_LICENSES_STAFFOIDC_ALLOWEDEMAILDOMAIN`.
 
+## Customer sign-in providers
+
+Customers sign up and sign in with GitHub, Microsoft or Google beside their email and password. Each is an application
+registered with the provider, and a provider's button shows on the sign-up and login pages once its client id is
+configured. The redirect URI of each is `https://licenses.kinotic.ai/api/auth/provider/<provider>/callback`:
+
+- **GitHub** (`github`): an OAuth app. The server asks for `read:user user:email` and takes the account's primary
+  email address, which GitHub must have verified.
+- **Microsoft** (`azure-ad`): an Entra app registration for accounts in any organizational directory and personal
+  Microsoft accounts, with a client secret. Under token configuration add the optional ID token claims `email` and
+  `xms_edov`. A personal account signs in as it is. A work or school account signs in only when `xms_edov` says its
+  directory has verified the email's domain, since a directory's administrator otherwise sets any address.
+- **Google** (`google`): an OAuth client of type web application. Google states `email_verified`.
+
+The provider proves the email address, and the email address is the account: a sign-in whose address has an account
+opens it, and any other is taken to the sign-up form, which names the organization and creates the account with no
+password. Such a contact sets a password, if it wants one, with "Forgot your password?". A sign-up the form does not
+finish within ten minutes starts again at the provider.
+
 ## Price lists
 
 The plans and their eligibility are set by the kinotic.ai pricing page; what each costs lives only in Stripe, as
@@ -199,6 +218,9 @@ Every setting is a Spring property, set through the environment:
 | `KINOTIC_LICENSES_STAFFOIDC_ISSUER` | `https://accounts.google.com`, or the Entra tenant's `v2.0` issuer |
 | `KINOTIC_LICENSES_STAFFOIDC_CLIENTID`, `_CLIENTSECRET` | the OIDC application |
 | `KINOTIC_LICENSES_STAFFOIDC_ALLOWEDEMAILDOMAIN` | `mindsignited.com` |
+| `KINOTIC_LICENSES_CUSTOMEROIDC_GITHUB_CLIENTID`, `_CLIENTSECRET` | the GitHub OAuth app customers sign in with; leave unset to offer no GitHub sign-in |
+| `KINOTIC_LICENSES_CUSTOMEROIDC_MICROSOFT_CLIENTID`, `_CLIENTSECRET` | the Entra app registration customers sign in with; leave unset to offer no Microsoft sign-in |
+| `KINOTIC_LICENSES_CUSTOMEROIDC_GOOGLE_CLIENTID`, `_CLIENTSECRET` | the Google OAuth client customers sign in with; leave unset to offer no Google sign-in |
 | `KINOTIC_CORS_ALLOWEDORIGINPATTERN` | see below |
 | `KINOTIC_APIGATEWAY_SSL_ENABLED`, `_CERTPATH`, `_KEYPATH` | `true` and the PEM certificate chain and key, when the server terminates TLS itself behind a proxy that re-encrypts; one certificate names both hostnames |
 | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_FEDERATED_TOKEN_FILE` | set by the platform for the workload identity `DefaultAzureCredential` uses |

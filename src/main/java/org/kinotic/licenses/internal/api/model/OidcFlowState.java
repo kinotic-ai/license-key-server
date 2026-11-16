@@ -9,7 +9,7 @@ import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
 
 /**
- * One in-flight staff sign-in: the state, nonce and PKCE verifier the callback checks, and the page the sign-in
+ * One in-flight sign-in at a provider: the state, nonce and PKCE verifier the callback checks, and the page the sign-in
  * started from. It lives in the browser session between the redirect to the provider and the callback.
  */
 @Getter
@@ -23,7 +23,7 @@ public class OidcFlowState implements ClusterSerializable {
     private String pkceVerifier;
     /** The origin of the page that started the sign-in, which the login is bound to; {@code null} when it named none. */
     private String origin;
-    /** The path on the staff site to land on; {@code null} for the root. */
+    /** The path on the site to land on; {@code null} for the site's default. */
     private String returnPath;
 
     @Override
