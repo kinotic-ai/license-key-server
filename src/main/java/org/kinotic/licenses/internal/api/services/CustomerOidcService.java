@@ -12,13 +12,13 @@ import org.kinotic.common.api.oidc.OAuth2Util;
 import org.kinotic.common.api.oidc.OidcAuthorization;
 import org.kinotic.common.api.oidc.OidcClient;
 import org.kinotic.common.api.oidc.OidcClientService;
-import org.kinotic.common.api.oidc.OidcClientSettings;
 import org.kinotic.common.api.oidc.OidcProviderType;
 import org.kinotic.core.api.exceptions.AuthenticationException;
 import org.kinotic.core.api.security.SessionBinding;
 import org.kinotic.licenses.api.config.CustomerOidcProperties;
 import org.kinotic.licenses.api.config.KinoticLicensesProperties;
 import org.kinotic.licenses.api.config.OidcClientProperties;
+import org.kinotic.licenses.internal.api.model.CustomerOidcRegistration;
 import org.kinotic.licenses.internal.api.model.OidcFlowState;
 import org.springframework.stereotype.Component;
 
@@ -53,22 +53,22 @@ public class CustomerOidcService {
     private final OidcClientService oidcClientService;
 
     // the registrations configured, in the order the pages show their providers
-    private final Map<OidcProviderType, OidcClientSettings> registrations = new LinkedHashMap<>();
+    private final Map<OidcProviderType, CustomerOidcRegistration> registrations = new LinkedHashMap<>();
     private final Map<OidcProviderType, Future<OidcClient>> clients = new ConcurrentHashMap<>();
 
     @PostConstruct
     void start() {
         CustomerOidcProperties oidc = properties.getLicenses().getCustomerOidc();
         // GitHub publishes no discovery document and issues no id token
-        register(OidcProviderType.GITHUB, oidc.getGithub(), new OidcClientSettings().setAuthority(GITHUB_AUTHORITY)
-                                                                                    .setAuthorizationUri(GITHUB_AUTHORIZATION_URI)
-                                                                                    .setTokenUri(GITHUB_TOKEN_URI)
-                                                                                    .setUserInfoUri(GITHUB_USER_URI)
-                                                                                    .setUserEmailsUri(GITHUB_USER_EMAILS_URI));
-        register(OidcProviderType.AZURE_AD, oidc.getMicrosoft(), new OidcClientSettings().setAuthority(MICROSOFT_AUTHORITY)
-                                                                                         .setAudience(oidc.getMicrosoft().getClientId()));
-        register(OidcProviderType.GOOGLE, oidc.getGoogle(), new OidcClientSettings().setAuthority(GOOGLE_AUTHORITY)
-                                                                                    .setAudience(oidc.getGoogle().getClientId()));
+        register(OidcProviderType.GITHUB, oidc.getGithub(), new CustomerOidcRegistration().setAuthority(GITHUB_AUTHORITY)
+                                                                                          .setAuthorizationUri(GITHUB_AUTHORIZATION_URI)
+                                                                                          .setTokenUri(GITHUB_TOKEN_URI)
+                                                                                          .setUserInfoUri(GITHUB_USER_URI)
+                                                                                          .setUserEmailsUri(GITHUB_USER_EMAILS_URI));
+        register(OidcProviderType.AZURE_AD, oidc.getMicrosoft(), new CustomerOidcRegistration().setAuthority(MICROSOFT_AUTHORITY)
+                                                                                               .setAudience(oidc.getMicrosoft().getClientId()));
+        register(OidcProviderType.GOOGLE, oidc.getGoogle(), new CustomerOidcRegistration().setAuthority(GOOGLE_AUTHORITY)
+                                                                                          .setAudience(oidc.getGoogle().getClientId()));
     }
 
     /**
@@ -86,16 +86,15 @@ public class CustomerOidcService {
      * @param returnPath the public site path to land on afterwards, or {@code null} for the site's default
      */
     public Future<String> start(RoutingContext ctx, OidcProviderType provider, String returnPath) {
-        return client(provider).map(client -> {
-            OidcAuthorization authorization = client.authorize(callbackUrl(provider), scopes(provider));
-            // stored once the provider is reachable, so a failed start leaves any pending flow intact
-            Session session = ctx.session();
-            session.regenerateId();
-            session.put(flowSessionKey(provider), new OidcFlowState(authorization.state(), authorization.nonce(),
-                                                                    authorization.pkceVerifier(),
-                                                                    SessionBinding.origin(ctx), returnPath));
-            return authorization.url();
-        });
+        OidcAuthorization authorization = OidcAuthorization.create();
+        return client(provider)
+                .map(client -> client.authorizationUrl(authorization, callbackUrl(provider), scopes(provider)))
+                // stored once the provider is reachable, so a failed start leaves any pending flow intact
+                .onSuccess(url -> {
+                    Session session = ctx.session();
+                    session.regenerateId();
+                    session.put(flowSessionKey(provider), new OidcFlowState(authorization, SessionBinding.origin(ctx), returnPath));
+                });
     }
 
     /**
@@ -115,11 +114,11 @@ public class CustomerOidcService {
         Future<ProviderSignIn> ret;
         if (providerError != null) {
             ret = Future.failedFuture(new AuthenticationException("The sign-in provider reported: " + providerError));
-        } else if (flow == null || code == null || state == null || !flow.state().equals(state)) {
+        } else if (flow == null || code == null || state == null || !flow.authorization().state().equals(state)) {
             ret = Future.failedFuture(new AuthenticationException("The sign-in did not complete; start again"));
         } else {
             ret = client(provider)
-                    .compose(client -> client.verifiedClaims(code, callbackUrl(provider), flow.pkceVerifier(), flow.nonce()))
+                    .compose(client -> client.verifiedClaims(code, callbackUrl(provider), flow.authorization()))
                     .recover(t -> {
                         log.warn("A sign-in with {} could not be verified: {}", provider.key(), t.getMessage());
                         return Future.failedFuture(new AuthenticationException("The sign-in could not be verified; start again", t));
@@ -143,18 +142,19 @@ public class CustomerOidcService {
         });
     }
 
-    private void register(OidcProviderType provider, OidcClientProperties registration, OidcClientSettings endpoints) {
-        if (StringUtils.isNotBlank(registration.getClientId())) {
-            registrations.put(provider, endpoints.setProvider(provider)
-                                                 .setClientId(registration.getClientId())
-                                                 .setClientSecret(registration.getClientSecret()));
+    private void register(OidcProviderType provider, OidcClientProperties configured, CustomerOidcRegistration registration) {
+        if (StringUtils.isNotBlank(configured.getClientId())) {
+            registrations.put(provider, registration.setProvider(provider)
+                                                    .setClientId(configured.getClientId())
+                                                    .setClientSecret(configured.getClientSecret()));
         }
     }
 
     // created on the provider's first sign-in; a discovery that fails is retried by the next
     private Future<OidcClient> client(OidcProviderType provider) {
+        CustomerOidcRegistration registration = registrations.get(provider);
         return clients.compute(provider, (key, existing) -> existing == null || existing.failed()
-                ? oidcClientService.createClient(registrations.get(provider))
+                ? oidcClientService.createClient(registration, registration.getClientSecret())
                 : existing);
     }
 

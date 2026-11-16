@@ -17,6 +17,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
+import org.kinotic.common.api.oidc.OAuth2Util;
+import org.kinotic.common.api.oidc.OidcAuthorization;
 import org.kinotic.core.api.exceptions.AuthenticationException;
 import org.kinotic.core.api.security.SessionBinding;
 import org.kinotic.licenses.api.config.KinoticLicensesProperties;
@@ -27,11 +29,6 @@ import org.kinotic.licenses.internal.api.model.OidcFlowState;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
-import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
@@ -51,7 +48,6 @@ public class StaffOidcService {
     private static final String FLOW_SESSION_KEY = "staffOidcFlow";
     private static final String ENTRA_HOST = "login.microsoftonline.com";
     private static final List<String> SCOPES = List.of("openid", "email", "profile");
-    private static final SecureRandom RANDOM = new SecureRandom();
 
     private final KinoticLicensesProperties properties;
     private final Vertx vertx;
@@ -65,22 +61,19 @@ public class StaffOidcService {
      * @param returnPath the staff site path to land on afterwards, or {@code null} for the root
      */
     public Future<String> start(RoutingContext ctx, String returnPath) {
-        String state = token(32);
-        String nonce = token(32);
-        String pkceVerifier = token(64);
+        OidcAuthorization authorization = OidcAuthorization.create();
         return provider().map(oauth -> oauth.authorizeURL(new OAuth2AuthorizationURL()
                                                                   .setRedirectUri(callbackUrl())
                                                                   .setScopes(SCOPES)
-                                                                  .setState(state)
-                                                                  .setCodeChallenge(s256(pkceVerifier))
+                                                                  .setState(authorization.state())
+                                                                  .setCodeChallenge(OAuth2Util.s256Challenge(authorization.pkceVerifier()))
                                                                   .setCodeChallengeMethod("S256")
-                                                                  .putAdditionalParameter("nonce", nonce)))
+                                                                  .putAdditionalParameter("nonce", authorization.nonce())))
                          // stored once the provider is reachable, so a failed start leaves any pending flow intact
                          .onSuccess(url -> {
                              Session session = ctx.session();
                              session.regenerateId();
-                             session.put(FLOW_SESSION_KEY, new OidcFlowState(state, nonce, pkceVerifier,
-                                                                             SessionBinding.origin(ctx), returnPath));
+                             session.put(FLOW_SESSION_KEY, new OidcFlowState(authorization, SessionBinding.origin(ctx), returnPath));
                          });
     }
 
@@ -100,14 +93,14 @@ public class StaffOidcService {
         Future<StaffSignIn> ret;
         if (providerError != null) {
             ret = Future.failedFuture(new AuthenticationException("The sign-in provider reported: " + providerError));
-        } else if (flow == null || code == null || state == null || !flow.state().equals(state)) {
+        } else if (flow == null || code == null || state == null || !flow.authorization().state().equals(state)) {
             ret = Future.failedFuture(new AuthenticationException("The sign-in did not complete; start again"));
         } else {
             ret = provider().compose(oauth -> oauth.authenticate(new Oauth2Credentials()
                                                                          .setFlow(OAuth2FlowType.AUTH_CODE)
                                                                          .setCode(code)
                                                                          .setRedirectUri(callbackUrl())
-                                                                         .setCodeVerifier(flow.pkceVerifier())))
+                                                                         .setCodeVerifier(flow.authorization().pkceVerifier())))
                              .recover(t -> Future.failedFuture(new AuthenticationException("The code exchange failed", t)))
                              .compose(user -> verifiedParticipant(user, flow))
                              .map(participant -> new StaffSignIn(participant, flow));
@@ -122,7 +115,7 @@ public class StaffOidcService {
         String email = claims.getString("email");
         String domain = email != null && email.contains("@") ? email.substring(email.indexOf('@') + 1) : null;
         Future<LicenseParticipant> ret;
-        if (!flow.nonce().equals(claims.getString("nonce"))) {
+        if (!flow.authorization().nonce().equals(claims.getString("nonce"))) {
             ret = Future.failedFuture(new AuthenticationException("The id token's nonce does not match the sign-in"));
         } else if (domain == null || !domain.equalsIgnoreCase(oidc.getAllowedEmailDomain())) {
             log.warn("A staff sign-in from outside {} was refused", oidc.getAllowedEmailDomain());
@@ -177,20 +170,5 @@ public class StaffOidcService {
 
     private String callbackUrl() {
         return properties.getLicenses().getStaffBaseUrl() + CALLBACK_PATH;
-    }
-
-    private static String token(int bytes) {
-        byte[] ret = new byte[bytes];
-        RANDOM.nextBytes(ret);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(ret);
-    }
-
-    private static String s256(String verifier) {
-        try {
-            byte[] hash = MessageDigest.getInstance("SHA-256").digest(verifier.getBytes(StandardCharsets.US_ASCII));
-            return Base64.getUrlEncoder().withoutPadding().encodeToString(hash);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
-        }
     }
 }
