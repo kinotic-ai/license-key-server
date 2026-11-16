@@ -222,8 +222,8 @@ own origin, `https://licenses.kinotic.ai`, as its `Origin`; the pattern above al
 
 ## Running the image
 
-Every push to `main` publishes the image to the private package `ghcr.io/kinotic-ai/license-key-server`, tagged
-`main` and `sha-<commit>` (`.github/workflows/publish.yml`); a host pulls it with a token holding `read:packages`.
+Every push to `main` publishes the image to Docker Hub as `kinoticai/license-key-server`, tagged `main` and
+`sha-<commit>` (`.github/workflows/publish.yml`).
 The server runs as uid and gid 10001. To build it locally:
 
 ```bash
