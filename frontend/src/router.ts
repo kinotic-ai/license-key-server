@@ -7,7 +7,7 @@ function dashboardItem(label: string, icon: SidebarItemMeta['icon'], order: numb
     return { group: 'dashboard', label, icon, order }
 }
 
-/** The public site: sign-up and sign-in, and for a signed-in customer the purchase, free request, design partner application and account. */
+/** The public site: sign-up, sign-in and password reset, and for a signed-in customer the purchase, free request, design partner application and account. */
 const PUBLIC_ROUTES: RouteRecordRaw[] = [
     {
         path: '/',
@@ -24,6 +24,9 @@ const PUBLIC_ROUTES: RouteRecordRaw[] = [
     },
     { path: '/login', component: () => import('./pages/public/LoginPage.vue'), meta: { authenticationRequired: false } },
     { path: '/signup', component: () => import('./pages/public/SignUpPage.vue'), meta: { authenticationRequired: false } },
+    { path: '/signup/complete', component: () => import('./pages/public/CompleteSignUpPage.vue'), meta: { authenticationRequired: false } },
+    { path: '/password/forgot', component: () => import('./pages/public/ForgotPasswordPage.vue'), meta: { authenticationRequired: false } },
+    { path: '/password/reset', component: () => import('./pages/public/ResetPasswordPage.vue'), meta: { authenticationRequired: false } },
     { path: '/:catchAll(.*)', redirect: '/' }
 ]
 

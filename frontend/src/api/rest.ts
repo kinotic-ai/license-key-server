@@ -1,7 +1,7 @@
 import { apiUrl, readAuthError } from '@kinotic-ai/frontend-common'
 import type { SiteInfo } from './model'
 
-/** What a page reads before it signs in, and the customer sign-in and sign-up routes. */
+/** What a page reads before it signs in, and the customer sign-in, sign-up and password routes. */
 
 /** A refused request, with the HTTP status the server answered. */
 export class ApiError extends Error {
@@ -35,21 +35,30 @@ export function fetchSite(): Promise<SiteInfo> {
     return getJson('/api/site')
 }
 
-/** Asks for a code; every address is sent one, so the answer says nothing about whether it has an account. */
-export async function requestSignInCode(email: string): Promise<void> {
-    await postJson('/api/auth/code/request', { email }, 'The code could not be sent')
+/** Signs the page in with a contact's email and password. */
+export async function signIn(email: string, password: string): Promise<void> {
+    await postJson('/api/auth/login', { email, password }, 'The email or password is not valid')
 }
 
 /**
- * Confirms the address with the emailed code. When it belongs to an account the page is now signed in to it;
- * otherwise the page may sign up with it through {@link signUp}.
+ * Asks for the link that opens the sign-up form; an address with an account is sent a link to set a new password
+ * instead, so the answer is the same either way. {@code referer} is the site path the link's page continues to.
  */
-export async function verifySignInCode(email: string, code: string): Promise<{ account: boolean }> {
-    const result = await postJson<{ account: boolean }>('/api/auth/code/verify', { email, code }, 'The code is not valid')
-    return result!
+export async function requestSignUp(email: string, referer?: string): Promise<void> {
+    await postJson('/api/auth/signup', { email, referer }, 'The link could not be sent')
 }
 
-/** Creates the account of the address the page confirmed, and signs the page in to it. */
-export async function signUp(organization: string, contactName: string): Promise<void> {
-    await postJson('/api/auth/signup', { organization, contactName }, 'The account could not be created')
+/** Creates the account of the address the sign-up link was emailed to, and signs the page in to it. */
+export async function completeSignUp(token: string, organization: string, contactName: string, password: string): Promise<void> {
+    await postJson('/api/auth/signup/complete', { token, organization, contactName, password }, 'The account could not be created')
+}
+
+/** Asks for a link to set a new password; the answer is the same whether or not the address has an account. */
+export async function requestPasswordReset(email: string, referer?: string): Promise<void> {
+    await postJson('/api/auth/password/forgot', { email, referer }, 'The link could not be sent')
+}
+
+/** Sets the password of the contact the reset link was emailed to, and signs the page in as it. */
+export async function resetPassword(token: string, password: string): Promise<void> {
+    await postJson('/api/auth/password/reset', { token, password }, 'The password could not be set')
 }

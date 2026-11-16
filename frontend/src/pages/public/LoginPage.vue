@@ -4,19 +4,19 @@ import { useRoute, useRouter } from 'vue-router'
 import Button from 'primevue/button'
 import IconField from 'primevue/iconfield'
 import InputText from 'primevue/inputtext'
+import Password from 'primevue/password'
 import { useToast } from 'primevue/usetoast'
 import { AuthPageShell } from '@kinotic-ai/frontend-common'
-import { requestSignInCode, verifySignInCode } from '@/api/rest'
+import { signIn } from '@/api/rest'
 import { SESSION_STATE } from '@/states/LicenseSessionState'
 
-/** Customer sign-in: a code emailed to a contact of the account, entered within ten minutes. */
+/** Customer sign-in with the email and password of a contact of the account. */
 const toast = useToast()
 const route = useRoute()
 const router = useRouter()
 
 const email = ref('')
-const code = ref('')
-const codeRequested = ref(false)
+const password = ref('')
 const loading = ref(false)
 const emailInput = ref<any>()
 
@@ -24,49 +24,24 @@ onMounted(() => {
   nextTick(() => emailInput.value?.$el?.focus?.())
 })
 
-async function requestCode() {
+async function submit() {
   // Enter in a field bypasses the button's loading state
   if (loading.value) {
     return
   }
-  if (!email.value.includes('@')) {
-    displayError('Enter the email address of a contact of your account')
+  if (!email.value.includes('@') || !password.value) {
+    displayError('Enter your email and password')
     return
   }
   loading.value = true
   try {
-    await requestSignInCode(email.value.trim())
-    codeRequested.value = true
-    toast.add({ severity: 'info', summary: 'Check your email', detail: 'A code is on its way to that address.', life: 8000 })
+    await signIn(email.value.trim(), password.value)
+    // open the realtime connection, authenticated by the session cookie the server just set
+    await SESSION_STATE.login()
+    await router.push((route.query.referer as string | undefined) || '/account')
   } catch (err) {
-    displayError(err instanceof Error ? err.message : 'The code could not be sent')
-  } finally {
-    loading.value = false
-  }
-}
-
-async function verify() {
-  if (loading.value) {
-    return
-  }
-  if (!code.value.trim()) {
-    displayError('Enter the code from the email')
-    return
-  }
-  loading.value = true
-  try {
-    const result = await verifySignInCode(email.value.trim(), code.value.trim())
-    if (result.account) {
-      // open the realtime connection, authenticated by the session cookie the server just set
-      await SESSION_STATE.login()
-      await router.push((route.query.referer as string | undefined) || '/account')
-    } else {
-      toast.add({ severity: 'info', summary: 'No account yet', detail: 'This address has no Kinotic license account. Create one to continue.', life: 10000 })
-      await router.push({ path: '/signup', query: { ...route.query, email: email.value.trim() } })
-    }
-  } catch (err) {
-    displayError(err instanceof Error ? err.message : 'The code is not valid')
-    code.value = ''
+    displayError(err instanceof Error ? err.message : 'The email or password is not valid')
+    password.value = ''
   } finally {
     loading.value = false
   }
@@ -75,6 +50,8 @@ async function verify() {
 function displayError(text: string) {
   toast.add({ severity: 'error', summary: 'Error', detail: text, life: 10000 })
 }
+
+const refererQuery = () => (route.query.referer ? { referer: route.query.referer } : {})
 </script>
 
 <template>
@@ -82,22 +59,22 @@ function displayError(text: string) {
     <div class="login-form">
       <div class="login-form__step">
         <p class="app-muted-text mb-2 text-center text-sm">
-          Sign in to your Kinotic license account with a code emailed to a contact of your account.
+          Sign in to your Kinotic license account.
         </p>
         <IconField class="login-field">
-          <InputText ref="emailInput" v-model="email" class="login-input" placeholder="Email" type="email" :disabled="codeRequested"
-                     @keyup.enter="codeRequested ? verify() : requestCode()" />
+          <InputText ref="emailInput" v-model="email" class="login-input" placeholder="Email" type="email" autocomplete="email"
+                     @keyup.enter="submit" />
         </IconField>
-        <IconField v-if="codeRequested" class="login-field">
-          <InputText v-model="code" class="login-input" placeholder="Code from the email" inputmode="numeric" autocomplete="one-time-code"
-                     @keyup.enter="verify" />
+        <IconField class="login-field">
+          <Password v-model="password" class="login-password w-full" input-class="login-input w-full" placeholder="Password"
+                    :feedback="false" toggleMask autocomplete="current-password" @keyup.enter="submit" />
         </IconField>
-        <Button v-if="!codeRequested" label="Email me a code" class="login-submit" :loading="loading" @click="requestCode" />
-        <Button v-else label="Sign in" class="login-submit" :loading="loading" @click="verify" />
-        <Button v-if="codeRequested" label="Use another address" severity="secondary" text size="small" class="mt-2"
-                @click="codeRequested = false; code = ''" />
+        <Button label="Sign in" class="login-submit" :loading="loading" @click="submit" />
         <p class="app-muted-text mt-4 text-center text-sm">
-          No account yet? <RouterLink :to="{ path: '/signup', query: route.query.referer ? { referer: route.query.referer } : {} }" class="underline">Create one</RouterLink>
+          <RouterLink :to="{ path: '/password/forgot', query: { ...refererQuery(), ...(email.includes('@') ? { email: email.trim() } : {}) } }" class="underline">Forgot your password?</RouterLink>
+        </p>
+        <p class="app-muted-text mt-2 text-center text-sm">
+          No account yet? <RouterLink :to="{ path: '/signup', query: refererQuery() }" class="underline">Create one</RouterLink>
         </p>
       </div>
     </div>

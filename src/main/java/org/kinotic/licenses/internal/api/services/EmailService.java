@@ -32,6 +32,8 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -56,8 +58,13 @@ public class EmailService {
     private static final Handlebars TEXT_TEMPLATES = new Handlebars(new ClassPathTemplateLoader("/templates/email", ".txt"))
             .with(EscapingStrategy.NOOP);
 
-    private static final Template SIGN_IN_CODE_HTML = compile(HTML_TEMPLATES, "sign-in-code");
-    private static final Template SIGN_IN_CODE_TEXT = compile(TEXT_TEMPLATES, "sign-in-code");
+    private static final String SIGN_UP_PATH = "/signup/complete";
+    private static final String PASSWORD_RESET_PATH = "/password/reset";
+
+    private static final Template SIGN_UP_LINK_HTML = compile(HTML_TEMPLATES, "sign-up-link");
+    private static final Template SIGN_UP_LINK_TEXT = compile(TEXT_TEMPLATES, "sign-up-link");
+    private static final Template PASSWORD_RESET_LINK_HTML = compile(HTML_TEMPLATES, "password-reset-link");
+    private static final Template PASSWORD_RESET_LINK_TEXT = compile(TEXT_TEMPLATES, "password-reset-link");
     private static final Template LICENSE_READY_HTML = compile(HTML_TEMPLATES, "license-ready");
     private static final Template LICENSE_READY_TEXT = compile(TEXT_TEMPLATES, "license-ready");
     private static final Template LICENSE_RENEWED_HTML = compile(HTML_TEMPLATES, "license-renewed");
@@ -96,11 +103,26 @@ public class EmailService {
     private volatile EmailClient emailClient;
 
     /**
-     * Emails a one-time sign-in code.
+     * Emails the link that opens the form to create a license account for the address.
+     *
+     * @param returnPath the site path the form continues to once the account is created, or {@code null}
      */
-    public Future<Void> sendSignInCode(String email, String code) {
-        Map<String, Object> variables = Map.of("code", code);
-        return send(email, email, "Your Kinotic sign-in code", SIGN_IN_CODE_HTML, SIGN_IN_CODE_TEXT, variables);
+    public Future<Void> sendSignUpLink(String email, String token, String returnPath) {
+        Map<String, Object> variables = Map.of("link", linkUrl(SIGN_UP_PATH, token, returnPath));
+        return send(email, email, "Create your Kinotic license account", SIGN_UP_LINK_HTML, SIGN_UP_LINK_TEXT, variables);
+    }
+
+    /**
+     * Emails a contact the link that opens the form to set a new password.
+     *
+     * @param returnPath      the site path the form continues to once the password is set, or {@code null}
+     * @param existingAccount whether the link answers a sign-up with the address, which already has an account
+     */
+    public Future<Void> sendPasswordResetLink(CustomerContact contact, String token, String returnPath, boolean existingAccount) {
+        Map<String, Object> variables = Map.of("link", linkUrl(PASSWORD_RESET_PATH, token, returnPath),
+                                               "existingAccount", existingAccount);
+        return send(contact.getEmail(), contact.getName(), "Set your Kinotic license account password",
+                    PASSWORD_RESET_LINK_HTML, PASSWORD_RESET_LINK_TEXT, variables);
     }
 
     /**
@@ -297,6 +319,14 @@ public class EmailService {
             ret = "your subscription is set to end on " + DATE.format(license.getCancelsAt()) + ".";
         } else {
             ret = "your free license's year is ending. Confirm your company's figures in your account so we can renew it.";
+        }
+        return ret;
+    }
+
+    private String linkUrl(String path, String token, String returnPath) {
+        String ret = properties.getLicenses().getPublicBaseUrl() + path + "?token=" + token;
+        if (returnPath != null) {
+            ret += "&referer=" + URLEncoder.encode(returnPath, StandardCharsets.UTF_8);
         }
         return ret;
     }

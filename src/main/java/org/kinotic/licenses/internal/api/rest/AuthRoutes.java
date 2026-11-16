@@ -1,5 +1,6 @@
 package org.kinotic.licenses.internal.api.rest;
 
+import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
@@ -11,9 +12,8 @@ import org.kinotic.core.api.security.SessionBinding;
 import org.kinotic.core.api.service.SuppliesGatewayRoutes;
 import org.kinotic.licenses.api.config.KinoticLicensesProperties;
 import org.kinotic.licenses.api.security.LicenseParticipant;
-import org.kinotic.licenses.internal.api.services.CustomerService;
 import org.kinotic.licenses.internal.api.services.RateLimitedException;
-import org.kinotic.licenses.internal.api.services.SignInCodeService;
+import org.kinotic.licenses.internal.api.services.CustomerSignInService;
 import org.kinotic.licenses.internal.api.services.StaffOidcService;
 import org.springframework.stereotype.Component;
 
@@ -21,10 +21,10 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 
 /**
- * The sign-in and sign-up routes. Customers sign in with an emailed code on the public host, and sign up by confirming
- * their address with a code before naming their organization; staff sign in through the OIDC provider on the staff
- * host, where alone the staff routes answer. {@code GET /api/auth/me} and {@code POST /api/auth/logout} serve every
- * signed-in page.
+ * The sign-in and sign-up routes. On the public host a customer signs up with an email address, whose emailed link opens
+ * the form that creates the account, signs in with an email and password, and sets a new password through an emailed
+ * link; staff sign in through the OIDC provider on the staff host, where alone the staff routes answer.
+ * {@code GET /api/auth/me} and {@code POST /api/auth/logout} serve every signed-in page.
  */
 @Slf4j
 @Component
@@ -33,20 +33,20 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
 
     private static final String STAFF_LOGIN_PATH = "/login";
     private static final String STAFF_LOGIN_ERROR_PATH = STAFF_LOGIN_PATH + "?error=";
-    private static final String CONFIRM_FIRST = "Confirm your email address with the code we send it first";
 
     private final KinoticLicensesProperties properties;
-    private final SignInCodeService signInCodeService;
+    private final CustomerSignInService signInService;
     private final StaffOidcService staffOidcService;
-    private final CustomerService customerService;
 
     @Override
     public void mountRoutes(Router router) {
         router.get("/api/auth/me").handler(this::me);
         router.post("/api/auth/logout").handler(this::logout);
-        router.post("/api/auth/code/request").handler(this::requestCode);
-        router.post("/api/auth/code/verify").handler(this::verifyCode);
-        router.post("/api/auth/signup").handler(this::signUp);
+        router.post("/api/auth/login").handler(this::signIn);
+        router.post("/api/auth/signup").handler(this::requestSignUp);
+        router.post("/api/auth/signup/complete").handler(this::completeSignUp);
+        router.post("/api/auth/password/forgot").handler(this::requestPasswordReset);
+        router.post("/api/auth/password/reset").handler(this::resetPassword);
         router.get("/api/auth/staff/login").handler(this::requireStaffHost).handler(this::startStaffSignIn);
         router.get(StaffOidcService.CALLBACK_PATH).handler(this::requireStaffHost).handler(this::completeStaffSignIn);
     }
@@ -65,52 +65,68 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
         ctx.response().setStatusCode(204).end();
     }
 
-    /** Always {@code 202}: every address is sent a code, so the response never says whether it has an account. */
-    private void requestCode(RoutingContext ctx) {
-        String email = RestSupport.requiredString(RestSupport.jsonBody(ctx), "email");
-        signInCodeService.requestCode(email, RestSupport.clientAddress(ctx))
-                         .onSuccess(v -> ctx.response().setStatusCode(202).end())
-                         .onFailure(t -> failSignIn(ctx, t));
-    }
-
-    private void verifyCode(RoutingContext ctx) {
+    /** Signs the page in with an email and password: {@code 204}, or {@code 401} when they match no contact. */
+    private void signIn(RoutingContext ctx) {
         JsonObject body = RestSupport.jsonBody(ctx);
         String email = RestSupport.requiredString(body, "email");
-        String code = RestSupport.requiredString(body, "code");
-        signInCodeService.verifyCode(email, code, RestSupport.clientAddress(ctx))
-                         .onSuccess(verified -> {
-                             // only the address's owner reaches here, so the answer may say whether it has an account
-                             if (verified.participant() != null) {
-                                 RestSupport.establishSession(ctx, SessionBinding.origin(ctx), verified.participant());
-                             } else {
-                                 RestSupport.rememberVerifiedEmail(ctx, SessionBinding.origin(ctx), verified.email());
-                             }
-                             RestSupport.respondJson(ctx, 200, new JsonObject().put("account", verified.participant() != null));
-                         })
-                         .onFailure(t -> failSignIn(ctx, t));
+        String password = RestSupport.requiredString(body, "password");
+        respondSignedIn(ctx, signInService.signIn(email, password, RestSupport.clientAddress(ctx)));
     }
 
     /**
-     * Creates the account of the address the page confirmed, with the organization and contact name given, and signs
-     * the page in to it: {@code 204}, or {@code 401} when the page confirmed no address without an account, or
-     * {@code 409} when the address has an account by now.
+     * Always {@code 202}: the address is emailed a link to create its account, or to set a new password when it has
+     * one, so the response never says which. {@code referer} is the site path the link's page continues to.
      */
-    private void signUp(RoutingContext ctx) {
+    private void requestSignUp(RoutingContext ctx) {
         JsonObject body = RestSupport.jsonBody(ctx);
+        String email = RestSupport.requiredString(body, "email");
+        String returnPath = RestSupport.safeReturnPath(body.getString("referer"));
+        signInService.requestSignUp(email, returnPath, RestSupport.clientAddress(ctx))
+                     .onSuccess(v -> ctx.response().setStatusCode(202).end())
+                     .onFailure(t -> failSignIn(ctx, t));
+    }
+
+    /**
+     * Creates the account of the address a sign-up link was emailed to, with the organization, contact name and
+     * password given, and signs the page in to it: {@code 204}, or {@code 401} when the token is not of a usable link,
+     * or {@code 409} when the address has an account by now.
+     */
+    private void completeSignUp(RoutingContext ctx) {
+        JsonObject body = RestSupport.jsonBody(ctx);
+        String token = RestSupport.requiredString(body, "token");
         String organization = RestSupport.requiredString(body, "organization");
         String contactName = RestSupport.requiredString(body, "contactName");
-        String email = RestSupport.verifiedEmail(ctx);
-        if (email == null) {
-            RestSupport.respondJson(ctx, 401, new JsonObject().put("error", CONFIRM_FIRST));
-        } else {
-            customerService.createCustomer(organization, contactName, email)
-                           .onSuccess(contact -> {
-                               RestSupport.forgetVerifiedEmail(ctx);
-                               RestSupport.establishSession(ctx, SessionBinding.origin(ctx), LicenseParticipant.ofContact(contact));
-                               ctx.response().setStatusCode(204).end();
-                           })
-                           .onFailure(t -> failSignIn(ctx, t));
-        }
+        String password = RestSupport.requiredString(body, "password");
+        respondSignedIn(ctx, signInService.completeSignUp(token, organization, contactName, password));
+    }
+
+    /** Always {@code 202}: a contact with the address is emailed a link to set a new password, and anyone else nothing. */
+    private void requestPasswordReset(RoutingContext ctx) {
+        JsonObject body = RestSupport.jsonBody(ctx);
+        String email = RestSupport.requiredString(body, "email");
+        String returnPath = RestSupport.safeReturnPath(body.getString("referer"));
+        signInService.requestPasswordReset(email, returnPath, RestSupport.clientAddress(ctx))
+                     .onSuccess(v -> ctx.response().setStatusCode(202).end())
+                     .onFailure(t -> failSignIn(ctx, t));
+    }
+
+    /**
+     * Sets the password of the contact a password reset link was emailed to, and signs the page in as it: {@code 204},
+     * or {@code 401} when the token is not of a usable link.
+     */
+    private void resetPassword(RoutingContext ctx) {
+        JsonObject body = RestSupport.jsonBody(ctx);
+        String token = RestSupport.requiredString(body, "token");
+        String password = RestSupport.requiredString(body, "password");
+        respondSignedIn(ctx, signInService.resetPassword(token, password));
+    }
+
+    private void respondSignedIn(RoutingContext ctx, Future<LicenseParticipant> signedIn) {
+        signedIn.onSuccess(participant -> {
+                    RestSupport.establishSession(ctx, SessionBinding.origin(ctx), participant);
+                    ctx.response().setStatusCode(204).end();
+                })
+                .onFailure(t -> failSignIn(ctx, t));
     }
 
     private void failSignIn(RoutingContext ctx, Throwable t) {
@@ -120,6 +136,8 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
             RestSupport.respondJson(ctx, 401, new JsonObject().put("error", t.getMessage()));
         } else if (t instanceof AlreadyExistsException) {
             RestSupport.respondJson(ctx, 409, new JsonObject().put("error", t.getMessage()));
+        } else if (t instanceof IllegalArgumentException) {
+            RestSupport.respondJson(ctx, 400, new JsonObject().put("error", t.getMessage()));
         } else {
             ctx.fail(t);
         }

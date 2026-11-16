@@ -7,16 +7,17 @@ import lombok.experimental.Accessors;
 import java.time.Instant;
 
 /**
- * A one-time sign-in code emailed to a customer contact, stored as a hash. It is usable until it expires or is
- * used once.
+ * A one-time link emailed to an address, stored as the hash of its token. It is usable until it expires or is used
+ * once.
  */
 @Data
 @Accessors(chain = true)
 @NoArgsConstructor
-public class SignInCode {
+public class EmailLink {
     private String id;
+    private EmailLinkType type;
     private String email;
-    private String codeHash;
+    private String tokenHash;
     private Instant createdAt;
     private Instant expiresAt;
     private Instant usedAt;

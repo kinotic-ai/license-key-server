@@ -12,10 +12,12 @@ CREATE TABLE customer_contact (
     id          TEXT PRIMARY KEY,
     customer_id TEXT NOT NULL REFERENCES customer (id),
     name        TEXT NOT NULL,
-    email       TEXT NOT NULL,
-    role        TEXT NOT NULL
+    email         TEXT NOT NULL,
+    role          TEXT NOT NULL,
+    -- a bcrypt hash; NULL until the contact sets a password through a password reset link
+    password_hash TEXT
 );
--- one address belongs to one customer, so a sign-in code always names one account
+-- one address belongs to one customer, so an email and password always name one account
 CREATE UNIQUE INDEX customer_contact_email_idx ON customer_contact (lower(email));
 CREATE INDEX customer_contact_customer_idx ON customer_contact (customer_id);
 
@@ -194,12 +196,12 @@ CREATE TABLE key_expiry_warning (
     sent_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE sign_in_code (
+CREATE TABLE email_link (
     id         TEXT PRIMARY KEY,
+    type       TEXT        NOT NULL,
     email      TEXT        NOT NULL,
-    code_hash  TEXT        NOT NULL,
+    token_hash TEXT        NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at TIMESTAMPTZ NOT NULL,
     used_at    TIMESTAMPTZ
 );
-CREATE INDEX sign_in_code_email_idx ON sign_in_code (lower(email), created_at);

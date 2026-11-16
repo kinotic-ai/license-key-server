@@ -37,10 +37,11 @@ public class CustomerService {
      * @param legalName    the customer's legal name
      * @param contactName  the billing contact's name
      * @param contactEmail the billing contact's email, which the caller has confirmed belongs to the person signing up
+     * @param passwordHash the bcrypt hash of the billing contact's password
      * @return the billing contact, or a failure with {@link AlreadyExistsException} when the address already has an
      *         account
      */
-    public Future<CustomerContact> createCustomer(String legalName, String contactName, String contactEmail) {
+    public Future<CustomerContact> createCustomer(String legalName, String contactName, String contactEmail, String passwordHash) {
         Validate.notBlank(legalName, "The legal name is required");
         Validate.notBlank(contactName, "The contact's name is required");
         Validate.isTrue(contactEmail != null && contactEmail.contains("@"), "A valid contact email is required");
@@ -57,7 +58,7 @@ public class CustomerService {
                                 .compose(existing -> existing.isEmpty()
                                         ? customerRepository.save(customer)
                                         : Future.failedFuture(new AlreadyExistsException(CustomerContactRepository.EMAIL_TAKEN)))
-                                 .compose(saved -> contactRepository.save(contact)
+                                 .compose(saved -> contactRepository.save(contact, passwordHash)
                                                                     // a contact that could not be saved, as by losing a race past the check
                                                                     // above, leaves no customer behind; the save's failure is the one reported
                                                                     .recover(t -> customerRepository.delete(customer.getId())
