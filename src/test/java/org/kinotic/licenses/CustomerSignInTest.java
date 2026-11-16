@@ -1,99 +1,147 @@
 package org.kinotic.licenses;
 
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.HttpResponse;
-import io.vertx.core.buffer.Buffer;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.kinotic.licenses.api.model.Customer;
 import org.kinotic.licenses.api.model.CustomerContact;
 import org.kinotic.licenses.internal.api.repositories.AgreementAcceptanceRepository;
-import org.kinotic.licenses.internal.api.model.SignInCode;
-import org.kinotic.licenses.internal.api.repositories.SignInCodeRepository;
 import org.kinotic.licenses.support.ServerTest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
-import org.junit.jupiter.api.extension.ExtendWith;
 
-import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Customers sign in with the code emailed to a contact: the code is used once, expires, and the response to a request
- * never says whether the address has an account. A new customer signs up by confirming its address with a code first.
+ * Customers sign up with an email address, whose emailed link opens the form that names the organization and sets the
+ * password, and sign in with their email and password. A link is used once and expires, and a request for one never
+ * says whether the address has an account.
  */
 @ExtendWith(OutputCaptureExtension.class)
 class CustomerSignInTest extends ServerTest {
 
     @Autowired
-    private SignInCodeRepository codeRepository;
-    @Autowired
     private AgreementAcceptanceRepository acceptanceRepository;
 
     @Test
-    void aSignUpCreatesTheAccountOfAConfirmedAddressAndSignsItIn(CapturedOutput output) throws Exception {
+    void theSignUpLinkCreatesTheAccountOnceAndItsPasswordSignsIn(CapturedOutput output) throws Exception {
         String email = "new-" + UUID.randomUUID() + "@tiny.example";
-        // a page that confirmed no address signs nothing up, so it learns nothing about any address
-        JsonObject signUp = new JsonObject().put("organization", "Tiny Startup LLC").put("contactName", "Grace Hopper");
-        assertThat(post("/api/auth/signup", signUp, null).statusCode()).isEqualTo(401);
+        int before = linksIn(output, SIGN_UP_LINK).size();
+        HttpResponse<Buffer> requested = post("/api/auth/signup", new JsonObject().put("email", email), null);
+        assertThat(requested.statusCode()).isEqualTo(202);
+        assertThat(requested.bodyAsString()).isNullOrEmpty();
+        String token = awaitLink(output, SIGN_UP_LINK, before);
 
-        String cookie = signUp(output, email, "Tiny Startup LLC");
+        assertThat(post("/api/auth/signup/complete", completion("not-a-token"), null).statusCode()).isEqualTo(401);
+        HttpResponse<Buffer> completed = post("/api/auth/signup/complete", completion(token), null);
+        assertThat(completed.statusCode()).isEqualTo(204);
+        String cookie = completed.cookies().getFirst().split(";")[0];
+        assertThat(cookie).startsWith("__Host-kinotic-licenses-session=");
         assertThat(get("/api/auth/me", cookie).statusCode()).isEqualTo(204);
+
         CustomerContact contact = await(contactRepository.findByEmail(email)).getFirst();
         assertThat(contact.getName()).isEqualTo("Grace Hopper");
         assertThat(await(customerRepository.findById(contact.getCustomerId())).getLegalName()).isEqualTo("Tiny Startup LLC");
         // the terms are accepted with each purchase and request, not at sign-up
         assertThat(await(acceptanceRepository.findByCustomerId(contact.getCustomerId()))).isEmpty();
 
-        // the address's code now signs in to that account, and leaves nothing to sign up with
-        String signedIn = signIn(output, email.toUpperCase());
-        assertThat(post("/api/auth/signup", signUp, signedIn).statusCode()).isEqualTo(401);
+        assertThat(post("/api/auth/signup/complete", completion(token), null).statusCode()).isEqualTo(401);
+
+        assertThat(post("/api/auth/logout", new JsonObject(), cookie).statusCode()).isEqualTo(204);
+        assertThat(get("/api/auth/me", cookie).statusCode()).isEqualTo(401);
+
+        assertThat(post("/api/auth/login", credentials(email.toUpperCase(), "not the password"), null).statusCode()).isEqualTo(401);
+        HttpResponse<Buffer> signedIn = post("/api/auth/login", credentials(email.toUpperCase(), PASSWORD), null);
+        assertThat(signedIn.statusCode()).isEqualTo(204);
+        assertThat(get("/api/auth/me", signedIn.cookies().getFirst().split(";")[0]).statusCode()).isEqualTo(204);
     }
 
     @Test
-    void anAddressConfirmedOnTwoPagesSignsUpOnce(CapturedOutput output) throws Exception {
+    void anAddressWithTwoSignUpLinksSignsUpOnce(CapturedOutput output) throws Exception {
         String email = "twice-" + UUID.randomUUID() + "@tiny.example";
-        String first = confirmEmail(output, email);
-        String second = confirmEmail(output, email);
-        JsonObject signUp = new JsonObject().put("organization", "Tiny Startup LLC").put("contactName", "Grace Hopper");
+        int before = linksIn(output, SIGN_UP_LINK).size();
+        assertThat(post("/api/auth/signup", new JsonObject().put("email", email), null).statusCode()).isEqualTo(202);
+        String first = awaitLink(output, SIGN_UP_LINK, before);
+        assertThat(post("/api/auth/signup", new JsonObject().put("email", email), null).statusCode()).isEqualTo(202);
+        String second = awaitLink(output, SIGN_UP_LINK, before + 1);
 
-        assertThat(post("/api/auth/signup", signUp, first).statusCode()).isEqualTo(204);
-        HttpResponse<Buffer> again = post("/api/auth/signup", signUp, second);
-        assertThat(again.statusCode()).isEqualTo(409);
+        assertThat(post("/api/auth/signup/complete", completion(first), null).statusCode()).isEqualTo(204);
+        assertThat(post("/api/auth/signup/complete", completion(second), null).statusCode()).isEqualTo(409);
         assertThat(await(contactRepository.findByEmail(email))).hasSize(1);
     }
 
     @Test
-    void aContactSignsInWithTheEmailedCodeOnce(CapturedOutput output) throws Exception {
+    void aShortPasswordIsRefusedAndLeavesTheLinkUsable(CapturedOutput output) throws Exception {
+        String email = "short-" + UUID.randomUUID() + "@tiny.example";
+        int before = linksIn(output, SIGN_UP_LINK).size();
+        assertThat(post("/api/auth/signup", new JsonObject().put("email", email), null).statusCode()).isEqualTo(202);
+        String token = awaitLink(output, SIGN_UP_LINK, before);
+
+        assertThat(post("/api/auth/signup/complete", completion(token).put("password", "too short"), null).statusCode()).isEqualTo(400);
+        assertThat(post("/api/auth/signup/complete", completion(token), null).statusCode()).isEqualTo(204);
+    }
+
+    @Test
+    void anExpiredLinkIsRefused(CapturedOutput output) throws Exception {
+        String email = "late-" + UUID.randomUUID() + "@tiny.example";
+        int before = linksIn(output, SIGN_UP_LINK).size();
+        assertThat(post("/api/auth/signup", new JsonObject().put("email", email), null).statusCode()).isEqualTo(202);
+        String token = awaitLink(output, SIGN_UP_LINK, before);
+        sql("UPDATE email_link SET expires_at = now() - interval '1 second' WHERE email = $1", email);
+
+        assertThat(post("/api/auth/signup/complete", completion(token), null).statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void aSignUpWithAnAddressThatHasAnAccountSendsAPasswordResetLink(CapturedOutput output) throws Exception {
         Customer customer = seedCustomer();
         String email = await(contactRepository.findByCustomerId(customer.getId())).getFirst().getEmail();
+        // a seeded contact has set no password, so none signs in
+        assertThat(post("/api/auth/login", credentials(email, PASSWORD), null).statusCode()).isEqualTo(401);
 
-        HttpResponse<Buffer> requested = post("/api/auth/code/request", new JsonObject().put("email", email), null);
+        int signUps = linksIn(output, SIGN_UP_LINK).size();
+        int resets = linksIn(output, PASSWORD_RESET_LINK).size();
+        HttpResponse<Buffer> requested = post("/api/auth/signup", new JsonObject().put("email", email), null);
         assertThat(requested.statusCode()).isEqualTo(202);
-        String code = awaitCode(output);
+        assertThat(requested.bodyAsString()).isNullOrEmpty();
+        String token = awaitLink(output, PASSWORD_RESET_LINK, resets);
+        assertThat(linksIn(output, SIGN_UP_LINK)).hasSize(signUps);
 
-        HttpResponse<Buffer> wrongCode = post("/api/auth/code/verify", new JsonObject().put("email", email).put("code", "00000000"), null);
-        assertThat(wrongCode.statusCode()).isEqualTo(401);
+        // a reset link opens no sign-up form
+        assertThat(post("/api/auth/signup/complete", completion(token), null).statusCode()).isEqualTo(401);
+        HttpResponse<Buffer> reset = post("/api/auth/password/reset", new JsonObject().put("token", token).put("password", PASSWORD), null);
+        assertThat(reset.statusCode()).isEqualTo(204);
+        assertThat(get("/api/auth/me", reset.cookies().getFirst().split(";")[0]).statusCode()).isEqualTo(204);
+        assertThat(post("/api/auth/login", credentials(email, PASSWORD), null).statusCode()).isEqualTo(204);
+        assertThat(await(customerRepository.findById(customer.getId())).getLegalName()).isEqualTo("Acme Robotics Inc");
+    }
 
-        HttpResponse<Buffer> verified = post("/api/auth/code/verify", new JsonObject().put("email", email).put("code", code), null);
-        assertThat(verified.statusCode()).isEqualTo(200);
-        assertThat(verified.bodyAsJsonObject().getBoolean("account")).isTrue();
-        String cookie = verified.cookies().getFirst();
-        assertThat(cookie).startsWith("__Host-kinotic-licenses-session=");
+    @Test
+    void aForgottenPasswordIsResetByTheEmailedLink(CapturedOutput output) throws Exception {
+        String email = "forgot-" + UUID.randomUUID() + "@tiny.example";
+        signUp(output, email, "Tiny Startup LLC");
+        int before = linksIn(output, PASSWORD_RESET_LINK).size();
+        assertThat(post("/api/auth/password/forgot", new JsonObject().put("email", email), null).statusCode()).isEqualTo(202);
+        String token = awaitLink(output, PASSWORD_RESET_LINK, before);
 
-        HttpResponse<Buffer> me = get("/api/auth/me", cookie);
-        assertThat(me.statusCode()).isEqualTo(204);
+        String newPassword = "a brand new passphrase";
+        assertThat(post("/api/auth/password/reset", new JsonObject().put("token", token).put("password", newPassword), null).statusCode()).isEqualTo(204);
+        assertThat(post("/api/auth/password/reset", new JsonObject().put("token", token).put("password", newPassword), null).statusCode()).isEqualTo(401);
+        assertThat(post("/api/auth/login", credentials(email, PASSWORD), null).statusCode()).isEqualTo(401);
+        assertThat(post("/api/auth/login", credentials(email, newPassword), null).statusCode()).isEqualTo(204);
+    }
 
-        HttpResponse<Buffer> reused = post("/api/auth/code/verify", new JsonObject().put("email", email).put("code", code), null);
-        assertThat(reused.statusCode()).isEqualTo(401);
-
-        HttpResponse<Buffer> loggedOut = post("/api/auth/logout", new JsonObject(), cookie);
-        assertThat(loggedOut.statusCode()).isEqualTo(204);
-        HttpResponse<Buffer> meAfter = get("/api/auth/me", cookie);
-        assertThat(meAfter.statusCode()).isEqualTo(401);
+    @Test
+    void aPasswordResetForAnUnknownAddressLooksLikeAnyOther() throws Exception {
+        HttpResponse<Buffer> requested = post("/api/auth/password/forgot",
+                                              new JsonObject().put("email", "nobody-" + UUID.randomUUID() + "@example.com"), null);
+        assertThat(requested.statusCode()).isEqualTo(202);
+        assertThat(requested.bodyAsString()).isNullOrEmpty();
     }
 
     @Test
@@ -104,7 +152,7 @@ class CustomerSignInTest extends ServerTest {
         int limited = 0;
         for (int i = 0; i < 35; i++) {
             // a client that writes a different address of its own to the left each time is still one client
-            HttpResponse<Buffer> response = await(client.post("/api/auth/code/request")
+            HttpResponse<Buffer> response = await(client.post("/api/auth/signup")
                                                         .putHeader("Origin", PUBLIC_ORIGIN)
                                                         .putHeader("Content-Type", "application/json")
                                                         .putHeader("X-Forwarded-For", "198.51.100." + i + ", " + proxied)
@@ -120,41 +168,17 @@ class CustomerSignInTest extends ServerTest {
     }
 
     @Test
-    void aRequestForAnUnknownAddressLooksLikeAnyOther() throws Exception {
-        HttpResponse<Buffer> requested = post("/api/auth/code/request",
-                                              new JsonObject().put("email", "nobody-" + UUID.randomUUID() + "@example.com"), null);
-        assertThat(requested.statusCode()).isEqualTo(202);
-        assertThat(requested.bodyAsString()).isNullOrEmpty();
-    }
-
-    @Test
-    void anExpiredCodeIsRefused() throws Exception {
-        String email = "late-" + UUID.randomUUID() + "@acme.example";
-        // the only usable codes are the unexpired ones, so a code stored as already expired never matches
-        SignInCode expired = new SignInCode().setId(UUID.randomUUID().toString()).setEmail(email)
-                                             .setCodeHash("irrelevant").setExpiresAt(Instant.now().minusSeconds(1));
-        await(codeRepository.save(expired));
-        assertThat(await(codeRepository.findUsable(email, Instant.now()))).isEmpty();
-    }
-
-    @Test
     void theStaffRoutesDoNotAnswerOnThePublicHost() throws Exception {
         HttpResponse<Buffer> onPublicHost = await(client.get("/api/auth/staff/login").putHeader("Host", "localhost:5173").send());
         assertThat(onPublicHost.statusCode()).isEqualTo(404);
     }
 
-    // the email is logged, not sent, in the test profile
-    private static String awaitCode(CapturedOutput output) throws InterruptedException {
-        String ret = null;
-        for (int i = 0; i < 100 && ret == null; i++) {
-            List<String> codes = codesIn(output);
-            if (!codes.isEmpty()) {
-                ret = codes.getLast();
-            } else {
-                Thread.sleep(100);
-            }
-        }
-        assertThat(ret).as("the sign-in code was logged").isNotNull();
-        return ret;
+    private static JsonObject completion(String token) {
+        return new JsonObject().put("token", token).put("organization", "Tiny Startup LLC")
+                               .put("contactName", "Grace Hopper").put("password", PASSWORD);
+    }
+
+    private static JsonObject credentials(String email, String password) {
+        return new JsonObject().put("email", email).put("password", password);
     }
 }

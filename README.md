@@ -1,7 +1,8 @@
 # license-key-server
 
 Minds Ignited's license key server: sells, issues and tracks Kinotic Enterprise license keys. Customers create an
-account on `licenses.kinotic.ai` by confirming their email with a code, then buy the plan their annual revenue sets
+account on `licenses.kinotic.ai` with their email, whose emailed link opens the form that names their organization and
+sets their password, then buy the plan their annual revenue sets
 (Small, Medium or Large) for as many Kinotic clusters as they run, paying monthly or annually through Stripe; small
 organizations request a free license that staff approve. A license has seats, one for each cluster it covers, and each
 cluster the customer adds gets keys of its own that work on that cluster alone; see

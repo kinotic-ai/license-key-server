@@ -100,6 +100,9 @@ dependencies {
 
     implementation 'com.github.jknack:handlebars'
 
+    // bcrypt for customer passwords
+    implementation 'org.springframework.security:spring-security-crypto'
+
     implementation 'org.apache.commons:commons-lang3'
     implementation 'tools.jackson.core:jackson-databind'
     implementation 'com.fasterxml.jackson.core:jackson-annotations'

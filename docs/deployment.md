@@ -5,7 +5,7 @@ dashboard on a host restricted by network to Minds Ignited, as the Kinotic syste
 front of the container terminates TLS for both names and forwards every path, WebSockets included (the STOMP API is
 `/api/v1`), to port 58503 with the `Host` header unchanged: the server decides which site a request belongs to from
 that header. Exactly one proxy stands in front of the server, and it appends the client's address to
-`X-Forwarded-For`: the sign-in code rate limits, which also gate sign-up, key on that last entry, since the client writes
+`X-Forwarded-For`: the rate limits on sign-in attempts and on sign-up and password reset links key on that last entry, since the client writes
 whatever it likes to the left of it. A second proxy in the chain would make every client look like the first proxy.
 
 ## Infrastructure
@@ -169,7 +169,8 @@ of the customer through Azure Communication Services:
 
 | Template | When |
 |---|---|
-| `sign-in-code` | a sign-in or sign-up code is requested |
+| `sign-up-link` | an address with no account asks to sign up: the link, which lasts 24 hours, opens the form that names the organization and sets the password |
+| `password-reset-link` | a contact asks to reset its password, or an address that has an account asks to sign up: the link, which lasts an hour, sets a new password |
 | `license-ready`, `license-renewed` | a license is bought and ready for its clusters, and each payment or free year that issues its clusters new keys |
 | `trial-started`, `trial-expired` | a trial starts, ready for its cluster, and once it ends without its plan bought |
 | `past-due` | a payment fails and the license leaves good standing |

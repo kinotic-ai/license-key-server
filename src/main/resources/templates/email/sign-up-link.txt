@@ -1,0 +1,7 @@
+Open this link to create your Kinotic license account: name your organization and set your password.
+
+{{link}}
+
+It expires in 24 hours and works once. If you didn't ask to create an account, you can ignore this email.
+
+— Minds Ignited, makers of Kinotic
