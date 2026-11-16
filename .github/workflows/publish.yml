@@ -38,5 +38,7 @@ jobs:
           tags: |
             ghcr.io/kinotic-ai/license-key-server:sha-${{ github.sha }}
             ${{ github.ref_name == 'main' && 'ghcr.io/kinotic-ai/license-key-server:main' || '' }}
+          # Links the package to this repository, so it takes the repository's access
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
