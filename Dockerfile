@@ -22,11 +22,14 @@ FROM eclipse-temurin:25-jre
 # Ignite 2.18 reflects into these JDK packages; Netty needs direct memory for the WebSocket frames
 ENV JAVA_TOOL_OPTIONS="--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED -XX:MaxDirectMemorySize=256m -XX:+DisableExplicitGC"
 ENV KINOTIC_IGNITE_WORKDIRECTORY=/var/lib/license-key-server/ignite
-RUN useradd --system --create-home --home-dir /var/lib/license-key-server licenses \
+# A fixed uid and gid, so a host that mounts directories into the container can own them by number
+RUN groupadd --system --gid 10001 licenses \
+    && useradd --system --uid 10001 --gid 10001 --create-home --home-dir /var/lib/license-key-server licenses \
     && mkdir -p /var/lib/license-key-server/ignite && chown -R licenses:licenses /var/lib/license-key-server
 WORKDIR /opt/license-key-server
 COPY --from=server /build/build/libs/license-key-server-*.jar license-key-server.jar
 USER licenses
 EXPOSE 58503
-HEALTHCHECK --interval=30s --timeout=5s --start-period=60s CMD curl -fsS http://localhost:58503/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
+    CMD if [ "$KINOTIC_APIGATEWAY_SSL_ENABLED" = "true" ]; then curl -fsSk https://localhost:58503/health; else curl -fsS http://localhost:58503/health; fi || exit 1
 ENTRYPOINT ["java", "-jar", "license-key-server.jar"]
