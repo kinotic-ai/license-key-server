@@ -102,7 +102,9 @@ class CustomerProviderSignInTest extends ServerTest {
     @Test
     void aSignUpFormWithNoProviderSignUpBehindItIsRefused() throws Exception {
         assertThat(get("/api/auth/signup/provider", null).statusCode()).isEqualTo(404);
-        JsonObject form = new JsonObject().put("organization", "Tiny Startup LLC").put("contactName", "Grace Hopper");
+        JsonObject form = new JsonObject().put("email", "grace@tiny.example")
+                                          .put("organization", "Tiny Startup LLC")
+                                          .put("contactName", "Grace Hopper");
         assertThat(post("/api/auth/signup/provider/complete", form, null).statusCode()).isEqualTo(401);
     }
 

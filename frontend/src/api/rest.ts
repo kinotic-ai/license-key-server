@@ -58,9 +58,12 @@ export function fetchPendingProviderSignUp(): Promise<PendingProviderSignUp> {
     return getJson('/api/auth/signup/provider')
 }
 
-/** Creates the account of the sign-up a provider started in this browser, and signs the page in to it. */
-export async function completeProviderSignUp(organization: string, contactName: string): Promise<void> {
-    await postJson('/api/auth/signup/provider/complete', { organization, contactName }, 'The account could not be created')
+/**
+ * Creates the account of the sign-up a provider started in this browser for `email`, the address the form shows, and
+ * signs the page in to it; refused when the browser's pending sign-up is for another address.
+ */
+export async function completeProviderSignUp(email: string, organization: string, contactName: string): Promise<void> {
+    await postJson('/api/auth/signup/provider/complete', { email, organization, contactName }, 'The account could not be created')
 }
 
 /** Asks for a link to set a new password; the answer is the same whether or not the address has an account. */

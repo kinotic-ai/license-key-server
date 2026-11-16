@@ -60,7 +60,7 @@ async function submit() {
   loading.value = true
   try {
     if (throughProvider) {
-      await completeProviderSignUp(organization.value.trim(), contactName.value.trim())
+      await completeProviderSignUp(providerEmail.value!, organization.value.trim(), contactName.value.trim())
     } else {
       await completeSignUp(token, organization.value.trim(), contactName.value.trim(), password.value)
     }

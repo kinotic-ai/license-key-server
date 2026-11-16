@@ -218,15 +218,17 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
 
     /**
      * Creates the account of the sign-up a provider started in this browser, with the organization and contact name
-     * given, and signs the page in to it: {@code 204}, or {@code 401} when there is no such sign-up, or {@code 409}
-     * when the address has an account by now.
+     * given, and signs the page in to it: {@code 204}, or {@code 401} when there is no such sign-up for the
+     * {@code email} the form shows, or {@code 409} when the address has an account by now.
      */
     private void completeProviderSignUp(RoutingContext ctx) {
         JsonObject body = RestSupport.jsonBody(ctx);
+        String email = RestSupport.requiredString(body, "email");
         String organization = RestSupport.requiredString(body, "organization");
         String contactName = RestSupport.requiredString(body, "contactName");
         PendingProviderSignUp pending = pendingProviderSignUp(ctx.session());
-        if (pending == null) {
+        // a sign-in in another tab replaces the pending sign-up, so the form's address is the one the person saw
+        if (pending == null || !pending.email().equals(email)) {
             RestSupport.respondJson(ctx, 401, new JsonObject().put("error", NO_PENDING_PROVIDER_SIGN_UP));
         } else {
             respondSignedIn(ctx, signInService.completeProviderSignUp(pending.email(), organization, contactName)
