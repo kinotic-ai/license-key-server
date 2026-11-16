@@ -1,4 +1,4 @@
-Copyright (c) 2026 Minds Ignited LLC. All rights reserved.
+Copyright (c) 2026 Kinotic Inc. All rights reserved.
 
 This software is licensed under the "Elastic License 2.0" as defined below. Third-party components
 incorporated into it are licensed under the original license provided by the owner of the
