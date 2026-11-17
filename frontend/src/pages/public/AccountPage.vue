@@ -267,7 +267,7 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
       <template #actions>
         <Button v-if="account?.customer.stripeCustomerId" label="Billing, receipts and seats" icon="pi pi-credit-card" severity="secondary" outlined
                 :loading="openingPortal" @click="openPortal" />
-        <RouterLink v-if="account && !subscribed && account.licenses.length" to="/buy?plan=small&billing=monthly">
+        <RouterLink v-if="account && !subscribed && account.licenses.length" to="/buy">
           <Button :label="account.trialAvailable ? 'Try or buy a plan' : 'Buy a plan'" icon="pi pi-shopping-cart" />
         </RouterLink>
       </template>
@@ -303,13 +303,13 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
               <span :class="['flex h-9 w-9 items-center justify-center rounded-lg', TINTS.green]"><Rocket :size="18" :stroke-width="1.75" aria-hidden="true" /></span>
               <h3 class="app-heading-text font-medium">Try a paid plan</h3>
               <p class="app-muted-text flex-1 text-sm">Free for three months on one cluster, with no payment details.</p>
-              <RouterLink to="/buy?plan=small&billing=monthly"><Button label="Start a trial" /></RouterLink>
+              <RouterLink to="/buy"><Button label="Start a trial" /></RouterLink>
             </div>
             <div class="app-card-surface flex flex-col gap-3 rounded-xl border p-5">
               <span :class="['flex h-9 w-9 items-center justify-center rounded-lg', TINTS.blue]"><ShoppingCart :size="18" :stroke-width="1.75" aria-hidden="true" /></span>
               <h3 class="app-heading-text font-medium">Buy a plan</h3>
               <p class="app-muted-text flex-1 text-sm">Priced by your company's annual revenue, for each cluster. Pay monthly or yearly and cancel any time.</p>
-              <RouterLink to="/buy?plan=small&billing=monthly"><Button label="See the plans" severity="secondary" outlined /></RouterLink>
+              <RouterLink to="/buy"><Button label="See the plans" severity="secondary" outlined /></RouterLink>
             </div>
             <div class="app-card-surface flex flex-col gap-3 rounded-xl border p-5">
               <span :class="['flex h-9 w-9 items-center justify-center rounded-lg', TINTS.purple]"><Gift :size="18" :stroke-width="1.75" aria-hidden="true" /></span>
@@ -353,7 +353,7 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
         </Message>
         <Message v-if="entry.license.status === 'TRIAL'" severity="info">
           Your trial of the {{ planName(entry.license.plan) }} plan ends on {{ formatDate(entry.license.termEnd) }}.
-          <RouterLink :to="`/buy?plan=${entry.license.plan.toLowerCase()}&billing=monthly`" class="font-medium underline">Buy it</RouterLink>
+          <RouterLink to="/buy" class="font-medium underline">Buy it</RouterLink>
           before then to keep your license and its price list.
         </Message>
         <Message v-if="entry.confirmationDueFor" severity="info">
@@ -362,7 +362,7 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
         </Message>
         <Message v-if="planToBuy(entry)" severity="warn">
           Your figures now set the {{ planName(planToBuy(entry)) }} plan.
-          <RouterLink :to="`/buy?plan=${planToBuy(entry)?.toLowerCase()}&billing=monthly`" class="font-medium underline">Buy it</RouterLink>
+          <RouterLink to="/buy" class="font-medium underline">Buy it</RouterLink>
           by {{ formatDate(entry.license.termEnd) }} to keep your license and its price list.
         </Message>
         <DashboardSection :icon="Server" :tint="TINTS.blue" title="Clusters" :count="seated(entry)"

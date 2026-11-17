@@ -81,7 +81,7 @@ async function submit() {
             <CertificationFields v-model:annual-revenue="annualRevenue" v-model:capital-raised="capitalRaised" v-model:intended-use="intendedUse" />
             <Message v-if="paidPlan" severity="warn">
               Your company's figures fit the {{ planName(paidPlan) }} plan, which is bought rather than requested.
-              <RouterLink :to="`/buy?plan=${paidPlan.toLowerCase()}&billing=monthly`" class="font-medium underline">Buy {{ planName(paidPlan) }}</RouterLink>
+              <RouterLink to="/buy" class="font-medium underline">Buy {{ planName(paidPlan) }}</RouterLink>
             </Message>
           </div>
         </DashboardSection>
