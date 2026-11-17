@@ -6,7 +6,7 @@ import InputNumber from 'primevue/inputnumber'
 import SelectButton from 'primevue/selectbutton'
 import Message from 'primevue/message'
 import { useToast } from 'primevue/usetoast'
-import { Building2, Check, Layers } from '@lucide/vue'
+import { Building2, Check, Layers, Lock } from '@lucide/vue'
 import { DashboardSection, PageHeader, TINTS, showErrorToast } from '@kinotic-ai/frontend-common'
 import type { BillingPeriod, CompanyFigures, Plan, PlanPrice } from '@/api/model'
 import { customerAccountService } from '@/api/services'
@@ -222,6 +222,19 @@ async function startTrial() {
             <span class="app-muted-text text-xs font-normal">{{ periodUnit }}</span>
           </span>
           <span v-else class="app-muted-text">{{ plan && !price ? 'This plan is not on sale right now' : '—' }}</span>
+        </div>
+        <div class="flex gap-3 rounded-lg bg-surface-50 p-3 dark:bg-surface-800/60">
+          <span :class="['flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', TINTS.green]">
+            <Lock :size="16" :stroke-width="1.75" aria-hidden="true" />
+          </span>
+          <div>
+            <div class="app-heading-text font-medium">Your prices are locked in for life</div>
+            <p class="app-muted-text mt-1 text-xs">
+              Today's price list stays yours for as long as your license stays active: never canceled, and any failed
+              payment settled within 30 days. If your revenue moves you to another plan, you pay that plan's price from
+              the same list.
+            </p>
+          </div>
         </div>
         <Button type="submit" form="buy-form" label="Continue to payment" icon="pi pi-arrow-right" icon-pos="right" fluid
                 :disabled="!accepted || !price || !seatsGiven || !figuresGiven || startingTrial" :loading="submitting" />
