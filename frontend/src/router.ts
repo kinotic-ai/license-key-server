@@ -24,26 +24,26 @@ const PUBLIC_ROUTES: RouteRecordRaw[] = [
                 meta: { sidebar: accountItem('Licenses', KeyRound, 10) }
             },
             {
-                path: 'buy',
-                component: () => import('./pages/public/BuyPage.vue'),
-                meta: { sidebar: accountItem('Buy a plan', ShoppingCart, 20, 'Get a license') }
-            },
-            { path: 'buy/success', component: () => import('./pages/public/BuySuccessPage.vue'), meta: { sidebarGroup: 'account' } },
-            {
                 path: 'free',
                 component: () => import('./pages/public/FreeRequestPage.vue'),
-                meta: { sidebar: accountItem('Free license', Gift, 30, 'Get a license') }
+                meta: { sidebar: accountItem('Free license', Gift, 20, 'Get a license') }
             },
             {
                 path: 'design-partner',
                 component: () => import('./pages/public/DesignPartnerPage.vue'),
-                meta: { sidebar: accountItem('Design partners', Handshake, 40, 'Get a license') }
+                meta: { sidebar: accountItem('Design partners', Handshake, 30, 'Get a license') }
             },
             {
                 path: 'design-partner/checkout',
                 component: () => import('./pages/public/DesignPartnerCheckoutPage.vue'),
                 meta: { sidebarGroup: 'account' }
-            }
+            },
+            {
+                path: 'buy',
+                component: () => import('./pages/public/BuyPage.vue'),
+                meta: { sidebar: accountItem('Buy a plan', ShoppingCart, 40, 'Get a license') }
+            },
+            { path: 'buy/success', component: () => import('./pages/public/BuySuccessPage.vue'), meta: { sidebarGroup: 'account' } }
         ]
     },
     { path: '/login', component: () => import('./pages/public/LoginPage.vue'), meta: { authenticationRequired: false } },
