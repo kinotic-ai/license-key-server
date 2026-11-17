@@ -99,7 +99,7 @@ class CustomerProviderSignInTest extends ServerTest {
 
         assertThat(callback(CALLBACK + "?error=Your+account+is+locked", null).getHeader("Location"))
                 .as("text a link puts in the callback's error is not passed on to the login page")
-                .isEqualTo(PUBLIC_ORIGIN + "/login?error=failed");
+                .isEqualTo(PUBLIC_ORIGIN + "/login?error=invalid_callback");
     }
 
     @Test

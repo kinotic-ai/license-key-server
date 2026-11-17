@@ -1,5 +1,8 @@
 package org.kinotic.licenses.internal.api.services;
 
+import org.kinotic.common.api.oidc.OidcSignInFlow;
+import org.kinotic.common.api.oidc.OidcErrorCodes;
+import org.kinotic.common.api.oidc.OidcCallbackException;
 import io.vertx.core.Future;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.annotation.PostConstruct;
@@ -28,7 +31,6 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class CustomerOidcService {
 
-    private static final String FLOW_SESSION_KEY_PREFIX = "customerOidcFlow.";
     private static final List<String> OIDC_SCOPES = List.of("openid", "email", "profile");
     private static final List<String> GITHUB_SCOPES = List.of("read:user", "user:email");
     private static final String GITHUB_AUTHORITY = "https://github.com/login";
@@ -43,8 +45,10 @@ public class CustomerOidcService {
     private final KinoticLicensesProperties properties;
     private final OidcClientService oidcClientService;
 
-    // the sign-in flow of each provider configured, in the order the pages show the providers
-    private final Map<OidcProviderType, OidcSignInFlow> flows = new LinkedHashMap<>();
+    private final OidcSignInFlow flow = new OidcSignInFlow("customerOidcFlow");
+
+    // the registration of each provider configured, in the order the pages show the providers
+    private final Map<OidcProviderType, OidcRegistration> registrations = new LinkedHashMap<>();
 
     @PostConstruct
     void registerProviders() {
@@ -71,7 +75,7 @@ public class CustomerOidcService {
      * The providers customers are offered, in the order the pages show them.
      */
     public List<OidcProviderType> providers() {
-        return List.copyOf(flows.keySet());
+        return List.copyOf(registrations.keySet());
     }
 
     /**
@@ -82,7 +86,10 @@ public class CustomerOidcService {
      * @param returnPath the public site path to land on afterwards, or {@code null} for the site's default
      */
     public Future<String> start(RoutingContext ctx, OidcProviderType provider, String returnPath) {
-        return flows.get(provider).start(ctx, returnPath);
+        OidcRegistration registration = registrations.get(provider);
+        return registration.client(oidcClientService)
+                           .map(client -> flow.start(ctx, client, registration.getCallbackUrl(), registration.getScopes(),
+                                                     ProviderSignIn.begin(registration, ctx, returnPath)));
     }
 
     /**
@@ -90,20 +97,18 @@ public class CustomerOidcService {
      * claims, and requires that the provider proves the email address belongs to the person.
      *
      * @param provider one of the {@link #providers()}
-     * @return the person signed in with the flow it completes, or a failure with {@link ProviderSignInException}
+     * @return the person signed in with the flow it completes, or a failure with {@link OidcCallbackException}
      */
     public Future<ProviderSignIn> complete(RoutingContext ctx, OidcProviderType provider) {
-        return flows.get(provider).complete(ctx)
-                    .compose(signIn -> OAuth2Util.isEmailProven(signIn.claims(), provider)
-                            ? Future.succeededFuture(signIn)
-                            : Future.failedFuture(new ProviderSignInException(
-                                    ProviderSignInFailureType.EMAIL_NOT_VERIFIED,
-                                    "The provider does not prove the account's email address")));
+        return ProviderSignIn.complete(ctx, flow, registrations.get(provider), oidcClientService)
+                             .compose(signIn -> OAuth2Util.isEmailProven(signIn.claims(), provider)
+                                     ? Future.succeededFuture(signIn)
+                                     : Future.failedFuture(new OidcCallbackException(OidcErrorCodes.EMAIL_NOT_VERIFIED, provider)));
     }
 
     @PreDestroy
     void stop() {
-        flows.values().forEach(OidcSignInFlow::close);
+        registrations.values().forEach(OidcRegistration::close);
     }
 
     private void register(OidcClientProperties configured, OidcRegistration registration) {
@@ -112,8 +117,7 @@ public class CustomerOidcService {
             registration.setClientId(configured.getClientId())
                         .setClientSecret(configured.getClientSecret())
                         .setCallbackUrl(properties.getLicenses().getPublicBaseUrl() + "/api/auth/provider/" + providerKey + "/callback");
-            flows.put(registration.getProvider(),
-                      new OidcSignInFlow(oidcClientService, registration, FLOW_SESSION_KEY_PREFIX + providerKey));
+            registrations.put(registration.getProvider(), registration);
         }
     }
 }

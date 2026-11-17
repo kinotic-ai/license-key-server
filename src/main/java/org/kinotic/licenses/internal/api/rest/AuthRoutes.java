@@ -1,5 +1,7 @@
 package org.kinotic.licenses.internal.api.rest;
 
+import org.kinotic.common.api.oidc.OidcErrorCodes;
+import org.kinotic.common.api.oidc.OidcCallbackException;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
@@ -18,8 +20,6 @@ import org.kinotic.licenses.internal.api.model.PendingProviderSignUp;
 import org.kinotic.licenses.internal.api.services.CustomerOidcService;
 import org.kinotic.licenses.internal.api.services.CustomerSignInService;
 import org.kinotic.licenses.internal.api.services.ProviderSignIn;
-import org.kinotic.licenses.internal.api.services.ProviderSignInException;
-import org.kinotic.licenses.internal.api.services.ProviderSignInFailureType;
 import org.kinotic.licenses.internal.api.services.RateLimitedException;
 import org.kinotic.licenses.internal.api.services.StaffOidcService;
 import org.springframework.stereotype.Component;
@@ -100,7 +100,7 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
     private void requestSignUp(RoutingContext ctx) {
         JsonObject body = RestSupport.jsonBody(ctx);
         String email = RestSupport.requiredString(body, "email");
-        String returnPath = RestSupport.safeReturnPath(body.getString("referer"));
+        String returnPath = SessionBinding.safeReturnPath(body.getString("referer"));
         signInService.requestSignUp(email, returnPath, RestSupport.clientAddress(ctx))
                      .onSuccess(v -> ctx.response().setStatusCode(202).end())
                      .onFailure(t -> failSignIn(ctx, t));
@@ -124,7 +124,7 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
     private void requestPasswordReset(RoutingContext ctx) {
         JsonObject body = RestSupport.jsonBody(ctx);
         String email = RestSupport.requiredString(body, "email");
-        String returnPath = RestSupport.safeReturnPath(body.getString("referer"));
+        String returnPath = SessionBinding.safeReturnPath(body.getString("referer"));
         signInService.requestPasswordReset(email, returnPath, RestSupport.clientAddress(ctx))
                      .onSuccess(v -> ctx.response().setStatusCode(202).end())
                      .onFailure(t -> failSignIn(ctx, t));
@@ -150,7 +150,7 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
         if (provider == null) {
             ctx.response().setStatusCode(404).end();
         } else {
-            String returnPath = RestSupport.safeReturnPath(ctx.request().getParam("referer"));
+            String returnPath = SessionBinding.safeReturnPath(ctx.request().getParam("referer"));
             customerOidcService.start(ctx, provider, returnPath)
                                .onSuccess(url -> redirect(ctx, url))
                                .onFailure(ctx::fail);
@@ -161,7 +161,7 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
      * The provider's callback. A person whose email address has an account is signed in to it and sent to the path the
      * sign-in started with; any other is sent to the sign-up form, which names the organization and creates the
      * account through {@code POST /api/auth/signup/provider/complete}. A sign-in that fails returns to the login page
-     * with its {@link ProviderSignInFailureType#code() code} in {@code error}.
+     * with its {@link OidcCallbackException#getErrorCode() code} in {@code error}.
      */
     private void completeProviderSignIn(RoutingContext ctx) {
         OidcProviderType provider = offeredProvider(ctx);
@@ -180,11 +180,11 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
     // signs the page in as the participant, or keeps the sign-up of a person with no account; returns the site path to continue at
     private String finishProviderSignIn(RoutingContext ctx, OidcProviderType provider, ProviderSignIn signIn,
                                         LicenseParticipant participant) {
-        String returnPath = signIn.flow().returnPath();
+        String returnPath = signIn.returnPath();
         String ret;
         if (participant != null) {
             String origin = signIn.flow().origin() != null ? signIn.flow().origin() : properties.getLicenses().getPublicBaseUrl();
-            RestSupport.establishSession(ctx, origin, participant);
+            SessionBinding.establish(ctx, origin, participant);
             ret = returnPath != null ? returnPath : ACCOUNT_PATH;
         } else {
             ctx.session().put(PENDING_PROVIDER_SIGN_UP_SESSION_KEY,
@@ -259,7 +259,7 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
 
     private void respondSignedIn(RoutingContext ctx, Future<LicenseParticipant> signedIn) {
         signedIn.onSuccess(participant -> {
-                    RestSupport.establishSession(ctx, SessionBinding.origin(ctx), participant);
+                    SessionBinding.establish(ctx, SessionBinding.origin(ctx), participant);
                     ctx.response().setStatusCode(204).end();
                 })
                 .onFailure(t -> failSignIn(ctx, t));
@@ -289,7 +289,7 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
     }
 
     private void startStaffSignIn(RoutingContext ctx) {
-        String returnPath = RestSupport.safeReturnPath(ctx.request().getParam("referer"));
+        String returnPath = SessionBinding.safeReturnPath(ctx.request().getParam("referer"));
         staffOidcService.start(ctx, returnPath)
                         .onSuccess(url -> redirect(ctx, url))
                         .onFailure(ctx::fail);
@@ -299,9 +299,10 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
         String staffBaseUrl = properties.getLicenses().getStaffBaseUrl();
         staffOidcService.complete(ctx)
                         .onSuccess(signIn -> {
-                            String origin = signIn.flow().origin() != null ? signIn.flow().origin() : staffBaseUrl;
-                            RestSupport.establishSession(ctx, origin, signIn.participant());
-                            String path = signIn.flow().returnPath() != null ? signIn.flow().returnPath() : "/";
+                            ProviderSignIn verified = signIn.verified();
+                            String origin = verified.flow().origin() != null ? verified.flow().origin() : staffBaseUrl;
+                            SessionBinding.establish(ctx, origin, signIn.participant());
+                            String path = verified.returnPath() != null ? verified.returnPath() : "/";
                             redirect(ctx, staffBaseUrl + path);
                         })
                         .onFailure(t -> failProviderSignIn(ctx, staffBaseUrl, t));
@@ -309,14 +310,14 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
 
     // returns the browser to the login page of the site at baseUrl, which shows the message it keeps for the code
     private static void failProviderSignIn(RoutingContext ctx, String baseUrl, Throwable t) {
-        ProviderSignInFailureType type;
-        if (t instanceof ProviderSignInException failure) {
-            log.warn("A provider sign-in on {} failed: {}", baseUrl, t.getMessage());
-            type = failure.getType();
+        String code;
+        if (t instanceof OidcCallbackException refused) {
+            log.warn("A provider sign-in on {} was refused: {}", baseUrl, refused.getErrorCode());
+            code = refused.getErrorCode();
         } else {
             log.error("A provider sign-in on {} failed", baseUrl, t);
-            type = ProviderSignInFailureType.FAILED;
+            code = OidcErrorCodes.EXCHANGE_FAILED;
         }
-        redirect(ctx, baseUrl + LOGIN_ERROR_PATH + type.code());
+        redirect(ctx, baseUrl + LOGIN_ERROR_PATH + code);
     }
 }

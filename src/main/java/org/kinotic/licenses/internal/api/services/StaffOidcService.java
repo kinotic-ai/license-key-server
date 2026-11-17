@@ -1,5 +1,8 @@
 package org.kinotic.licenses.internal.api.services;
 
+import org.kinotic.common.api.oidc.OidcSignInFlow;
+import org.kinotic.common.api.oidc.OidcErrorCodes;
+import org.kinotic.common.api.oidc.OidcCallbackException;
 import io.vertx.core.Future;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.annotation.PreDestroy;
@@ -31,14 +34,15 @@ public class StaffOidcService {
     /** The route the provider redirects back to, relative to the staff site's origin. */
     public static final String CALLBACK_PATH = "/api/auth/staff/callback";
 
-    private static final String FLOW_SESSION_KEY = "staffOidcFlow";
     private static final String ENTRA_HOST = "login.microsoftonline.com";
     private static final List<String> SCOPES = List.of("openid", "email", "profile");
 
     private final KinoticLicensesProperties properties;
     private final OidcClientService oidcClientService;
 
-    private OidcSignInFlow flow;
+    private final OidcSignInFlow flow = new OidcSignInFlow("staffOidcFlow");
+
+    private OidcRegistration registration;
 
     /**
      * Starts a sign-in: stores the flow in the session and returns the provider's authorization URL to redirect to.
@@ -47,19 +51,22 @@ public class StaffOidcService {
      * @param returnPath the staff site path to land on afterwards, or {@code null} for the root
      */
     public Future<String> start(RoutingContext ctx, String returnPath) {
-        return flow().start(ctx, returnPath);
+        OidcRegistration staff = registration();
+        return staff.client(oidcClientService)
+                    .map(client -> flow.start(ctx, client, staff.getCallbackUrl(), staff.getScopes(),
+                                              ProviderSignIn.begin(staff, ctx, returnPath)));
     }
 
     /**
      * Completes a sign-in from the provider's callback: checks the state, redeems the code for the account's verified
      * claims, checks the account's email, and returns the staff participant with the flow it completes.
      *
-     * @return the participant and flow, or a failure with {@link ProviderSignInException}
+     * @return the participant and the sign-in, or a failure with {@link OidcCallbackException}
      */
     public Future<StaffSignIn> complete(RoutingContext ctx) {
-        return flow().complete(ctx)
-                     .compose(signIn -> staffParticipant(signIn)
-                             .map(participant -> new StaffSignIn(participant, signIn.flow())));
+        return ProviderSignIn.complete(ctx, flow, registration(), oidcClientService)
+                             .compose(signIn -> staffParticipant(signIn)
+                                     .map(participant -> new StaffSignIn(participant, signIn)));
     }
 
     private Future<LicenseParticipant> staffParticipant(ProviderSignIn signIn) {
@@ -68,8 +75,7 @@ public class StaffOidcService {
         String domain = email != null && email.contains("@") ? email.substring(email.indexOf('@') + 1) : null;
         Future<LicenseParticipant> ret;
         if (domain == null || !domain.equalsIgnoreCase(allowedDomain)) {
-            ret = Future.failedFuture(new ProviderSignInException(ProviderSignInFailureType.NOT_STAFF,
-                                                                  "The account is outside " + allowedDomain));
+            ret = Future.failedFuture(new OidcCallbackException(OidcErrorCodes.ACCOUNT_NOT_ALLOWED));
         } else {
             // Entra sends no email_verified: the tenant's administrator issues its accounts' addresses, and the domain
             // check above confines staff to Minds Ignited's own tenant
@@ -86,30 +92,28 @@ public class StaffOidcService {
     }
 
     // built by the first sign-in, which is when the settings are checked
-    private synchronized OidcSignInFlow flow() {
-        if (flow == null) {
+    private synchronized OidcRegistration registration() {
+        if (registration == null) {
             StaffOidcProperties oidc = properties.getLicenses().getStaffOidc();
             Validate.validState(StringUtils.isNoneBlank(oidc.getIssuer(), oidc.getClientId(), oidc.getAllowedEmailDomain()),
                                 "kinotic.licenses.staffOidc needs an issuer, a clientId and an allowedEmailDomain");
             Validate.validState(ENTRA_HOST.equalsIgnoreCase(URI.create(oidc.getIssuer()).getHost()),
                                 "kinotic.licenses.staffOidc.issuer must be a Microsoft Entra issuer on %s", ENTRA_HOST);
-            flow = new OidcSignInFlow(oidcClientService,
-                                      new OidcRegistration().setProvider(OidcProviderType.AZURE_AD)
-                                                            .setAuthority(oidc.getIssuer())
-                                                            .setClientId(oidc.getClientId())
-                                                            .setClientSecret(oidc.getClientSecret())
-                                                            .setAudience(oidc.getClientId())
-                                                            .setCallbackUrl(properties.getLicenses().getStaffBaseUrl() + CALLBACK_PATH)
-                                                            .setScopes(SCOPES),
-                                      FLOW_SESSION_KEY);
+            registration = new OidcRegistration().setProvider(OidcProviderType.AZURE_AD)
+                                                 .setAuthority(oidc.getIssuer())
+                                                 .setClientId(oidc.getClientId())
+                                                 .setClientSecret(oidc.getClientSecret())
+                                                 .setAudience(oidc.getClientId())
+                                                 .setCallbackUrl(properties.getLicenses().getStaffBaseUrl() + CALLBACK_PATH)
+                                                 .setScopes(SCOPES);
         }
-        return flow;
+        return registration;
     }
 
     @PreDestroy
     synchronized void stop() {
-        if (flow != null) {
-            flow.close();
+        if (registration != null) {
+            registration.close();
         }
     }
 }

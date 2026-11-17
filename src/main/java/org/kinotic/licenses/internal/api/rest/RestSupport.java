@@ -96,16 +96,6 @@ final class RestSupport {
         return participant instanceof LicenseParticipant licenseParticipant ? licenseParticipant : null;
     }
 
-    /**
-     * Binds the participant to the page in the request's session, as a fresh session id.
-     */
-    static void establishSession(RoutingContext ctx, String origin, Participant participant) {
-        // a new id on the privilege change, so a pre-sign-in id cannot ride the signed-in session
-        ctx.session().regenerateId();
-        ConnectedInfo connectedInfo = new ConnectedInfo();
-        connectedInfo.setParticipant(participant);
-        SessionBinding.bind(ctx, origin, connectedInfo);
-    }
 
     /**
      * Whether the request was addressed to the authority of {@code baseUrl}: its host, and its port where the two
@@ -119,16 +109,4 @@ final class RestSupport {
         return authority != null && authority.host().equalsIgnoreCase(base.getHost()) && requestPort == basePort;
     }
 
-    /**
-     * A site path safe to redirect to: absolute, with no authority, backslash or control character; {@code null} for
-     * anything else.
-     */
-    static String safeReturnPath(String path) {
-        String ret = null;
-        if (path != null && path.startsWith("/") && !path.startsWith("//") && path.indexOf('\\') < 0
-                && path.chars().noneMatch(Character::isISOControl)) {
-            ret = path;
-        }
-        return ret;
-    }
 }
