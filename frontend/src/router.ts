@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory, type RouteRecordRaw, type Router } from 'vue-router'
-import { Building2, Gift, Handshake, Inbox, TriangleAlert } from '@lucide/vue'
+import { Building2, Gift, Handshake, Inbox, KeyRound, ShoppingCart, TriangleAlert } from '@lucide/vue'
 import type { SidebarItemMeta } from '@kinotic-ai/frontend-common'
 import type { Site } from '@/api/model'
 
@@ -7,19 +7,43 @@ function dashboardItem(label: string, icon: SidebarItemMeta['icon'], order: numb
     return { group: 'dashboard', label, icon, order }
 }
 
+function accountItem(label: string, icon: SidebarItemMeta['icon'], order: number, section?: string): SidebarItemMeta {
+    return { group: 'account', label, icon, order, section }
+}
+
 /** The public site: sign-up, sign-in and password reset, and for a signed-in customer the purchase, free request, design partner application and account. */
 const PUBLIC_ROUTES: RouteRecordRaw[] = [
     {
         path: '/',
-        component: () => import('./layouts/PublicLayout.vue'),
+        component: () => import('./layouts/SiteLayout.vue'),
         children: [
             { path: '', redirect: '/account' },
-            { path: 'buy', component: () => import('./pages/public/BuyPage.vue') },
-            { path: 'buy/success', component: () => import('./pages/public/BuySuccessPage.vue') },
-            { path: 'free', component: () => import('./pages/public/FreeRequestPage.vue') },
-            { path: 'account', component: () => import('./pages/public/AccountPage.vue') },
-            { path: 'design-partner', component: () => import('./pages/public/DesignPartnerPage.vue') },
-            { path: 'design-partner/checkout', component: () => import('./pages/public/DesignPartnerCheckoutPage.vue') }
+            {
+                path: 'account',
+                component: () => import('./pages/public/AccountPage.vue'),
+                meta: { sidebar: accountItem('Licenses', KeyRound, 10) }
+            },
+            {
+                path: 'buy',
+                component: () => import('./pages/public/BuyPage.vue'),
+                meta: { sidebar: accountItem('Buy a plan', ShoppingCart, 20, 'Get a license') }
+            },
+            { path: 'buy/success', component: () => import('./pages/public/BuySuccessPage.vue'), meta: { sidebarGroup: 'account' } },
+            {
+                path: 'free',
+                component: () => import('./pages/public/FreeRequestPage.vue'),
+                meta: { sidebar: accountItem('Free license', Gift, 30, 'Get a license') }
+            },
+            {
+                path: 'design-partner',
+                component: () => import('./pages/public/DesignPartnerPage.vue'),
+                meta: { sidebar: accountItem('Design partners', Handshake, 40, 'Get a license') }
+            },
+            {
+                path: 'design-partner/checkout',
+                component: () => import('./pages/public/DesignPartnerCheckoutPage.vue'),
+                meta: { sidebarGroup: 'account' }
+            }
         ]
     },
     { path: '/login', component: () => import('./pages/public/LoginPage.vue'), meta: { authenticationRequired: false } },
@@ -34,7 +58,7 @@ const PUBLIC_ROUTES: RouteRecordRaw[] = [
 const STAFF_ROUTES: RouteRecordRaw[] = [
     {
         path: '/',
-        component: () => import('./layouts/StaffLayout.vue'),
+        component: () => import('./layouts/SiteLayout.vue'),
         redirect: '/customers',
         children: [
             {
