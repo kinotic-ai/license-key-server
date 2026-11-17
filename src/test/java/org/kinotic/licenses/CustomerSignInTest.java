@@ -178,7 +178,7 @@ class CustomerSignInTest extends ServerTest {
         HttpResponse<Buffer> callback = await(client.get("/api/auth/staff/callback?code=a-code&state=a-state")
                                                     .putHeader("Host", "localhost:5174").followRedirects(false).send());
         assertThat(callback.statusCode()).isEqualTo(302);
-        assertThat(callback.getHeader("Location")).startsWith("http://localhost:5174/login?error=");
+        assertThat(callback.getHeader("Location")).isEqualTo("http://localhost:5174/login?error=state_mismatch");
     }
 
     private static JsonObject completion(String token) {

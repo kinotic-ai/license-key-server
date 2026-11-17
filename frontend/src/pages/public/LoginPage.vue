@@ -7,13 +7,13 @@ import InputText from 'primevue/inputtext'
 import Password from 'primevue/password'
 import { useToast } from 'primevue/usetoast'
 import { AuthPageShell } from '@kinotic-ai/frontend-common'
-import { signIn } from '@/api/rest'
+import { signIn, signInErrorMessage } from '@/api/rest'
 import ProviderButtons from '@/components/ProviderButtons.vue'
 import { SESSION_STATE } from '@/states/LicenseSessionState'
 
 /**
  * Customer sign-in, through a provider or with the email and password of a contact of the account. A provider
- * sign-in that fails returns here with the reason in {@code error}.
+ * sign-in that fails returns here with the failure's code in {@code error}.
  */
 const toast = useToast()
 const route = useRoute()
@@ -27,7 +27,7 @@ const emailInput = ref<any>()
 onMounted(() => {
   const error = route.query.error as string | undefined
   if (error) {
-    toast.add({ severity: 'error', summary: 'Sign-in failed', detail: error, life: 12000 })
+    toast.add({ severity: 'error', summary: 'Sign-in failed', detail: signInErrorMessage(error), life: 12000 })
   }
   nextTick(() => emailInput.value?.$el?.focus?.())
 })

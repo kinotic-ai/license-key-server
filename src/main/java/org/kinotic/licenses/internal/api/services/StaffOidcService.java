@@ -4,12 +4,10 @@ import io.vertx.core.Future;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 import org.kinotic.common.api.oidc.OidcClientService;
 import org.kinotic.common.api.oidc.OidcProviderType;
-import org.kinotic.core.api.exceptions.AuthenticationException;
 import org.kinotic.licenses.api.config.KinoticLicensesProperties;
 import org.kinotic.licenses.api.config.StaffOidcProperties;
 import org.kinotic.licenses.api.security.LicenseParticipant;
@@ -26,7 +24,6 @@ import java.util.Map;
  * tenant is discovered from its issuer on the first sign-in. A signed-in account is accepted only when its email is
  * on the allowed domain.
  */
-@Slf4j
 @Component
 @RequiredArgsConstructor
 public class StaffOidcService {
@@ -57,7 +54,7 @@ public class StaffOidcService {
      * Completes a sign-in from the provider's callback: checks the state, redeems the code for the account's verified
      * claims, checks the account's email, and returns the staff participant with the flow it completes.
      *
-     * @return the participant and flow, or a failure with {@link AuthenticationException}
+     * @return the participant and flow, or a failure with {@link ProviderSignInException}
      */
     public Future<StaffSignIn> complete(RoutingContext ctx) {
         return flow().complete(ctx)
@@ -71,8 +68,8 @@ public class StaffOidcService {
         String domain = email != null && email.contains("@") ? email.substring(email.indexOf('@') + 1) : null;
         Future<LicenseParticipant> ret;
         if (domain == null || !domain.equalsIgnoreCase(allowedDomain)) {
-            log.warn("A staff sign-in from outside {} was refused", allowedDomain);
-            ret = Future.failedFuture(new AuthenticationException("The account is not a staff account"));
+            ret = Future.failedFuture(new ProviderSignInException(ProviderSignInFailureType.NOT_STAFF,
+                                                                  "The account is outside " + allowedDomain));
         } else {
             // Entra sends no email_verified: the tenant's administrator issues its accounts' addresses, and the domain
             // check above confines staff to Minds Ignited's own tenant

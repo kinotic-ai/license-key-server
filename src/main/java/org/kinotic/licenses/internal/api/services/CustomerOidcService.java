@@ -9,7 +9,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.kinotic.common.api.oidc.OAuth2Util;
 import org.kinotic.common.api.oidc.OidcClientService;
 import org.kinotic.common.api.oidc.OidcProviderType;
-import org.kinotic.core.api.exceptions.AuthenticationException;
 import org.kinotic.licenses.api.config.CustomerOidcProperties;
 import org.kinotic.licenses.api.config.KinoticLicensesProperties;
 import org.kinotic.licenses.api.config.OidcClientProperties;
@@ -91,15 +90,15 @@ public class CustomerOidcService {
      * claims, and requires that the provider proves the email address belongs to the person.
      *
      * @param provider one of the {@link #providers()}
-     * @return the person signed in with the flow it completes, or a failure with {@link AuthenticationException}
+     * @return the person signed in with the flow it completes, or a failure with {@link ProviderSignInException}
      */
     public Future<ProviderSignIn> complete(RoutingContext ctx, OidcProviderType provider) {
         return flows.get(provider).complete(ctx)
                     .compose(signIn -> OAuth2Util.isEmailProven(signIn.claims(), provider)
                             ? Future.succeededFuture(signIn)
-                            : Future.failedFuture(new AuthenticationException(
-                                    "The provider does not confirm that the account's email address is verified; "
-                                    + "sign up with your email address instead")));
+                            : Future.failedFuture(new ProviderSignInException(
+                                    ProviderSignInFailureType.EMAIL_NOT_VERIFIED,
+                                    "The provider does not prove the account's email address")));
     }
 
     @PreDestroy

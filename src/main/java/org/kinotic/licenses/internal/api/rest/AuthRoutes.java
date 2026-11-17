@@ -18,6 +18,8 @@ import org.kinotic.licenses.internal.api.model.PendingProviderSignUp;
 import org.kinotic.licenses.internal.api.services.CustomerOidcService;
 import org.kinotic.licenses.internal.api.services.CustomerSignInService;
 import org.kinotic.licenses.internal.api.services.ProviderSignIn;
+import org.kinotic.licenses.internal.api.services.ProviderSignInException;
+import org.kinotic.licenses.internal.api.services.ProviderSignInFailureType;
 import org.kinotic.licenses.internal.api.services.RateLimitedException;
 import org.kinotic.licenses.internal.api.services.StaffOidcService;
 import org.springframework.stereotype.Component;
@@ -159,7 +161,7 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
      * The provider's callback. A person whose email address has an account is signed in to it and sent to the path the
      * sign-in started with; any other is sent to the sign-up form, which names the organization and creates the
      * account through {@code POST /api/auth/signup/provider/complete}. A sign-in that fails returns to the login page
-     * with the reason.
+     * with its {@link ProviderSignInFailureType#code() code} in {@code error}.
      */
     private void completeProviderSignIn(RoutingContext ctx) {
         OidcProviderType provider = offeredProvider(ctx);
@@ -171,17 +173,7 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
                                .compose(signIn -> signInService.signInWithProvenEmail(signIn.email())
                                                                .map(participant -> finishProviderSignIn(ctx, provider, signIn, participant)))
                                .onSuccess(path -> redirect(ctx, publicBaseUrl + path))
-                               .onFailure(t -> {
-                                   String reason;
-                                   if (t instanceof AuthenticationException) {
-                                       log.warn("A sign-in with {} failed: {}", provider.key(), t.getMessage());
-                                       reason = t.getMessage();
-                                   } else {
-                                       log.error("A sign-in with {} failed", provider.key(), t);
-                                       reason = "The sign-in failed; try again";
-                                   }
-                                   redirect(ctx, publicBaseUrl + LOGIN_ERROR_PATH + URLEncoder.encode(reason, StandardCharsets.UTF_8));
-                               });
+                               .onFailure(t -> failProviderSignIn(ctx, publicBaseUrl, t));
         }
     }
 
@@ -304,9 +296,19 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
                             String path = signIn.flow().returnPath() != null ? signIn.flow().returnPath() : "/";
                             redirect(ctx, staffBaseUrl + path);
                         })
-                        .onFailure(t -> {
-                            log.warn("A staff sign-in failed: {}", t.getMessage());
-                            redirect(ctx, staffBaseUrl + LOGIN_ERROR_PATH + URLEncoder.encode(t.getMessage(), StandardCharsets.UTF_8));
-                        });
+                        .onFailure(t -> failProviderSignIn(ctx, staffBaseUrl, t));
+    }
+
+    // returns the browser to the login page of the site at baseUrl, which shows the message it keeps for the code
+    private static void failProviderSignIn(RoutingContext ctx, String baseUrl, Throwable t) {
+        ProviderSignInFailureType type;
+        if (t instanceof ProviderSignInException failure) {
+            log.warn("A provider sign-in on {} failed: {}", baseUrl, t.getMessage());
+            type = failure.getType();
+        } else {
+            log.error("A provider sign-in on {} failed", baseUrl, t);
+            type = ProviderSignInFailureType.FAILED;
+        }
+        redirect(ctx, baseUrl + LOGIN_ERROR_PATH + type.code());
     }
 }

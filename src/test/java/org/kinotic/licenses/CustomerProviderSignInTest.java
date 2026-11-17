@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Customers sign up and in through GitHub, Microsoft or Google. The routes are exercised as far as the provider: the
- * start redirects to it, and a callback that matches no started sign-in returns to the login page. What follows a
+ * start redirects to it, and a callback that matches no started sign-in returns to the login page with a code. What follows a
  * sign-in the provider verified, an address signed in to its account or given one, is exercised on
  * {@link CustomerSignInService}; the exchange with a provider is kinotic-common's, tested there against a provider
  * of its own.
@@ -75,28 +75,31 @@ class CustomerProviderSignInTest extends ServerTest {
 
         assertThat(callback(CALLBACK + "?code=a-code&state=" + state, null).getHeader("Location"))
                 .as("a callback from a browser that started no sign-in")
-                .startsWith(PUBLIC_ORIGIN + "/login?error=");
+                .isEqualTo(PUBLIC_ORIGIN + "/login?error=state_mismatch");
 
         HttpResponse<Buffer> forged = callback(CALLBACK + "?code=a-code&state=not-the-state", cookie);
         assertThat(forged.statusCode()).isEqualTo(302);
-        assertThat(forged.getHeader("Location")).startsWith(PUBLIC_ORIGIN + "/login?error=");
+        assertThat(forged.getHeader("Location")).isEqualTo(PUBLIC_ORIGIN + "/login?error=state_mismatch");
         // the refused callback used the sign-in up, so the state it was started with opens nothing either
         cookie = sessionCookie(forged, cookie);
         assertThat(callback(CALLBACK + "?code=a-code&state=" + state, cookie).getHeader("Location"))
-                .startsWith(PUBLIC_ORIGIN + "/login?error=");
+                .isEqualTo(PUBLIC_ORIGIN + "/login?error=state_mismatch");
         assertThat(get("/api/auth/me", cookie).statusCode()).isEqualTo(401);
     }
 
     @Test
-    void aSignInTheProviderRefusedReturnsToTheLoginPageWithTheReason() throws Exception {
+    void aSignInTheProviderRefusedReturnsToTheLoginPageWithItsCode() throws Exception {
         HttpResponse<Buffer> started = start(START);
         String cookie = started.cookies().getFirst().split(";")[0];
         String state = parameter(started.getHeader("Location"), "state");
 
         HttpResponse<Buffer> refused = callback(CALLBACK + "?error=access_denied&state=" + state, cookie);
         assertThat(refused.statusCode()).isEqualTo(302);
-        assertThat(URLDecoder.decode(refused.getHeader("Location"), StandardCharsets.UTF_8))
-                .isEqualTo(PUBLIC_ORIGIN + "/login?error=The sign-in provider reported: access_denied");
+        assertThat(refused.getHeader("Location")).isEqualTo(PUBLIC_ORIGIN + "/login?error=access_denied");
+
+        assertThat(callback(CALLBACK + "?error=Your+account+is+locked", null).getHeader("Location"))
+                .as("text a link puts in the callback's error is not passed on to the login page")
+                .isEqualTo(PUBLIC_ORIGIN + "/login?error=failed");
     }
 
     @Test

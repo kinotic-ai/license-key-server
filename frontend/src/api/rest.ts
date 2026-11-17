@@ -66,6 +66,20 @@ export async function completeProviderSignUp(email: string, organization: string
     await postJson('/api/auth/signup/provider/complete', { email, organization, contactName }, 'The account could not be created')
 }
 
+/**
+ * The message for the code a provider sign-in that failed returns to the login page with, in `error`. Only these
+ * messages are ever shown, whatever the URL carries.
+ */
+export function signInErrorMessage(code: string): string {
+    switch (code) {
+        case 'access_denied':      return 'The sign-in was cancelled at the provider. Try again to continue.'
+        case 'state_mismatch':     return 'The sign-in did not complete. Start again.'
+        case 'email_not_verified': return 'The provider does not confirm that the account\'s email address is verified. Sign up with your email address instead.'
+        case 'not_staff':          return 'The account is not a staff account.'
+        default:                   return 'The sign-in failed. Try again.'
+    }
+}
+
 /** Asks for a link to set a new password; the answer is the same whether or not the address has an account. */
 export async function requestPasswordReset(email: string, referer?: string): Promise<void> {
     await postJson('/api/auth/password/forgot', { email, referer }, 'The link could not be sent')

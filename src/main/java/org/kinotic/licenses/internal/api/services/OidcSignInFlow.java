@@ -4,23 +4,26 @@ import io.vertx.core.Future;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.Session;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.kinotic.common.api.oidc.OidcAuthorization;
 import org.kinotic.common.api.oidc.OidcClient;
 import org.kinotic.common.api.oidc.OidcClientService;
-import org.kinotic.core.api.exceptions.AuthenticationException;
 import org.kinotic.core.api.security.SessionBinding;
 import org.kinotic.licenses.internal.api.model.OidcFlowState;
 import org.kinotic.licenses.internal.api.model.OidcRegistration;
+
+import java.util.regex.Pattern;
 
 /**
  * The sign-ins through one of the license server's client registrations at a provider, with the authorization code
  * flow and PKCE. A sign-in is kept in the browser session between {@link #start}, which sends the browser to the
  * provider, and {@link #complete}, which redeems the provider's callback for the person's verified claims.
  */
-@Slf4j
 @RequiredArgsConstructor
 public class OidcSignInFlow {
+
+    private static final String ACCESS_DENIED = "access_denied";
+    // the form of an OAuth error code (RFC 6749 §4.1.2.1)
+    private static final Pattern OAUTH_ERROR_CODE = Pattern.compile("[a-z0-9_]{1,64}");
 
     private final OidcClientService oidcClientService;
     private final OidcRegistration registration;
@@ -51,7 +54,7 @@ public class OidcSignInFlow {
      * Completes a sign-in from the provider's callback: checks the state and redeems the code for the person's
      * verified claims.
      *
-     * @return the claims with the flow they complete, or a failure with {@link AuthenticationException}
+     * @return the claims with the flow they complete, or a failure with {@link ProviderSignInException}
      */
     public Future<ProviderSignIn> complete(RoutingContext ctx) {
         String code = ctx.request().getParam("code");
@@ -62,16 +65,20 @@ public class OidcSignInFlow {
 
         Future<ProviderSignIn> ret;
         if (providerError != null) {
-            ret = Future.failedFuture(new AuthenticationException("The sign-in provider reported: " + providerError));
+            // anyone can address the callback, so only a value in the form of an OAuth error code reaches the log
+            String reported = OAUTH_ERROR_CODE.matcher(providerError).matches() ? providerError : "an unrecognized error";
+            ProviderSignInFailureType type = ACCESS_DENIED.equals(providerError) ? ProviderSignInFailureType.ACCESS_DENIED
+                                                                                 : ProviderSignInFailureType.FAILED;
+            ret = Future.failedFuture(new ProviderSignInException(type, providerKey() + " reported " + reported));
         } else if (flow == null || code == null || state == null || !flow.authorization().state().equals(state)) {
-            ret = Future.failedFuture(new AuthenticationException("The sign-in did not complete; start again"));
+            ret = Future.failedFuture(new ProviderSignInException(ProviderSignInFailureType.STATE_MISMATCH,
+                                                                  "The callback matches no sign-in the browser started"));
         } else {
             ret = client()
                     .compose(client -> client.verifiedClaims(code, registration.getCallbackUrl(), flow.authorization()))
-                    .recover(t -> {
-                        log.warn("A sign-in with {} could not be verified: {}", registration.getProvider().key(), t.getMessage());
-                        return Future.failedFuture(new AuthenticationException("The sign-in could not be verified; start again", t));
-                    })
+                    .recover(t -> Future.failedFuture(new ProviderSignInException(
+                            ProviderSignInFailureType.FAILED,
+                            "The sign-in with " + providerKey() + " could not be verified: " + t.getMessage(), t)))
                     .map(claims -> new ProviderSignIn(claims, flow));
         }
         return ret;
@@ -82,6 +89,10 @@ public class OidcSignInFlow {
         if (client != null && client.succeeded()) {
             client.result().close();
         }
+    }
+
+    private String providerKey() {
+        return registration.getProvider().key();
     }
 
     // created on the first sign-in; a discovery that fails is retried by the next

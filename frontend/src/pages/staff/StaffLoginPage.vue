@@ -4,15 +4,19 @@ import { useRoute } from 'vue-router'
 import Button from 'primevue/button'
 import { useToast } from 'primevue/usetoast'
 import { AuthPageShell, apiUrl } from '@kinotic-ai/frontend-common'
+import { signInErrorMessage } from '@/api/rest'
 
-/** Staff sign-in: a redirect through Minds Ignited's Microsoft Entra tenant, which returns to the page asked for. */
+/**
+ * Staff sign-in: a redirect through Minds Ignited's Microsoft Entra tenant, which returns to the page asked for. A
+ * sign-in that fails returns here with the failure's code in {@code error}.
+ */
 const route = useRoute()
 const toast = useToast()
 
 onMounted(() => {
   const error = route.query.error as string | undefined
   if (error) {
-    toast.add({ severity: 'error', summary: 'Sign-in failed', detail: error, life: 12000 })
+    toast.add({ severity: 'error', summary: 'Sign-in failed', detail: signInErrorMessage(error), life: 12000 })
   }
 })
 
