@@ -6,14 +6,15 @@ import InputNumber from 'primevue/inputnumber'
 import SelectButton from 'primevue/selectbutton'
 import Message from 'primevue/message'
 import { useToast } from 'primevue/usetoast'
-import { PageHeader, showErrorToast } from '@kinotic-ai/frontend-common'
+import { Building2, Check, Layers } from '@lucide/vue'
+import { DashboardSection, PageHeader, TINTS, showErrorToast } from '@kinotic-ai/frontend-common'
 import type { BillingPeriod, CompanyFigures, Plan, PlanPrice } from '@/api/model'
 import { customerAccountService } from '@/api/services'
 import CompanyFiguresFields from '@/components/CompanyFiguresFields.vue'
 import { SESSION_STATE } from '@/states/LicenseSessionState'
 import { SITE } from '@/states/site'
 import TermsAcceptance from '@/components/TermsAcceptance.vue'
-import { formatMoney, planName } from '@/util/format'
+import { billingPeriodName, formatMoney, planName } from '@/util/format'
 
 /**
  * Buying a paid plan for the signed-in customer's account, or starting a three-month trial of it when the account may
@@ -29,6 +30,13 @@ const toast = useToast()
 
 const PAID_PLANS: Plan[] = ['SMALL', 'MEDIUM', 'LARGE']
 const PERIODS: { label: string, value: BillingPeriod }[] = [{ label: 'Monthly', value: 'MONTHLY' }, { label: 'Annual (save 10%)', value: 'ANNUAL' }]
+// the annual revenue each paid plan is for, as the terms set it
+const PLAN_REVENUE: Record<Plan, string> = {
+  FREE: 'Under $1M in annual revenue',
+  SMALL: '$1M to under $20M in annual revenue',
+  MEDIUM: '$20M to $100M in annual revenue',
+  LARGE: 'Over $100M in annual revenue'
+}
 
 const prices = ref<PlanPrice[]>([])
 const loading = ref(true)
@@ -47,7 +55,8 @@ const plan = computed<Plan | null>(() => {
   return PAID_PLANS.includes(named) ? named : null
 })
 const period = computed<BillingPeriod>(() => String(route.query.billing ?? '').toUpperCase() === 'ANNUAL' ? 'ANNUAL' : 'MONTHLY')
-const price = computed(() => prices.value.find(p => p.plan === plan.value && p.billingPeriod === period.value) ?? null)
+const price = computed(() => plan.value ? priceOf(plan.value) : null)
+const periodUnit = computed(() => period.value === 'ANNUAL' ? 'a year' : 'a month')
 const seatsGiven = computed(() => seats.value !== null && Number.isInteger(seats.value) && seats.value >= 1)
 const figuresGiven = computed(() => annualRevenue.value !== null && (annualRevenue.value >= 1_000_000 || capitalRaised.value !== null))
 
@@ -67,6 +76,11 @@ onMounted(async () => {
     loading.value = false
   }
 })
+
+/** What one cluster costs on the plan for the billing period chosen; null when the plan is not on sale. */
+function priceOf(choice: Plan): PlanPrice | null {
+  return prices.value.find(p => p.plan === choice && p.billingPeriod === period.value) ?? null
+}
 
 function choose(next: { plan?: Plan, billing?: BillingPeriod }) {
   router.replace({ query: { plan: (next.plan ?? plan.value ?? 'SMALL').toLowerCase(), billing: (next.billing ?? period.value).toLowerCase() } })
@@ -123,66 +137,100 @@ async function startTrial() {
 </script>
 
 <template>
-  <div class="mx-auto max-w-2xl">
-    <PageHeader :title="plan ? `${trialAvailable ? 'Try or buy' : 'Buy'} the ${planName(plan)} plan` : 'Buy a plan'"
+  <div class="max-w-5xl">
+    <PageHeader :title="trialAvailable ? 'Try or buy a plan' : 'Buy a plan'"
                 description="Your plan is set by your company's annual revenue, and you pay it for each cluster. Stripe bills it; cancel any time, and the keys you hold work until they expire." />
     <Message v-if="trialAvailable && !loading" severity="info" class="mb-5">
       Try any paid plan free for three months on one cluster, with no payment details. Buy it before the trial ends to
       keep your license, on the price list you started on.
     </Message>
     <div v-if="loading" class="app-muted-text text-sm">Loading prices…</div>
-    <form v-else class="flex flex-col gap-5" @submit.prevent="submit">
-      <section class="app-card-surface flex flex-col gap-4 rounded-xl border p-5">
-        <div class="flex flex-wrap gap-2">
-          <Button v-for="choice in PAID_PLANS" :key="choice" type="button" :label="planName(choice)" size="small"
-                  :severity="choice === plan ? 'primary' : 'secondary'" :outlined="choice !== plan" @click="choose({ plan: choice })" />
-        </div>
-        <SelectButton :model-value="period" :options="PERIODS" option-label="label" option-value="value" :allow-empty="false"
-                      @update:model-value="choose({ billing: $event })" />
-        <p v-if="price" class="app-heading-text text-2xl font-semibold tabular-nums">
-          {{ formatMoney(price.amount, price.currency) }}
-          <span class="app-muted-text text-sm font-normal">a cluster {{ period === 'ANNUAL' ? 'a year' : 'a month' }}</span>
-        </p>
-        <p v-else-if="plan" class="app-muted-text text-sm">This plan is not on sale right now.</p>
-        <p v-else class="app-muted-text text-sm">Choose a plan.</p>
-        <div class="flex flex-wrap items-end gap-4">
-          <div class="flex flex-col gap-2">
-            <label for="seats" class="app-heading-text text-sm font-medium">Clusters</label>
-            <InputNumber input-id="seats" v-model="seats" :min="1" :max-fraction-digits="0" show-buttons class="w-36" />
+    <div v-else class="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      <form id="buy-form" class="flex min-w-0 flex-col gap-5" @submit.prevent="submit">
+        <DashboardSection :icon="Layers" :tint="TINTS.green" title="Plan" description="The plan for your company's annual revenue, and how many clusters it covers.">
+          <div class="flex flex-col gap-5 p-5">
+            <div class="grid gap-3 sm:grid-cols-3" role="radiogroup" aria-label="Plan">
+              <button v-for="choice in PAID_PLANS" :key="choice" type="button" role="radio" :aria-checked="choice === plan"
+                      :class="['flex flex-col rounded-xl border p-4 text-left transition-colors',
+                               choice === plan ? 'border-surface-950 ring-1 ring-surface-950 dark:border-surface-0 dark:ring-surface-0' : 'app-card-surface hover:border-surface-400 dark:hover:border-surface-500']"
+                      @click="choose({ plan: choice })">
+                <span class="flex items-center justify-between gap-2">
+                  <span class="app-heading-text font-medium">{{ planName(choice) }}</span>
+                  <Check v-if="choice === plan" :size="16" :stroke-width="2" class="app-heading-text" aria-hidden="true" />
+                </span>
+                <span class="app-muted-text mt-1 flex-1 text-xs">{{ PLAN_REVENUE[choice] }}</span>
+                <span v-if="priceOf(choice)" class="app-heading-text mt-3 text-lg font-semibold tabular-nums">
+                  {{ formatMoney(priceOf(choice)!.amount, priceOf(choice)!.currency) }}
+                  <span class="app-muted-text text-xs font-normal">a cluster {{ periodUnit }}</span>
+                </span>
+                <span v-else class="app-muted-text mt-3 text-xs">Not on sale right now</span>
+              </button>
+            </div>
+            <div class="flex flex-wrap items-end gap-x-8 gap-y-4">
+              <div class="flex flex-col gap-2">
+                <span class="app-heading-text text-sm font-medium">Billing</span>
+                <SelectButton :model-value="period" :options="PERIODS" option-label="label" option-value="value" :allow-empty="false"
+                              @update:model-value="choose({ billing: $event })" />
+              </div>
+              <div class="flex flex-col gap-2">
+                <label for="seats" class="app-heading-text text-sm font-medium">Clusters</label>
+                <InputNumber input-id="seats" v-model="seats" :min="1" :max-fraction-digits="0" show-buttons class="w-36" />
+              </div>
+            </div>
+            <p class="app-muted-text text-sm">
+              Each Kinotic cluster gets a key of its own. Add or remove clusters later from your account.
+            </p>
           </div>
-          <p v-if="price && seatsGiven" class="app-muted-text pb-2 text-sm tabular-nums">
-            {{ formatMoney(price.amount * seats!, price.currency) }} {{ period === 'ANNUAL' ? 'a year' : 'a month' }} in all
-          </p>
+        </DashboardSection>
+
+        <DashboardSection :icon="Building2" :tint="TINTS.blue" title="Your company" description="These figures set your plan, and you confirm them again once a year.">
+          <div class="flex flex-col gap-4 p-5">
+            <CompanyFiguresFields v-model:annual-revenue="annualRevenue" v-model:capital-raised="capitalRaised" />
+            <Message v-if="matching === 'FREE'" severity="info">
+              Your company qualifies for a free license.
+              <RouterLink to="/free" class="font-medium underline">Request a free license</RouterLink> instead.
+            </Message>
+            <Message v-else-if="matching" severity="warn">
+              Your figures fit the {{ planName(matching) }} plan.
+              <a href="#" class="font-medium underline" @click.prevent="choose({ plan: matching! })">Switch to {{ planName(matching) }}</a>
+            </Message>
+            <p class="app-muted-text text-sm">
+              Your plan moves with your figures at the price list you start on.
+              The contact accepting the terms is {{ SESSION_STATE.participant?.name }} &lt;{{ SESSION_STATE.participant?.email }}&gt;.
+            </p>
+          </div>
+        </DashboardSection>
+
+        <TermsAcceptance v-model="accepted" />
+      </form>
+
+      <aside class="app-card-surface flex flex-col gap-4 rounded-xl border p-5 text-sm lg:sticky lg:top-0">
+        <h2 class="app-heading-text font-medium">Summary</h2>
+        <dl class="flex flex-col gap-2">
+          <div class="flex justify-between gap-3"><dt class="app-muted-text">Plan</dt><dd class="app-heading-text">{{ plan ? planName(plan) : 'Choose a plan' }}</dd></div>
+          <div class="flex justify-between gap-3"><dt class="app-muted-text">Billing</dt><dd class="app-heading-text">{{ billingPeriodName(period) }}</dd></div>
+          <div class="flex justify-between gap-3"><dt class="app-muted-text">Clusters</dt><dd class="app-heading-text tabular-nums">{{ seatsGiven ? seats : '—' }}</dd></div>
+          <div v-if="price" class="flex justify-between gap-3">
+            <dt class="app-muted-text">Each cluster</dt>
+            <dd class="app-heading-text tabular-nums">{{ formatMoney(price.amount, price.currency) }} {{ periodUnit }}</dd>
+          </div>
+        </dl>
+        <div class="app-surface-divider flex items-baseline justify-between gap-3 border-t pt-4">
+          <span class="app-heading-text font-medium">Total</span>
+          <span v-if="price && seatsGiven" class="app-heading-text text-2xl font-semibold tabular-nums">
+            {{ formatMoney(price.amount * seats!, price.currency) }}
+            <span class="app-muted-text text-xs font-normal">{{ periodUnit }}</span>
+          </span>
+          <span v-else class="app-muted-text">{{ plan && !price ? 'This plan is not on sale right now' : '—' }}</span>
         </div>
-        <p class="app-muted-text text-sm">
-          Each Kinotic cluster gets a key of its own. Add or remove clusters later from your account.
-        </p>
-      </section>
-
-      <section class="app-card-surface flex flex-col gap-4 rounded-xl border p-5">
-        <h2 class="app-heading-text font-medium">Your company</h2>
-        <CompanyFiguresFields v-model:annual-revenue="annualRevenue" v-model:capital-raised="capitalRaised" />
-        <Message v-if="matching === 'FREE'" severity="info">
-          Your company qualifies for a free license.
-          <RouterLink to="/free" class="font-medium underline">Request a free license</RouterLink> instead.
-        </Message>
-        <Message v-else-if="matching" severity="warn">
-          Your figures fit the {{ planName(matching) }} plan.
-          <a href="#" class="font-medium underline" @click.prevent="choose({ plan: matching! })">Switch to {{ planName(matching) }}</a>
-        </Message>
-        <p class="app-muted-text text-sm">
-          You confirm these figures again once a year, and your plan moves with them at the price list you start on.
-          The contact accepting the terms is {{ SESSION_STATE.participant?.name }} &lt;{{ SESSION_STATE.participant?.email }}&gt;.
-        </p>
-      </section>
-
-      <TermsAcceptance v-model="accepted" />
-      <div class="flex flex-wrap justify-end gap-3">
-        <Button v-if="trialAvailable" type="button" label="Start a 3-month trial" severity="secondary" outlined
-                :disabled="!accepted || !plan || !figuresGiven || submitting" :loading="startingTrial" @click="startTrial" />
-        <Button type="submit" label="Continue to payment" icon="pi pi-arrow-right" icon-pos="right"
+        <Button type="submit" form="buy-form" label="Continue to payment" icon="pi pi-arrow-right" icon-pos="right" fluid
                 :disabled="!accepted || !price || !seatsGiven || !figuresGiven || startingTrial" :loading="submitting" />
-      </div>
-    </form>
+        <Button v-if="trialAvailable" type="button" label="Start a 3-month trial" severity="secondary" outlined fluid
+                :disabled="!accepted || !plan || !figuresGiven || submitting" :loading="startingTrial" @click="startTrial" />
+        <p class="app-subtle-text text-xs">
+          Payment details are entered on Stripe's page.<template v-if="trialAvailable"> A trial covers one cluster and asks for no payment details.</template>
+        </p>
+      </aside>
+    </div>
   </div>
 </template>

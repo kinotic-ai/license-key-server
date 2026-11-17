@@ -13,7 +13,6 @@ const intendedUse = defineModel<string>('intendedUse', { required: true })
 
 <template>
   <CompanyFiguresFields v-model:annual-revenue="annualRevenue" v-model:capital-raised="capitalRaised" always-ask-capital />
-  <p class="app-subtle-text -mt-2 text-xs">Free is for companies under $1M in annual revenue that have raised under $5M.</p>
   <div>
     <label for="intended-use" class="mb-2 block text-sm font-medium">What will you build with Kinotic?</label>
     <Textarea id="intended-use" v-model="intendedUse" class="w-full" rows="4" auto-resize />

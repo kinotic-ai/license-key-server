@@ -56,7 +56,8 @@ function keysOf(cluster: LicensedCluster): IssuedKey[] {
       </details>
     </div>
     <p v-if="!holding.length" class="app-muted-text px-5 py-6 text-center text-sm">
-      No cluster holds a seat yet. Add one with the id its system console's License page shows.
+      No cluster holds a seat yet. Select License this cluster on its system console's License page, or add it here with the
+      id that page shows.
     </p>
     <ul v-if="released.length" class="app-muted-text app-surface-divider space-y-1 border-t px-5 py-3 text-xs">
       <li v-for="cluster in released" :key="cluster.id">

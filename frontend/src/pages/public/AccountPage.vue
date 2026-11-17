@@ -5,13 +5,15 @@ import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import { useToast } from 'primevue/usetoast'
-import { BadgeCheck, CalendarCheck, CalendarClock, CalendarX, Gift, Rocket, Server, ShoppingCart } from '@lucide/vue'
+import { BadgeCheck, CalendarCheck, CalendarClock, CalendarX, Gift, Handshake, Rocket, Server, ShoppingCart } from '@lucide/vue'
 import { DashboardSection, FormDrawer, PageHeader, StatCard, TINTS, showErrorToast } from '@kinotic-ai/frontend-common'
 import type { CustomerAccount, LicenseWithKeys, Plan } from '@/api/model'
 import { customerAccountService } from '@/api/services'
 import ClusterList from '@/components/ClusterList.vue'
 import CompanyFiguresFields from '@/components/CompanyFiguresFields.vue'
 import LicenseStatusTag from '@/components/LicenseStatusTag.vue'
+import NoticeCard from '@/components/NoticeCard.vue'
+import NumberedSteps from '@/components/NumberedSteps.vue'
 import { billingPeriodName, formatDate, formatMoney, planName, statusLabel } from '@/util/format'
 
 /**
@@ -34,9 +36,9 @@ interface Tile {
 const CLUSTER_ID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 
 const LICENSING_STEPS = [
-  { title: 'Copy the cluster id', detail: "Sign in to the cluster's Kinotic system console as a system user and open its License page." },
-  { title: 'Add the cluster here', detail: 'Its key works on that cluster alone.' },
-  { title: 'Install the key', detail: 'Paste it into the License page. Kinotic shows your organization as the licensee and turns on every Enterprise feature.' }
+  { title: "Open the cluster's License page", detail: 'Sign in to its Kinotic system console as a system user.' },
+  { title: 'Select License this cluster', detail: 'It brings you here with the cluster filled in.' },
+  { title: 'Add the cluster', detail: 'Its key goes back to the console, which installs it. The cluster renews its key by itself from then on.' }
 ]
 
 const toast = useToast()
@@ -319,18 +321,18 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
         </section>
       </template>
 
-      <section v-if="account.designPartner" class="app-card-surface rounded-xl border p-5 text-sm">
-        <h2 class="app-heading-text font-medium">Design partner</h2>
-        <p v-if="account.designPartner.discountEndsAt" class="app-muted-text mt-2">
+      <NoticeCard v-if="account.designPartner" :icon="Handshake" :tint="TINTS.green" title="Design partner">
+        <template v-if="account.designPartner.discountEndsAt">
           Your subscription is half off until {{ formatDate(account.designPartner.discountEndsAt) }}. After that you pay your
           locked price, on the same terms, for as long as your license stays active.
-        </p>
-        <p v-else class="app-muted-text mt-2">
-          You are approved as a design partner.
-          <RouterLink :to="`/design-partner/checkout?application=${account.designPartner.applicationId}`" class="font-medium underline">
-            Start your subscription at half off</RouterLink>.
-        </p>
-      </section>
+        </template>
+        <template v-else>You are approved as a design partner, with your subscription at half off for three years.</template>
+        <template v-if="!account.designPartner.discountEndsAt" #actions>
+          <RouterLink :to="`/design-partner/checkout?application=${account.designPartner.applicationId}`">
+            <Button label="Start your subscription at half off" />
+          </RouterLink>
+        </template>
+      </NoticeCard>
       <Message v-else-if="pendingApplication" severity="info">Your design partner application is being reviewed.</Message>
 
       <section v-for="entry in account.licenses" :key="entry.license.id" class="flex flex-col gap-4">
@@ -383,20 +385,12 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
 
       <section v-if="account.licenses.length" class="app-card-surface rounded-xl border p-5 text-sm">
         <h3 class="app-heading-text font-medium">Licensing a cluster</h3>
-        <ol class="mt-4 grid gap-5 md:grid-cols-3">
-          <li v-for="(step, index) in LICENSING_STEPS" :key="step.title" class="flex gap-3">
-            <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-100 text-xs font-semibold text-surface-700 dark:bg-surface-800 dark:text-surface-200">{{ index + 1 }}</span>
-            <div>
-              <div class="app-heading-text font-medium">{{ step.title }}</div>
-              <p class="app-muted-text mt-1">{{ step.detail }}</p>
-            </div>
-          </li>
-        </ol>
+        <NumberedSteps :steps="LICENSING_STEPS" class="mt-4 grid gap-5 md:grid-cols-3" />
         <p class="app-subtle-text app-surface-divider mt-5 border-t pt-4 text-xs">
-          Each key expires seven days after the date your license is paid through. A cluster that can reach
-          licenses.kinotic.ai installs each new key by itself; for one that cannot, copy its new key from here after each
-          payment. A trial's key expires when the trial ends. Kinotic keeps its Enterprise features on for 14 days after a
-          key expires.
+          For a cluster that cannot reach licenses.kinotic.ai, copy the cluster id from its License page, add the cluster
+          here, then copy or download its key and install it on that page, and again after each payment. Each key expires
+          seven days after the date your license is paid through, and a trial's key when the trial ends. Kinotic keeps
+          its Enterprise features on for 14 days after a key expires.
         </p>
       </section>
 
