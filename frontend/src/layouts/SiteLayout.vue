@@ -1,18 +1,24 @@
 <script setup lang="ts">
 import { computed, markRaw, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { LogOut, Shield } from '@lucide/vue'
+import { KeyRound, LogOut, Shield } from '@lucide/vue'
 import type { MenuItem } from 'primevue/menuitem'
 import { SideBar, SidebarScope, SidebarUserMenu, ThemeToggleButton, avatarInitials, isDark } from '@kinotic-ai/frontend-common'
-import headerLogo from '@/assets/staff-header-logo.svg'
+import publicHeaderLogo from '@/assets/public-header-logo.svg'
+import staffHeaderLogo from '@/assets/staff-header-logo.svg'
 import { SESSION_STATE } from '@/states/LicenseSessionState'
+import { SITE } from '@/states/site'
 
-/** The staff dashboard's shell: a header, the sidebar built from the route meta, and the signed-in staff member. */
+/**
+ * The shell of a signed-in page on either site: a header, the sidebar built from the route meta, and the signed-in
+ * customer contact or staff member.
+ */
 const router = useRouter()
 const sidebarRef = ref<InstanceType<typeof SideBar> | null>(null)
 const navOpen = ref(false)
 
-const name = computed(() => SESSION_STATE.participant?.name ?? 'Staff')
+const staff = SITE.site === 'STAFF'
+const name = computed(() => SESSION_STATE.participant?.name ?? '')
 const email = computed(() => SESSION_STATE.participant?.email ?? '')
 const initials = computed(() => avatarInitials(name.value, email.value))
 const collapsed = computed(() => sidebarRef.value?.collapsed ?? false)
@@ -40,17 +46,19 @@ async function logout() {
                   aria-label="Open navigation" @click="navOpen = !navOpen">
             <span class="pi pi-bars" />
           </button>
-          <RouterLink to="/customers" class="flex h-9 w-9 items-center justify-center rounded-[10px] bg-surface-950 dark:ring-1 dark:ring-surface-700">
-            <img :src="headerLogo" class="h-[18px] w-5" alt="Kinotic" />
+          <RouterLink to="/" class="flex h-9 w-9 items-center justify-center rounded-[10px] bg-surface-950 dark:ring-1 dark:ring-surface-700">
+            <img :src="staff ? staffHeaderLogo : publicHeaderLogo" class="h-[18px] w-5" alt="Kinotic" />
           </RouterLink>
-          <span class="app-heading-text text-sm font-medium">License key server <span class="app-muted-text">Staff</span></span>
+          <span v-if="staff" class="app-heading-text text-sm font-medium">License key server <span class="app-muted-text">Staff</span></span>
+          <span v-else class="app-heading-text text-sm font-medium">Kinotic <span class="app-muted-text">Licenses</span></span>
         </div>
         <ThemeToggleButton />
       </div>
     </div>
     <SideBar ref="sidebarRef" :mobile-open="navOpen" @close="navOpen = false">
       <template #scope="{ collapsed: isCollapsed, toggle }">
-        <SidebarScope :collapsed="isCollapsed" name="Minds Ignited" kind="Staff" :icon="Shield" @toggle="toggle" />
+        <SidebarScope v-if="staff" :collapsed="isCollapsed" name="Minds Ignited" kind="Staff" :icon="Shield" @toggle="toggle" />
+        <SidebarScope v-else :collapsed="isCollapsed" name="Kinotic Enterprise" kind="Licenses" :icon="KeyRound" @toggle="toggle" />
       </template>
       <template #footer="{ collapsed: isCollapsed }">
         <SidebarUserMenu :collapsed="isCollapsed" :name="name" :detail="email" :initials="initials" :items="accountMenuItems" />
@@ -59,6 +67,10 @@ async function logout() {
     <div :class="['pt-[64px] transition-[padding]', collapsed ? 'md:pl-[73px]' : 'md:pl-[256px]']">
       <div class="h-[calc(100vh-64px)] overflow-y-auto px-4 py-4 md:px-8 md:py-6">
         <router-view class="min-w-0 flex-1" />
+        <p v-if="!staff" class="app-subtle-text app-surface-divider mt-10 border-t pt-5 text-xs">
+          Kinotic Enterprise is licensed by Minds Ignited under the Kinotic Enterprise License. Payments are processed by
+          Stripe; this site never sees your card details.
+        </p>
       </div>
     </div>
   </div>

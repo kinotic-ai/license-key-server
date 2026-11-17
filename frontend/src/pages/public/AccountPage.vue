@@ -1,17 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, type Component } from 'vue'
 import { useRoute } from 'vue-router'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import { useToast } from 'primevue/usetoast'
-import { FormDrawer, PageHeader, showErrorToast } from '@kinotic-ai/frontend-common'
+import { BadgeCheck, CalendarCheck, CalendarClock, CalendarX, Gift, Handshake, Rocket, Server, ShoppingCart } from '@lucide/vue'
+import { DashboardSection, FormDrawer, PageHeader, StatCard, TINTS, showErrorToast } from '@kinotic-ai/frontend-common'
 import type { CustomerAccount, LicenseWithKeys, Plan } from '@/api/model'
 import { customerAccountService } from '@/api/services'
 import ClusterList from '@/components/ClusterList.vue'
 import CompanyFiguresFields from '@/components/CompanyFiguresFields.vue'
 import LicenseStatusTag from '@/components/LicenseStatusTag.vue'
-import { billingPeriodName, formatDate, formatMoney, planName } from '@/util/format'
+import NoticeCard from '@/components/NoticeCard.vue'
+import NumberedSteps from '@/components/NumberedSteps.vue'
+import { billingPeriodName, formatDate, formatMoney, planName, statusLabel } from '@/util/format'
 
 /**
  * The customer account: each license's status, plan, seats, billing period, paid-through date and next anniversary,
@@ -22,7 +25,21 @@ import { billingPeriodName, formatDate, formatMoney, planName } from '@/util/for
  * download and how to install it on the system console's License page, and the Stripe Customer Portal for payment
  * details, receipts and seats.
  */
+interface Tile {
+  icon: Component
+  tint: string
+  label: string
+  value: string
+  detail: string
+}
+
 const CLUSTER_ID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+
+const LICENSING_STEPS = [
+  { title: "Open the cluster's License page", detail: 'Sign in to its Kinotic system console as a system user.' },
+  { title: 'Select License this cluster', detail: 'It brings you here with the cluster filled in.' },
+  { title: 'Add the cluster', detail: 'Its key goes back to the console, which installs it. The cluster renews its key by itself from then on.' }
+]
 
 const toast = useToast()
 const route = useRoute()
@@ -161,6 +178,37 @@ function seated(entry: LicenseWithKeys): number {
   return entry.clusters.filter(cluster => cluster.releasedAt === null).length
 }
 
+/** The license's figures at a glance: its plan, its seats, and the dates it is paid through, renews or ends on. */
+function tiles(entry: LicenseWithKeys): Tile[] {
+  const license = entry.license
+  const open = license.seats - seated(entry)
+  const ret: Tile[] = [
+    {
+      icon: BadgeCheck, tint: TINTS.green, label: 'Plan', value: planName(license.plan),
+      detail: license.billingPeriod ? `${billingPeriodName(license.billingPeriod)} billing` : statusLabel(license.status)
+    },
+    {
+      icon: Server, tint: TINTS.blue, label: 'Clusters', value: `${seated(entry)} of ${license.seats}`,
+      detail: open > 0 ? `${open} ${open === 1 ? 'seat' : 'seats'} open` : 'Every seat is taken'
+    }
+  ]
+  if (entry.paidThrough) {
+    ret.push({ icon: CalendarCheck, tint: TINTS.purple, label: 'Paid through', value: formatDate(entry.paidThrough), detail: 'Each key expires seven days later' })
+  }
+  if (license.status === 'TRIAL' || license.status === 'EXPIRED') {
+    ret.push({
+      icon: CalendarClock, tint: TINTS.orange, label: license.status === 'TRIAL' ? 'Trial ends' : 'Trial ended', value: formatDate(license.termEnd),
+      detail: 'Buy the plan to keep the license'
+    })
+  } else {
+    ret.push({ icon: CalendarClock, tint: TINTS.sky, label: 'Next anniversary', value: formatDate(license.termEnd), detail: 'Your figures are confirmed each year' })
+  }
+  if (license.cancelsAt) {
+    ret.push({ icon: CalendarX, tint: TINTS.orange, label: 'Subscription ends', value: formatDate(license.cancelsAt), detail: 'Its keys work until they expire' })
+  }
+  return ret
+}
+
 /** Whether a cluster can be added to the license now: it is active or a trial and has an open seat. */
 function canAddCluster(entry: LicenseWithKeys): boolean {
   return (entry.license.status === 'ACTIVE' || entry.license.status === 'TRIAL') && seated(entry) < entry.license.seats
@@ -215,18 +263,18 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
 
 <template>
   <div>
-    <PageHeader :title="account?.customer.legalName ?? 'Your account'" description="Your Kinotic Enterprise licenses, their clusters and every key issued for them.">
+    <PageHeader :title="account?.customer.legalName ?? 'Your account'" description="Your Kinotic Enterprise licenses and the clusters they cover.">
       <template #actions>
         <Button v-if="account?.customer.stripeCustomerId" label="Billing, receipts and seats" icon="pi pi-credit-card" severity="secondary" outlined
                 :loading="openingPortal" @click="openPortal" />
-        <RouterLink v-if="account && !subscribed" to="/buy?plan=small&billing=monthly">
+        <RouterLink v-if="account && !subscribed && account.licenses.length" to="/buy">
           <Button :label="account.trialAvailable ? 'Try or buy a plan' : 'Buy a plan'" icon="pi pi-shopping-cart" />
         </RouterLink>
       </template>
     </PageHeader>
 
     <div v-if="loading" class="app-muted-text text-sm">Loading…</div>
-    <div v-else-if="account" class="flex flex-col gap-8">
+    <div v-else-if="account" class="flex flex-col gap-6">
       <template v-if="linkedClusterId && !addingTo">
         <Message v-if="linkedHolder" severity="info">
           Cluster <span class="font-mono">{{ linkedClusterId }}</span> holds a seat of your {{ planName(linkedHolder.license.plan) }} plan
@@ -242,117 +290,107 @@ function planToBuy(entry: LicenseWithKeys): Plan | null {
           Select Add a cluster on the license that should cover cluster <span class="font-mono">{{ linkedClusterId }}</span>.
         </Message>
       </template>
-      <section v-if="account.licenses.length === 0" class="app-card-surface rounded-xl border p-5 text-sm">
-        <p class="app-heading-text">No license yet.</p>
-        <p class="app-muted-text mt-2">
-          <span v-if="pendingRequest">Your free license request is being reviewed.</span>
-          <span v-else>
-            <RouterLink to="/buy?plan=small&billing=monthly" class="underline">{{ account.trialAvailable ? 'Try a paid plan free for three months or buy one' : 'Buy a plan' }}</RouterLink>, or
-            <RouterLink to="/free" class="underline">request a free license</RouterLink> if your company qualifies.
-          </span>
-        </p>
-      </section>
 
-      <section v-if="account.designPartner" class="app-card-surface rounded-xl border p-5 text-sm">
-        <h2 class="app-heading-text font-medium">Design partner</h2>
-        <p v-if="account.designPartner.discountEndsAt" class="app-muted-text mt-2">
+      <template v-if="account.licenses.length === 0">
+        <Message v-if="pendingRequest" severity="info">
+          Your free license request is being reviewed. We email you the result, and your license appears here once it is approved.
+        </Message>
+        <section v-else>
+          <h2 class="app-heading-text font-medium">Get your first license</h2>
+          <p class="app-muted-text mt-1 text-sm">A license turns on every Kinotic Enterprise feature on the clusters you add to it.</p>
+          <div class="mt-4 grid gap-4 lg:grid-cols-3">
+            <div v-if="account.trialAvailable" class="app-card-surface flex flex-col gap-3 rounded-xl border p-5">
+              <span :class="['flex h-9 w-9 items-center justify-center rounded-lg', TINTS.green]"><Rocket :size="18" :stroke-width="1.75" aria-hidden="true" /></span>
+              <h3 class="app-heading-text font-medium">Try a paid plan</h3>
+              <p class="app-muted-text flex-1 text-sm">Free for three months on one cluster, with no payment details.</p>
+              <RouterLink to="/buy"><Button label="Start a trial" /></RouterLink>
+            </div>
+            <div class="app-card-surface flex flex-col gap-3 rounded-xl border p-5">
+              <span :class="['flex h-9 w-9 items-center justify-center rounded-lg', TINTS.blue]"><ShoppingCart :size="18" :stroke-width="1.75" aria-hidden="true" /></span>
+              <h3 class="app-heading-text font-medium">Buy a plan</h3>
+              <p class="app-muted-text flex-1 text-sm">Priced by your company's annual revenue, for each cluster. Pay monthly or yearly and cancel any time.</p>
+              <RouterLink to="/buy"><Button label="See the plans" severity="secondary" outlined /></RouterLink>
+            </div>
+            <div class="app-card-surface flex flex-col gap-3 rounded-xl border p-5">
+              <span :class="['flex h-9 w-9 items-center justify-center rounded-lg', TINTS.purple]"><Gift :size="18" :stroke-width="1.75" aria-hidden="true" /></span>
+              <h3 class="app-heading-text font-medium">Request a free license</h3>
+              <p class="app-muted-text flex-1 text-sm">For companies under $1M in annual revenue that have raised under $5M.</p>
+              <RouterLink to="/free"><Button label="Request a free license" severity="secondary" outlined /></RouterLink>
+            </div>
+          </div>
+        </section>
+      </template>
+
+      <NoticeCard v-if="account.designPartner" :icon="Handshake" :tint="TINTS.green" title="Design partner">
+        <template v-if="account.designPartner.discountEndsAt">
           Your subscription is half off until {{ formatDate(account.designPartner.discountEndsAt) }}. After that you pay your
           locked price, on the same terms, for as long as your license stays active.
-        </p>
-        <p v-else class="app-muted-text mt-2">
-          You are approved as a design partner.
-          <RouterLink :to="`/design-partner/checkout?application=${account.designPartner.applicationId}`" class="font-medium underline">
-            Start your subscription at half off</RouterLink>.
-        </p>
-      </section>
-      <section v-else-if="pendingApplication" class="app-card-surface rounded-xl border p-5 text-sm">
-        <p class="app-heading-text">Your design partner application is being reviewed.</p>
-      </section>
+        </template>
+        <template v-else>You are approved as a design partner, with your subscription at half off for three years.</template>
+        <template v-if="!account.designPartner.discountEndsAt" #actions>
+          <RouterLink :to="`/design-partner/checkout?application=${account.designPartner.applicationId}`">
+            <Button label="Start your subscription at half off" />
+          </RouterLink>
+        </template>
+      </NoticeCard>
+      <Message v-else-if="pendingApplication" severity="info">Your design partner application is being reviewed.</Message>
 
       <section v-for="entry in account.licenses" :key="entry.license.id" class="flex flex-col gap-4">
-        <div class="app-card-surface rounded-xl border p-5">
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <h2 class="app-heading-text text-lg font-medium">{{ planName(entry.license.plan) }} plan</h2>
-            <LicenseStatusTag :status="entry.license.status" />
-          </div>
-          <dl class="mt-4 grid gap-4 text-sm sm:grid-cols-3">
-            <div>
-              <dt class="app-muted-text">Clusters</dt>
-              <dd class="app-heading-text mt-1">{{ seated(entry) }} of {{ entry.license.seats }} {{ entry.license.seats === 1 ? 'seat' : 'seats' }}</dd>
-            </div>
-            <div v-if="entry.license.billingPeriod">
-              <dt class="app-muted-text">Billing</dt>
-              <dd class="app-heading-text mt-1">{{ billingPeriodName(entry.license.billingPeriod) }}</dd>
-            </div>
-            <div v-if="entry.paidThrough">
-              <dt class="app-muted-text">Paid through</dt>
-              <dd class="app-heading-text mt-1">{{ formatDate(entry.paidThrough) }}</dd>
-            </div>
-            <div v-if="entry.license.status === 'TRIAL' || entry.license.status === 'EXPIRED'">
-              <dt class="app-muted-text">Trial {{ entry.license.status === 'TRIAL' ? 'ends' : 'ended' }}</dt>
-              <dd class="app-heading-text mt-1">{{ formatDate(entry.license.termEnd) }}</dd>
-            </div>
-            <div v-else>
-              <dt class="app-muted-text">Next anniversary</dt>
-              <dd class="app-heading-text mt-1">{{ formatDate(entry.license.termEnd) }}</dd>
-            </div>
-            <div v-if="entry.license.cancelsAt">
-              <dt class="app-muted-text">Subscription</dt>
-              <dd class="app-heading-text mt-1">Ends {{ formatDate(entry.license.cancelsAt) }}</dd>
-            </div>
-            <div v-if="entry.license.status === 'PAST_DUE'">
-              <dt class="app-muted-text">Payment</dt>
-              <dd v-if="entry.license.lastPaymentAt" class="mt-1 text-orange-600 dark:text-orange-400">
-                A payment failed; update your payment details to keep receiving keys. Unpaid for 30 days, the license lapses.
-              </dd>
-              <dd v-else class="app-heading-text mt-1">Waiting for your payment to clear; we email you the moment it does, and you can add your clusters then.</dd>
-            </div>
-          </dl>
-          <Message v-if="entry.license.status === 'TRIAL'" severity="info" class="mt-4">
-            Your trial of the {{ planName(entry.license.plan) }} plan ends on {{ formatDate(entry.license.termEnd) }}.
-            <RouterLink :to="`/buy?plan=${entry.license.plan.toLowerCase()}&billing=monthly`" class="font-medium underline">Buy it</RouterLink>
-            before then to keep your license and its price list.
-          </Message>
-          <Message v-if="entry.confirmationDueFor" severity="info" class="mt-4">
-            Please confirm your company's figures for your anniversary on {{ formatDate(entry.confirmationDueFor) }}.
-            <a href="#" class="font-medium underline" @click.prevent="startConfirming(entry)">Confirm your figures</a>
-          </Message>
-          <Message v-if="planToBuy(entry)" severity="warn" class="mt-4">
-            Your figures now set the {{ planName(planToBuy(entry)) }} plan.
-            <RouterLink :to="`/buy?plan=${planToBuy(entry)?.toLowerCase()}&billing=monthly`" class="font-medium underline">Buy it</RouterLink>
-            by {{ formatDate(entry.license.termEnd) }} to keep your license and its price list.
-          </Message>
-          <ul v-if="entry.confirmations.length" class="app-muted-text mt-4 space-y-1 text-xs">
-            <li v-for="confirmation in entry.confirmations" :key="confirmation.id">
-              Confirmed for {{ formatDate(confirmation.anniversary) }}: {{ formatMoney(confirmation.figures.annualRevenue, 'usd') }} revenue<span
-                v-if="confirmation.figures.capitalRaised !== null">, {{ formatMoney(confirmation.figures.capitalRaised, 'usd') }} raised</span>
-              · {{ planName(confirmation.plan) }}
-            </li>
-          </ul>
+        <div class="flex flex-wrap items-center gap-3">
+          <h2 class="app-heading-text text-lg font-medium">{{ planName(entry.license.plan) }} plan</h2>
+          <LicenseStatusTag :status="entry.license.status" />
         </div>
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <h3 class="app-heading-text text-sm font-medium">Clusters</h3>
-          <div class="flex flex-wrap items-center gap-3">
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard v-for="tile in tiles(entry)" :key="tile.label" :icon="tile.icon" :tint="tile.tint" :label="tile.label"
+                    :value="tile.value" :detail="tile.detail" />
+        </div>
+        <Message v-if="entry.license.status === 'PAST_DUE' && entry.license.lastPaymentAt" severity="warn">
+          A payment failed; update your payment details under Billing, receipts and seats to keep receiving keys. Unpaid for
+          30 days, the license lapses.
+        </Message>
+        <Message v-else-if="entry.license.status === 'PAST_DUE'" severity="info">
+          Waiting for your payment to clear; we email you the moment it does, and you can add your clusters then.
+        </Message>
+        <Message v-if="entry.license.status === 'TRIAL'" severity="info">
+          Your trial of the {{ planName(entry.license.plan) }} plan ends on {{ formatDate(entry.license.termEnd) }}.
+          <RouterLink to="/buy" class="font-medium underline">Buy it</RouterLink>
+          before then to keep your license and its price list.
+        </Message>
+        <Message v-if="entry.confirmationDueFor" severity="info">
+          Please confirm your company's figures for your anniversary on {{ formatDate(entry.confirmationDueFor) }}.
+          <a href="#" class="font-medium underline" @click.prevent="startConfirming(entry)">Confirm your figures</a>
+        </Message>
+        <Message v-if="planToBuy(entry)" severity="warn">
+          Your figures now set the {{ planName(planToBuy(entry)) }} plan.
+          <RouterLink to="/buy" class="font-medium underline">Buy it</RouterLink>
+          by {{ formatDate(entry.license.termEnd) }} to keep your license and its price list.
+        </Message>
+        <DashboardSection :icon="Server" :tint="TINTS.blue" title="Clusters" :count="seated(entry)"
+                          description="Each cluster holds a seat and has a key of its own.">
+          <template #actions>
             <span v-if="!canAddCluster(entry) && seated(entry) >= entry.license.seats && entry.license.stripeSubscriptionId"
-                  class="app-muted-text text-xs">Every seat is taken; add seats under Billing, receipts and seats.</span>
+                  class="app-muted-text hidden text-xs md:inline">Add seats under Billing, receipts and seats.</span>
             <Button label="Add a cluster" icon="pi pi-plus" size="small" :disabled="!canAddCluster(entry)" @click="startAddingCluster(entry)" />
-          </div>
-        </div>
-        <ClusterList :entry="entry" />
+          </template>
+          <ClusterList :entry="entry" />
+        </DashboardSection>
+        <ul v-if="entry.confirmations.length" class="app-muted-text space-y-1 text-xs">
+          <li v-for="confirmation in entry.confirmations" :key="confirmation.id">
+            Confirmed for {{ formatDate(confirmation.anniversary) }}: {{ formatMoney(confirmation.figures.annualRevenue, 'usd') }} revenue<span
+              v-if="confirmation.figures.capitalRaised !== null">, {{ formatMoney(confirmation.figures.capitalRaised, 'usd') }} raised</span>
+            · {{ planName(confirmation.plan) }}
+          </li>
+        </ul>
       </section>
 
       <section v-if="account.licenses.length" class="app-card-surface rounded-xl border p-5 text-sm">
         <h3 class="app-heading-text font-medium">Licensing a cluster</h3>
-        <ol class="app-muted-text mt-2 list-decimal space-y-1 pl-5">
-          <li>Sign in to the cluster's Kinotic system console as a system user, open its <strong>License</strong> page and copy its cluster id.</li>
-          <li>Add the cluster above with that id. Its key works on that cluster alone.</li>
-          <li>Copy the cluster's key, or download it, then paste it into the License page and install it. Kinotic shows your organization as the licensee and turns on every Enterprise feature.</li>
-        </ol>
-        <p class="app-muted-text mt-2">
-          Each key expires seven days after the date your license is paid through. A cluster that can reach
-          licenses.kinotic.ai installs each new key by itself; for one that cannot, copy its new key from here after each
-          payment. A trial's key expires when the trial ends. Kinotic keeps its Enterprise features on for 14 days after a
-          key expires.
+        <NumberedSteps :steps="LICENSING_STEPS" class="mt-4 grid gap-5 md:grid-cols-3" />
+        <p class="app-subtle-text app-surface-divider mt-5 border-t pt-4 text-xs">
+          For a cluster that cannot reach licenses.kinotic.ai, copy the cluster id from its License page, add the cluster
+          here, then copy or download its key and install it on that page, and again after each payment. Each key expires
+          seven days after the date your license is paid through, and a trial's key when the trial ends. Kinotic keeps
+          its Enterprise features on for 14 days after a key expires.
         </p>
       </section>
 

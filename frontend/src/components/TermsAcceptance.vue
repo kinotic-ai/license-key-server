@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import Checkbox from 'primevue/checkbox'
+import { FileText } from '@lucide/vue'
+import { DashboardSection, TINTS } from '@kinotic-ai/frontend-common'
 import type { PublicityConsent } from '@/api/model'
 import { SITE } from '@/states/site'
 
@@ -16,11 +18,11 @@ defineProps<{
 </script>
 
 <template>
-  <div class="app-card-surface rounded-xl border p-4">
-    <details class="mb-3">
-      <summary class="app-heading-text cursor-pointer text-sm font-medium">
-        Order terms and Kinotic Enterprise License (version {{ SITE.termsVersion }})
-      </summary>
+  <DashboardSection :icon="FileText" :tint="TINTS.ink" title="Terms"
+                    :description="`The order terms and the Kinotic Enterprise License, version ${SITE.termsVersion}.`">
+    <div class="p-5">
+    <details class="mb-4">
+      <summary class="app-heading-text cursor-pointer text-sm font-medium">Read the order terms</summary>
       <div class="app-muted-text mt-3 space-y-2 text-sm leading-6">
         <p>
           By accepting you agree, on behalf of the organization named above, to the Kinotic Enterprise License, which
@@ -68,5 +70,6 @@ defineProps<{
         License on its behalf{{ publicity ? ', including the publicity they describe' : '' }}.
       </span>
     </label>
-  </div>
+    </div>
+  </DashboardSection>
 </template>

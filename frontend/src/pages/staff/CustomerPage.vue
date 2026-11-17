@@ -123,7 +123,9 @@ function revoke(entry: LicenseWithKeys) {
             </table>
           </div>
         </div>
-        <ClusterList :entry="entry" />
+        <div class="app-card-surface overflow-hidden rounded-xl border">
+          <ClusterList :entry="entry" />
+        </div>
       </section>
       <p v-if="!detail.licenses.length" class="app-muted-text text-sm">No license yet.</p>
 
