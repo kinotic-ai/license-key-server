@@ -140,10 +140,6 @@ async function startTrial() {
   <div class="max-w-5xl">
     <PageHeader :title="trialAvailable ? 'Try or buy a plan' : 'Buy a plan'"
                 description="Your plan is set by your company's annual revenue, and you pay it for each cluster. Stripe bills it; cancel any time, and the keys you hold work until they expire." />
-    <Message v-if="trialAvailable && !loading" severity="info" class="mb-5">
-      Try any paid plan free for three months on one cluster, with no payment details. Buy it before the trial ends to
-      keep your license, on the price list you started on.
-    </Message>
     <div v-if="loading" class="app-muted-text text-sm">Loading prices…</div>
     <div v-else class="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
       <form id="buy-form" class="flex min-w-0 flex-col gap-5" @submit.prevent="submit">
@@ -241,7 +237,7 @@ async function startTrial() {
         <Button v-if="trialAvailable" type="button" label="Start a 3-month trial" severity="secondary" outlined fluid
                 :disabled="!accepted || !plan || !figuresGiven || submitting" :loading="startingTrial" @click="startTrial" />
         <p class="app-subtle-text text-xs">
-          Payment details are entered on Stripe's page.<template v-if="trialAvailable"> A trial covers one cluster and asks for no payment details.</template>
+          Payment details are entered on Stripe's page.<template v-if="trialAvailable"> A trial covers one cluster and asks for no payment details; buy the plan before it ends to keep your license.</template>
         </p>
       </aside>
     </div>
