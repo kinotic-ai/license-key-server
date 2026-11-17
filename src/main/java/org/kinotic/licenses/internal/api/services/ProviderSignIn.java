@@ -1,16 +1,26 @@
 package org.kinotic.licenses.internal.api.services;
 
-import org.kinotic.common.api.oidc.OidcProviderType;
+import org.kinotic.common.api.oidc.OAuth2Util;
 import org.kinotic.licenses.internal.api.model.OidcFlowState;
 
+import java.util.Map;
+
 /**
- * A completed sign-in at a provider customers use: the person it signed in and the flow that produced it, whose
- * origin and return path the callback route finishes with.
+ * A sign-in a provider verified: the claims of the person it signed in and the flow that produced them, whose origin
+ * and return path the callback route finishes with.
  *
- * @param provider the provider
- * @param email    the email address the provider proved belongs to the person
- * @param name     the person's name as the provider gives it, or {@code null} when it gives none
- * @param flow     the flow the sign-in completes
+ * @param claims the person's verified claims
+ * @param flow   the flow the sign-in completes
  */
-public record ProviderSignIn(OidcProviderType provider, String email, String name, OidcFlowState flow) {
+public record ProviderSignIn(Map<String, Object> claims, OidcFlowState flow) {
+
+    /** The person's email address as the provider gives it, or {@code null} when it gives none. */
+    public String email() {
+        return OAuth2Util.stringClaim(claims, "email");
+    }
+
+    /** The person's name as the provider gives it, or {@code null} when it gives none. */
+    public String name() {
+        return OAuth2Util.stringClaim(claims, "name");
+    }
 }

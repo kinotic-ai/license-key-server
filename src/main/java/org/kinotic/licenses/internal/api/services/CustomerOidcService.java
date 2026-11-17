@@ -2,37 +2,29 @@ package org.kinotic.licenses.internal.api.services;
 
 import io.vertx.core.Future;
 import io.vertx.ext.web.RoutingContext;
-import io.vertx.ext.web.Session;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.kinotic.common.api.oidc.OAuth2Util;
-import org.kinotic.common.api.oidc.OidcAuthorization;
-import org.kinotic.common.api.oidc.OidcClient;
 import org.kinotic.common.api.oidc.OidcClientService;
 import org.kinotic.common.api.oidc.OidcProviderType;
 import org.kinotic.core.api.exceptions.AuthenticationException;
-import org.kinotic.core.api.security.SessionBinding;
 import org.kinotic.licenses.api.config.CustomerOidcProperties;
 import org.kinotic.licenses.api.config.KinoticLicensesProperties;
 import org.kinotic.licenses.api.config.OidcClientProperties;
-import org.kinotic.licenses.internal.api.model.CustomerOidcRegistration;
-import org.kinotic.licenses.internal.api.model.OidcFlowState;
+import org.kinotic.licenses.internal.api.model.OidcRegistration;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Signs customers in at GitHub, Microsoft or Google with the authorization code flow and PKCE, and answers the email
  * address the provider proves belongs to the person. A provider is offered once the license server's client
  * registration at it is configured.
  */
-@Slf4j
 @Component
 @RequiredArgsConstructor
 public class CustomerOidcService {
@@ -52,30 +44,35 @@ public class CustomerOidcService {
     private final KinoticLicensesProperties properties;
     private final OidcClientService oidcClientService;
 
-    // the registrations configured, in the order the pages show their providers
-    private final Map<OidcProviderType, CustomerOidcRegistration> registrations = new LinkedHashMap<>();
-    private final Map<OidcProviderType, Future<OidcClient>> clients = new ConcurrentHashMap<>();
+    // the sign-in flow of each provider configured, in the order the pages show the providers
+    private final Map<OidcProviderType, OidcSignInFlow> flows = new LinkedHashMap<>();
 
     @PostConstruct
-    void start() {
+    void registerProviders() {
         CustomerOidcProperties oidc = properties.getLicenses().getCustomerOidc();
         // GitHub publishes no discovery document and issues no id token
-        register(OidcProviderType.GITHUB, oidc.getGithub(), new CustomerOidcRegistration().setAuthority(GITHUB_AUTHORITY)
-                                                                                          .setAuthorizationUri(GITHUB_AUTHORIZATION_URI)
-                                                                                          .setTokenUri(GITHUB_TOKEN_URI)
-                                                                                          .setUserInfoUri(GITHUB_USER_URI)
-                                                                                          .setUserEmailsUri(GITHUB_USER_EMAILS_URI));
-        register(OidcProviderType.AZURE_AD, oidc.getMicrosoft(), new CustomerOidcRegistration().setAuthority(MICROSOFT_AUTHORITY)
-                                                                                               .setAudience(oidc.getMicrosoft().getClientId()));
-        register(OidcProviderType.GOOGLE, oidc.getGoogle(), new CustomerOidcRegistration().setAuthority(GOOGLE_AUTHORITY)
-                                                                                          .setAudience(oidc.getGoogle().getClientId()));
+        register(oidc.getGithub(), new OidcRegistration().setProvider(OidcProviderType.GITHUB)
+                                                         .setAuthority(GITHUB_AUTHORITY)
+                                                         .setAuthorizationUri(GITHUB_AUTHORIZATION_URI)
+                                                         .setTokenUri(GITHUB_TOKEN_URI)
+                                                         .setUserInfoUri(GITHUB_USER_URI)
+                                                         .setUserEmailsUri(GITHUB_USER_EMAILS_URI)
+                                                         .setScopes(GITHUB_SCOPES));
+        register(oidc.getMicrosoft(), new OidcRegistration().setProvider(OidcProviderType.AZURE_AD)
+                                                            .setAuthority(MICROSOFT_AUTHORITY)
+                                                            .setAudience(oidc.getMicrosoft().getClientId())
+                                                            .setScopes(OIDC_SCOPES));
+        register(oidc.getGoogle(), new OidcRegistration().setProvider(OidcProviderType.GOOGLE)
+                                                         .setAuthority(GOOGLE_AUTHORITY)
+                                                         .setAudience(oidc.getGoogle().getClientId())
+                                                         .setScopes(OIDC_SCOPES));
     }
 
     /**
      * The providers customers are offered, in the order the pages show them.
      */
     public List<OidcProviderType> providers() {
-        return List.copyOf(registrations.keySet());
+        return List.copyOf(flows.keySet());
     }
 
     /**
@@ -86,15 +83,7 @@ public class CustomerOidcService {
      * @param returnPath the public site path to land on afterwards, or {@code null} for the site's default
      */
     public Future<String> start(RoutingContext ctx, OidcProviderType provider, String returnPath) {
-        OidcAuthorization authorization = OidcAuthorization.create();
-        return client(provider)
-                .map(client -> client.authorizationUrl(authorization, callbackUrl(provider), scopes(provider)))
-                // stored once the provider is reachable, so a failed start leaves any pending flow intact
-                .onSuccess(url -> {
-                    Session session = ctx.session();
-                    session.regenerateId();
-                    session.put(flowSessionKey(provider), new OidcFlowState(authorization, SessionBinding.origin(ctx), returnPath));
-                });
+        return flows.get(provider).start(ctx, returnPath);
     }
 
     /**
@@ -105,68 +94,27 @@ public class CustomerOidcService {
      * @return the person signed in with the flow it completes, or a failure with {@link AuthenticationException}
      */
     public Future<ProviderSignIn> complete(RoutingContext ctx, OidcProviderType provider) {
-        String code = ctx.request().getParam("code");
-        String state = ctx.request().getParam("state");
-        String providerError = ctx.request().getParam("error");
-        // consumed first, so a replayed callback finds no flow
-        OidcFlowState flow = ctx.session().remove(flowSessionKey(provider));
-
-        Future<ProviderSignIn> ret;
-        if (providerError != null) {
-            ret = Future.failedFuture(new AuthenticationException("The sign-in provider reported: " + providerError));
-        } else if (flow == null || code == null || state == null || !flow.authorization().state().equals(state)) {
-            ret = Future.failedFuture(new AuthenticationException("The sign-in did not complete; start again"));
-        } else {
-            ret = client(provider)
-                    .compose(client -> client.verifiedClaims(code, callbackUrl(provider), flow.authorization()))
-                    .recover(t -> {
-                        log.warn("A sign-in with {} could not be verified: {}", provider.key(), t.getMessage());
-                        return Future.failedFuture(new AuthenticationException("The sign-in could not be verified; start again", t));
-                    })
-                    .compose(claims -> OAuth2Util.isEmailProven(claims, provider)
-                            ? Future.succeededFuture(new ProviderSignIn(provider, OAuth2Util.stringClaim(claims, "email"),
-                                                                        OAuth2Util.stringClaim(claims, "name"), flow))
+        return flows.get(provider).complete(ctx)
+                    .compose(signIn -> OAuth2Util.isEmailProven(signIn.claims(), provider)
+                            ? Future.succeededFuture(signIn)
                             : Future.failedFuture(new AuthenticationException(
                                     "The provider does not confirm that the account's email address is verified; "
                                     + "sign up with your email address instead")));
-        }
-        return ret;
     }
 
     @PreDestroy
     void stop() {
-        clients.values().forEach(client -> {
-            if (client.succeeded()) {
-                client.result().close();
-            }
-        });
+        flows.values().forEach(OidcSignInFlow::close);
     }
 
-    private void register(OidcProviderType provider, OidcClientProperties configured, CustomerOidcRegistration registration) {
+    private void register(OidcClientProperties configured, OidcRegistration registration) {
         if (StringUtils.isNotBlank(configured.getClientId())) {
-            registrations.put(provider, registration.setProvider(provider)
-                                                    .setClientId(configured.getClientId())
-                                                    .setClientSecret(configured.getClientSecret()));
+            String providerKey = registration.getProvider().key();
+            registration.setClientId(configured.getClientId())
+                        .setClientSecret(configured.getClientSecret())
+                        .setCallbackUrl(properties.getLicenses().getPublicBaseUrl() + "/api/auth/provider/" + providerKey + "/callback");
+            flows.put(registration.getProvider(),
+                      new OidcSignInFlow(oidcClientService, registration, FLOW_SESSION_KEY_PREFIX + providerKey));
         }
-    }
-
-    // created on the provider's first sign-in; a discovery that fails is retried by the next
-    private Future<OidcClient> client(OidcProviderType provider) {
-        CustomerOidcRegistration registration = registrations.get(provider);
-        return clients.compute(provider, (key, existing) -> existing == null || existing.failed()
-                ? oidcClientService.createClient(registration, registration.getClientSecret())
-                : existing);
-    }
-
-    private static List<String> scopes(OidcProviderType provider) {
-        return provider == OidcProviderType.GITHUB ? GITHUB_SCOPES : OIDC_SCOPES;
-    }
-
-    private String callbackUrl(OidcProviderType provider) {
-        return properties.getLicenses().getPublicBaseUrl() + "/api/auth/provider/" + provider.key() + "/callback";
-    }
-
-    private static String flowSessionKey(OidcProviderType provider) {
-        return FLOW_SESSION_KEY_PREFIX + provider.key();
     }
 }

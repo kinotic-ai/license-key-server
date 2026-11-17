@@ -169,7 +169,7 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
             String publicBaseUrl = properties.getLicenses().getPublicBaseUrl();
             customerOidcService.complete(ctx, provider)
                                .compose(signIn -> signInService.signInWithProvenEmail(signIn.email())
-                                                               .map(participant -> finishProviderSignIn(ctx, signIn, participant)))
+                                                               .map(participant -> finishProviderSignIn(ctx, provider, signIn, participant)))
                                .onSuccess(path -> redirect(ctx, publicBaseUrl + path))
                                .onFailure(t -> {
                                    String reason;
@@ -186,7 +186,8 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
     }
 
     // signs the page in as the participant, or keeps the sign-up of a person with no account; returns the site path to continue at
-    private String finishProviderSignIn(RoutingContext ctx, ProviderSignIn signIn, LicenseParticipant participant) {
+    private String finishProviderSignIn(RoutingContext ctx, OidcProviderType provider, ProviderSignIn signIn,
+                                        LicenseParticipant participant) {
         String returnPath = signIn.flow().returnPath();
         String ret;
         if (participant != null) {
@@ -197,7 +198,7 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
             ctx.session().put(PENDING_PROVIDER_SIGN_UP_SESSION_KEY,
                               new PendingProviderSignUp(signIn.email(), signIn.name(),
                                                         Instant.now().plus(PENDING_PROVIDER_SIGN_UP_LIFETIME)));
-            ret = PROVIDER_SIGN_UP_PATH + signIn.provider().key()
+            ret = PROVIDER_SIGN_UP_PATH + provider.key()
                     + (returnPath != null ? "&referer=" + URLEncoder.encode(returnPath, StandardCharsets.UTF_8) : "");
         }
         return ret;
