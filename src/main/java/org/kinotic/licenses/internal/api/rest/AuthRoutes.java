@@ -226,7 +226,15 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
         } else {
             respondSignedIn(ctx, signInService.completeProviderSignUp(pending.email(), organization, contactName)
                                               // kept until the account exists, so a refused request leaves the form usable
-                                              .onSuccess(participant -> ctx.session().remove(PENDING_PROVIDER_SIGN_UP_SESSION_KEY)));
+                                              .onSuccess(participant -> removePendingProviderSignUp(ctx.session(), pending)));
+        }
+    }
+
+    // a sign-in in another tab may have replaced the pending sign-up while the account was created; that one is kept
+    private static void removePendingProviderSignUp(Session session, PendingProviderSignUp completed) {
+        PendingProviderSignUp current = session.get(PENDING_PROVIDER_SIGN_UP_SESSION_KEY);
+        if (current != null && current.email().equals(completed.email())) {
+            session.remove(PENDING_PROVIDER_SIGN_UP_SESSION_KEY);
         }
     }
 
