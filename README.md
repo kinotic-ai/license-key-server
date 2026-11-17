@@ -1,8 +1,8 @@
 # license-key-server
 
 Minds Ignited's license key server: sells, issues and tracks Kinotic Enterprise license keys. Customers create an
-account on `licenses.kinotic.ai` with their email, whose emailed link opens the form that names their organization and
-sets their password, then buy the plan their annual revenue sets
+account on `licenses.kinotic.ai` with GitHub, Microsoft or Google, or with their email, whose emailed link opens the
+form that names their organization and sets their password, then buy the plan their annual revenue sets
 (Small, Medium or Large) for as many Kinotic clusters as they run, paying monthly or annually through Stripe; small
 organizations request a free license that staff approve. A license has seats, one for each cluster it covers, and each
 cluster the customer adds gets keys of its own that work on that cluster alone; see
@@ -15,15 +15,16 @@ confirms its figures, and the license moves to the plan they set at its annivers
 plan for three years in return for publicity they approve; see [Design partners](docs/deployment.md#design-partners).
 Staff see every customer with its clusters and their keys on a dashboard served on a network-restricted host.
 
-The server runs on Kinotic RPC alone (`kinotic-core` and `kinotic-api-gateway`) with its own single-node Ignite and
-a Postgres database. It never needs a Kinotic OS server: it is what licenses them. Keys are ES256 JWTs signed in Azure
+The server runs on Kinotic RPC alone (`kinotic-core` and `kinotic-api-gateway`, with `kinotic-common` for
+provider sign-in) with its own single-node Ignite and a Postgres database. It never needs a Kinotic OS server: it is what licenses them. Keys are ES256 JWTs signed in Azure
 Key Vault, where the private key stays, in the format Kinotic's license verifier reads: `sub` is the customer's legal
 name, `clusterId` is the UID of the `kube-system` namespace of the one cluster the key works on, `exp` is always set,
 and `features` is `["*"]`, every Enterprise Feature.
 
 Everything a signed-in page does goes through the published services over Kinotic RPC. A Kinotic cluster renews its
-key over Kinotic RPC too, signed in with that key (see below). HTTP carries only sign-in and sign-up (as the Kinotic consoles do), the Stripe webhook, the staff OIDC redirect, and `GET /api/site`, which a page
-reads before signing in to learn which site it is on. The plans and their prices are shown on the kinotic.ai website,
+key over Kinotic RPC too, signed in with that key (see below). HTTP carries only sign-in and sign-up (as the Kinotic consoles do), the Stripe webhook, the staff and customer OIDC redirects, and `GET /api/site`, which a page
+reads before signing in to learn which site it is on and which providers customers sign in with; see
+[Customer sign-in providers](docs/deployment.md#customer-sign-in-providers). The plans and their prices are shown on the kinotic.ai website,
 which links to the purchase and free license pages here.
 
 - `src/main/java` — the server: sign-in, key issuing and renewal, Stripe billing, free licenses, design partners, the

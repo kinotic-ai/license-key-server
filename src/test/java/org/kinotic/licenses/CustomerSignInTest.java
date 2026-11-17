@@ -173,6 +173,14 @@ class CustomerSignInTest extends ServerTest {
         assertThat(onPublicHost.statusCode()).isEqualTo(404);
     }
 
+    @Test
+    void aStaffCallbackThatMatchesNoStartedSignInReturnsToTheStaffLoginPage() throws Exception {
+        HttpResponse<Buffer> callback = await(client.get("/api/auth/staff/callback?code=a-code&state=a-state")
+                                                    .putHeader("Host", "localhost:5174").followRedirects(false).send());
+        assertThat(callback.statusCode()).isEqualTo(302);
+        assertThat(callback.getHeader("Location")).isEqualTo("http://localhost:5174/login?error=state_mismatch");
+    }
+
     private static JsonObject completion(String token) {
         return new JsonObject().put("token", token).put("organization", "Tiny Startup LLC")
                                .put("contactName", "Grace Hopper").put("password", PASSWORD);

@@ -37,7 +37,8 @@ public class CustomerService {
      * @param legalName    the customer's legal name
      * @param contactName  the billing contact's name
      * @param contactEmail the billing contact's email, which the caller has confirmed belongs to the person signing up
-     * @param passwordHash the bcrypt hash of the billing contact's password
+     * @param passwordHash the bcrypt hash of the billing contact's password, or {@code null} for a contact that has
+     *                     set none
      * @return the billing contact, or a failure with {@link AlreadyExistsException} when the address already has an
      *         account
      */

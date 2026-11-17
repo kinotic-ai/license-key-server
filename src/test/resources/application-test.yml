@@ -21,7 +21,12 @@ kinotic:
     email:
       enabled: false
     staffOidc:
-      issuer: https://accounts.google.com
+      issuer: https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/v2.0
       clientId: test-client
       clientSecret: test-secret
       allowedEmailDomain: mindsignited.com
+    # GitHub alone, which names its endpoints, so a sign-in starts without reading a discovery document
+    customerOidc:
+      github:
+        clientId: test-github-client
+        clientSecret: test-github-secret

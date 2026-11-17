@@ -31,7 +31,8 @@ import java.util.function.Function;
  * names the organization and sets the password. Contacts sign in with their email and password, and set a new password
  * with a link emailed to them. A link is used once and only its token's hash is stored. Requests for links and sign-in
  * attempts are limited per email address and per client address, and a request for a link answers alike whether or
- * not the address has an account.
+ * not the address has an account. A person a sign-in provider has proven the email address of signs in to the
+ * address's account, or creates it by naming the organization, with no link and no password.
  */
 @Slf4j
 @Component
@@ -120,6 +121,32 @@ public class CustomerSignInService {
                                                    : Future.failedFuture(new AuthenticationException(INVALID_CREDENTIALS))));
         }
         return ret;
+    }
+
+    /**
+     * Signs in the contact with an email address a sign-in provider has proven belongs to the person.
+     *
+     * @param email the proven address
+     * @return the contact signed in, or {@code null} when the address has no contact
+     */
+    public Future<LicenseParticipant> signInWithProvenEmail(String email) {
+        return contactRepository.findByEmail(email)
+                                .map(contacts -> contacts.isEmpty() ? null : LicenseParticipant.ofContact(contacts.getFirst()));
+    }
+
+    /**
+     * Creates the account of an email address a sign-in provider has proven belongs to the person, with the
+     * organization and contact name given. The contact has no password until it sets one with a password reset link.
+     *
+     * @param email the proven address
+     * @return the contact the account is signed in as, or a failure with
+     *         {@link org.kinotic.core.api.exceptions.AlreadyExistsException} when the address has an account by now
+     */
+    public Future<LicenseParticipant> completeProviderSignUp(String email, String organization, String contactName) {
+        Validate.notBlank(organization, "The organization's legal name is required");
+        Validate.notBlank(contactName, "Your name is required");
+        return customerService.createCustomer(organization, contactName, email, null)
+                              .map(LicenseParticipant::ofContact);
     }
 
     /**

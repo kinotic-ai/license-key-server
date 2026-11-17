@@ -63,6 +63,7 @@ dependencyManagement {
         dependency "org.flywaydb:flyway-database-postgresql:${flywayVersion}"
         dependency "org.kinotic:kinotic-api-gateway:${kinoticVersion}"
         dependency "org.kinotic:kinotic-client:${kinoticVersion}"
+        dependency "org.kinotic:kinotic-common:${kinoticVersion}"
         dependency "org.kinotic:kinotic-core:${kinoticVersion}"
         dependency "org.postgresql:postgresql:${postgresqlVersion}"
     }
@@ -77,6 +78,8 @@ dependencies {
     // Kinotic RPC: the gateway serves the STOMP API and the REST routes, core runs the services
     implementation('org.kinotic:kinotic-core') { changing = true }
     implementation('org.kinotic:kinotic-api-gateway') { changing = true }
+    // the provider sign-in staff and customers use: the authorization code flow with PKCE
+    implementation('org.kinotic:kinotic-common') { changing = true }
 
     implementation 'io.vertx:vertx-core'
     implementation 'io.vertx:vertx-web'

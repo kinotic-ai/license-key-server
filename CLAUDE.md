@@ -2,6 +2,7 @@
 
 The Minds Ignited license key server: sells, issues and tracks Kinotic Enterprise license keys. It is Minds
 Ignited's own back office, built on Kinotic RPC (`org.kinotic:kinotic-core` and `org.kinotic:kinotic-api-gateway`)
+and `org.kinotic:kinotic-common`, the server code Kinotic OS shares with a server like this one (provider sign-in),
 and never on a Kinotic OS module: the server licenses Kinotic OS, so requiring it at runtime would be circular.
 
 The conventions below are kinotic-ai/kinotic's, copied verbatim, and bind here too. Where a rule names a
@@ -27,7 +28,7 @@ export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 ./gradlew build -Porg.gradle.java.installations.paths=/tmp/jdk25
 ```
 
-The Kinotic RPC artifacts are `5.0.0-SNAPSHOT` from `https://central.sonatype.com/repository/maven-snapshots/`,
+The Kinotic RPC and `kinotic-common` artifacts are `5.0.0-SNAPSHOT` from `https://central.sonatype.com/repository/maven-snapshots/`,
 marked `changing` so every build resolves the newest publish. Read their source in kinotic-ai/kinotic before using
 an API; don't infer behaviour from names.
 
@@ -51,11 +52,13 @@ line, no `Co-Authored-By` trailer, no session link, and no other attribution to 
 
 ## Enterprise Features live in `ee` packages
 
-The root `LICENSE.md` licenses everything under the Elastic License 2.0 with the Kinotic Additional Limitations, except Kinotic RPC, under the Apache License 2.0 (see below), and Enterprise Implementations, under the Kinotic Enterprise License (`LICENSE-ENTERPRISE`). An Enterprise Implementation is any file in a Java package with a segment named `ee`. To make a capability enterprise-only, put its classes in the `internal/api/ee/` tree of the module the capability belongs to, mirroring `internal/api/` (`internal/api/ee/services/`). Only where an interface already has a free implementation and an Enterprise one does that interface live in `api/ee/` (`SecretStorageBackend`, with `InMemoryBackend` and `AzureKeyVaultBackend`). The package name is the license designation, so an `ee` package may hold a single file. Never put Enterprise code in a Kinotic RPC module.
+The root `LICENSE.md` licenses everything under the Elastic License 2.0 with the Kinotic Additional Limitations, except Kinotic RPC and `kinotic-common`, under the Apache License 2.0 (see below), and Enterprise Implementations, under the Kinotic Enterprise License (`LICENSE-ENTERPRISE`). An Enterprise Implementation is any file in a Java package with a segment named `ee`. To make a capability enterprise-only, put its classes in the `internal/api/ee/` tree of the module the capability belongs to, mirroring `internal/api/` (`internal/api/ee/services/`). Only where an interface already has a free implementation and an Enterprise one does that interface live in `api/ee/` (`SecretStorageBackend`, with `InMemoryBackend` and `AzureKeyVaultBackend`). The package name is the license designation, so an `ee` package may hold a single file. Never put Enterprise code in a Kinotic RPC module or in `kinotic-common`.
 
 ## Kinotic RPC stands alone
 
 Kinotic RPC — `kinotic-core`, `kinotic-api-gateway`, `kinotic-client`, `kinotic-idl`, and the `core` and `idl` packages in `kinotic-js/workspace/packages/` — is licensed under the Apache License 2.0 (`LICENSE-APACHE`) so it can be used without Kinotic OS. None of its modules may depend on a Kinotic OS module (domain, persistence, management-api, system-api, the servers); `org.kinotic.java-common-conventions` fails the build if one declares such a project dependency. Code that only Kinotic OS uses belongs in an OS module, never in core, and anything RPC needs from the OS's model goes through an interface in core that the OS implements (`ZoneRulesResolver`, implemented by domain's `ScopedParticipantZoneRulesResolver`). A setting both RPC and the OS read lives on core's `KinoticProperties` (`kinotic.cors`).
+
+`kinotic-common` is Apache-licensed too and holds the server code Kinotic OS shares with a server built on Kinotic RPC alone (provider sign-in, in `org.kinotic.common.api.oidc`). It depends on no Kinotic OS module, which the same build check enforces, and not on `kinotic-core`. Shared code of that sort goes there as a package, never into core and never into a new module of its own.
 
 ## Don't guess from names
 

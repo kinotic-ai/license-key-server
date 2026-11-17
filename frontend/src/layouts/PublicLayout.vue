@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import Button from 'primevue/button'
 import { ThemeToggleButton, isDark } from '@kinotic-ai/frontend-common'
-import headerLogo from '@/assets/header-logo.svg'
+import headerLogo from '@/assets/public-header-logo.svg'
 import { SESSION_STATE } from '@/states/LicenseSessionState'
 
 /** The public site's chrome: the header with the buy, free license and account links, and the footer. */
