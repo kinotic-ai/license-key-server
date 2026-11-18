@@ -1,6 +1,5 @@
 package org.kinotic.licenses.internal.api.services;
 
-import org.kinotic.common.api.oidc.OidcSignInFlow;
 import org.kinotic.common.api.oidc.OidcErrorCodes;
 import org.kinotic.common.api.oidc.OidcCallbackException;
 import io.vertx.core.Future;
@@ -36,13 +35,12 @@ public class StaffOidcService {
 
     private static final String ENTRA_HOST = "login.microsoftonline.com";
     private static final List<String> SCOPES = List.of("openid", "email", "profile");
+    private static final String FLOW_SESSION_KEY = "staffOidcFlow";
 
     private final KinoticLicensesProperties properties;
     private final OidcClientService oidcClientService;
 
-    private final OidcSignInFlow flow = new OidcSignInFlow("staffOidcFlow");
-
-    private OidcRegistration registration;
+    private ProviderSignInFlow flow;
 
     /**
      * Starts a sign-in: stores the flow in the session and returns the provider's authorization URL to redirect to.
@@ -51,22 +49,20 @@ public class StaffOidcService {
      * @param returnPath the staff site path to land on afterwards, or {@code null} for the root
      */
     public Future<String> start(RoutingContext ctx, String returnPath) {
-        OidcRegistration staff = registration();
-        return staff.client(oidcClientService)
-                    .map(client -> flow.start(ctx, client, staff.getCallbackUrl(), staff.getScopes(),
-                                              ProviderSignIn.begin(staff, ctx, returnPath)));
+        return flow().start(ctx, returnPath);
     }
 
     /**
      * Completes a sign-in from the provider's callback: checks the state, redeems the code for the account's verified
      * claims, checks the account's email, and returns the staff participant with the flow it completes.
      *
-     * @return the participant and the sign-in, or a failure with {@link OidcCallbackException}
+     * @return the participant and the sign-in, or a failure: an {@link OidcCallbackException} for a sign-in that is
+     *         refused, and the provider client's own failure otherwise
      */
     public Future<StaffSignIn> complete(RoutingContext ctx) {
-        return ProviderSignIn.complete(ctx, flow, registration(), oidcClientService)
-                             .compose(signIn -> staffParticipant(signIn)
-                                     .map(participant -> new StaffSignIn(participant, signIn)));
+        return flow().complete(ctx)
+                     .compose(signIn -> staffParticipant(signIn)
+                             .map(participant -> new StaffSignIn(participant, signIn)));
     }
 
     private Future<LicenseParticipant> staffParticipant(ProviderSignIn signIn) {
@@ -92,28 +88,30 @@ public class StaffOidcService {
     }
 
     // built by the first sign-in, which is when the settings are checked
-    private synchronized OidcRegistration registration() {
-        if (registration == null) {
+    private synchronized ProviderSignInFlow flow() {
+        if (flow == null) {
             StaffOidcProperties oidc = properties.getLicenses().getStaffOidc();
             Validate.validState(StringUtils.isNoneBlank(oidc.getIssuer(), oidc.getClientId(), oidc.getAllowedEmailDomain()),
                                 "kinotic.licenses.staffOidc needs an issuer, a clientId and an allowedEmailDomain");
             Validate.validState(ENTRA_HOST.equalsIgnoreCase(URI.create(oidc.getIssuer()).getHost()),
                                 "kinotic.licenses.staffOidc.issuer must be a Microsoft Entra issuer on %s", ENTRA_HOST);
-            registration = new OidcRegistration().setProvider(OidcProviderType.AZURE_AD)
-                                                 .setAuthority(oidc.getIssuer())
-                                                 .setClientId(oidc.getClientId())
-                                                 .setClientSecret(oidc.getClientSecret())
-                                                 .setAudience(oidc.getClientId())
-                                                 .setCallbackUrl(properties.getLicenses().getStaffBaseUrl() + CALLBACK_PATH)
-                                                 .setScopes(SCOPES);
+            flow = new ProviderSignInFlow(oidcClientService,
+                                          new OidcRegistration().setProvider(OidcProviderType.AZURE_AD)
+                                                                .setAuthority(oidc.getIssuer())
+                                                                .setClientId(oidc.getClientId())
+                                                                .setClientSecret(oidc.getClientSecret())
+                                                                .setAudience(oidc.getClientId())
+                                                                .setCallbackUrl(properties.getLicenses().getStaffBaseUrl() + CALLBACK_PATH)
+                                                                .setScopes(SCOPES),
+                                          FLOW_SESSION_KEY);
         }
-        return registration;
+        return flow;
     }
 
     @PreDestroy
     synchronized void stop() {
-        if (registration != null) {
-            registration.close();
+        if (flow != null) {
+            flow.close();
         }
     }
 }

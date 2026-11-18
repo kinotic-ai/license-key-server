@@ -1,6 +1,5 @@
 package org.kinotic.licenses.internal.api.services;
 
-import org.kinotic.common.api.oidc.OidcSignInFlow;
 import org.kinotic.common.api.oidc.OidcErrorCodes;
 import org.kinotic.common.api.oidc.OidcCallbackException;
 import io.vertx.core.Future;
@@ -41,14 +40,13 @@ public class CustomerOidcService {
     // personal Microsoft accounts and the accounts of every directory
     private static final String MICROSOFT_AUTHORITY = "https://login.microsoftonline.com/common/v2.0";
     private static final String GOOGLE_AUTHORITY = "https://accounts.google.com";
+    private static final String FLOW_SESSION_KEY_PREFIX = "customerOidcFlow.";
 
     private final KinoticLicensesProperties properties;
     private final OidcClientService oidcClientService;
 
-    private final OidcSignInFlow flow = new OidcSignInFlow("customerOidcFlow");
-
-    // the registration of each provider configured, in the order the pages show the providers
-    private final Map<OidcProviderType, OidcRegistration> registrations = new LinkedHashMap<>();
+    // the sign-in flow of each provider configured, in the order the pages show the providers
+    private final Map<OidcProviderType, ProviderSignInFlow> flows = new LinkedHashMap<>();
 
     @PostConstruct
     void registerProviders() {
@@ -75,7 +73,7 @@ public class CustomerOidcService {
      * The providers customers are offered, in the order the pages show them.
      */
     public List<OidcProviderType> providers() {
-        return List.copyOf(registrations.keySet());
+        return List.copyOf(flows.keySet());
     }
 
     /**
@@ -86,10 +84,7 @@ public class CustomerOidcService {
      * @param returnPath the public site path to land on afterwards, or {@code null} for the site's default
      */
     public Future<String> start(RoutingContext ctx, OidcProviderType provider, String returnPath) {
-        OidcRegistration registration = registrations.get(provider);
-        return registration.client(oidcClientService)
-                           .map(client -> flow.start(ctx, client, registration.getCallbackUrl(), registration.getScopes(),
-                                                     ProviderSignIn.begin(registration, ctx, returnPath)));
+        return flows.get(provider).start(ctx, returnPath);
     }
 
     /**
@@ -97,18 +92,19 @@ public class CustomerOidcService {
      * claims, and requires that the provider proves the email address belongs to the person.
      *
      * @param provider one of the {@link #providers()}
-     * @return the person signed in with the flow it completes, or a failure with {@link OidcCallbackException}
+     * @return the person signed in with the flow it completes, or a failure: an {@link OidcCallbackException} for a
+     *         sign-in that is refused, and the provider client's own failure otherwise
      */
     public Future<ProviderSignIn> complete(RoutingContext ctx, OidcProviderType provider) {
-        return ProviderSignIn.complete(ctx, flow, registrations.get(provider), oidcClientService)
-                             .compose(signIn -> OAuth2Util.isEmailProven(signIn.claims(), provider)
-                                     ? Future.succeededFuture(signIn)
-                                     : Future.failedFuture(new OidcCallbackException(OidcErrorCodes.EMAIL_NOT_VERIFIED, provider)));
+        return flows.get(provider).complete(ctx)
+                    .compose(signIn -> OAuth2Util.isEmailProven(signIn.claims(), provider)
+                            ? Future.succeededFuture(signIn)
+                            : Future.failedFuture(new OidcCallbackException(OidcErrorCodes.EMAIL_NOT_VERIFIED)));
     }
 
     @PreDestroy
     void stop() {
-        registrations.values().forEach(OidcRegistration::close);
+        flows.values().forEach(ProviderSignInFlow::close);
     }
 
     private void register(OidcClientProperties configured, OidcRegistration registration) {
@@ -117,7 +113,8 @@ public class CustomerOidcService {
             registration.setClientId(configured.getClientId())
                         .setClientSecret(configured.getClientSecret())
                         .setCallbackUrl(properties.getLicenses().getPublicBaseUrl() + "/api/auth/provider/" + providerKey + "/callback");
-            registrations.put(registration.getProvider(), registration);
+            flows.put(registration.getProvider(),
+                      new ProviderSignInFlow(oidcClientService, registration, FLOW_SESSION_KEY_PREFIX + providerKey));
         }
     }
 }
