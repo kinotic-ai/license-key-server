@@ -312,10 +312,10 @@ public class AuthRoutes implements SuppliesGatewayRoutes {
     private static void failProviderSignIn(RoutingContext ctx, String baseUrl, Throwable t) {
         String code;
         if (t instanceof OidcCallbackException refused) {
-            log.warn("A provider sign-in on {} was refused: {}", baseUrl, refused.getErrorCode());
+            log.warn("The provider sign-in at {} was refused: {}", ctx.normalizedPath(), refused.getErrorCode());
             code = refused.getErrorCode();
         } else {
-            log.error("A provider sign-in on {} failed", baseUrl, t);
+            log.error("The provider sign-in at {} failed", ctx.normalizedPath(), t);
             code = OidcErrorCodes.EXCHANGE_FAILED;
         }
         redirect(ctx, baseUrl + LOGIN_ERROR_PATH + code);
