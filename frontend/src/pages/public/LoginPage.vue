@@ -80,10 +80,10 @@ const refererQuery = () => (route.query.referer ? { referer: route.query.referer
         </IconField>
         <Button label="Sign in" class="login-submit" :loading="loading" @click="submit" />
         <p class="app-muted-text mt-4 text-center text-sm">
-          <RouterLink :to="{ path: '/password/forgot', query: { ...refererQuery(), ...(email.includes('@') ? { email: email.trim() } : {}) } }" class="underline">Forgot your password?</RouterLink>
+          <RouterLink :to="{ path: '/password/forgot', query: { ...refererQuery(), ...(email.includes('@') ? { email: email.trim() } : {}) } }" class="login-link">Forgot your password?</RouterLink>
         </p>
         <p class="app-muted-text mt-2 text-center text-sm">
-          No account yet? <RouterLink :to="{ path: '/signup', query: refererQuery() }" class="underline">Create one</RouterLink>
+          No account yet? <RouterLink :to="{ path: '/signup', query: refererQuery() }" class="login-link">Create one</RouterLink>
         </p>
       </div>
     </div>
