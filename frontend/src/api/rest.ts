@@ -75,7 +75,7 @@ export function signInErrorMessage(code: string): string {
         case 'access_denied':      return 'The sign-in was cancelled at the provider. Try again to continue.'
         case 'state_mismatch':     return 'The sign-in did not complete. Start again.'
         case 'email_not_verified': return 'The provider does not confirm that the account\'s email address is verified. Sign up with your email address instead.'
-        case 'not_staff':          return 'The account is not a staff account.'
+        case 'account_not_allowed': return 'The account is not a staff account.'
         default:                   return 'The sign-in failed. Try again.'
     }
 }
