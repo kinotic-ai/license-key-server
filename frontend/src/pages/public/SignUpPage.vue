@@ -66,7 +66,7 @@ function displayError(text: string) {
         </IconField>
         <Button label="Sign up" class="login-submit" :loading="loading" @click="submit" />
         <p class="app-muted-text mt-4 text-center text-sm">
-          Have an account? <RouterLink :to="{ path: '/login', query: route.query.referer ? { referer: route.query.referer } : {} }" class="underline">Sign in</RouterLink>
+          Have an account? <RouterLink :to="{ path: '/login', query: route.query.referer ? { referer: route.query.referer } : {} }" class="login-link">Sign in</RouterLink>
         </p>
       </div>
     </div>

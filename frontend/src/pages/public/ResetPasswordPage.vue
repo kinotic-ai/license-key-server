@@ -67,7 +67,7 @@ function displayError(text: string) {
         <SetPasswordFields v-model:password="password" v-model:confirm="confirm" @submit="submit" />
         <Button label="Set password" class="login-submit" :disabled="!ready" :loading="loading" @click="submit" />
         <p class="app-muted-text mt-4 text-center text-sm">
-          Link expired? <RouterLink :to="{ path: '/password/forgot', query: route.query.referer ? { referer: route.query.referer } : {} }" class="underline">Ask for a new one</RouterLink>
+          Link expired? <RouterLink :to="{ path: '/password/forgot', query: route.query.referer ? { referer: route.query.referer } : {} }" class="login-link">Ask for a new one</RouterLink>
         </p>
       </div>
     </div>
