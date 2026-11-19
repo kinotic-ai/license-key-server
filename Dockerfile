@@ -19,8 +19,10 @@ COPY --from=frontend /build/frontend/dist ./frontend/dist
 RUN ./gradlew --no-daemon bootJar
 
 FROM eclipse-temurin:25-jre
-# Ignite 2.18 reflects into these JDK packages; Netty needs direct memory for the WebSocket frames
-ENV JAVA_TOOL_OPTIONS="--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED -XX:MaxDirectMemorySize=256m -XX:+DisableExplicitGC"
+# Ignite 2.18 reflects into these JDK packages; Netty needs direct memory for the WebSocket frames.
+# -XX:-UseBASE64Intrinsics keeps Base64 off HotSpot's AVX-512 decode intrinsic, which writes past its output
+# array in every JRE before 25.0.5.1 (CVE-2026-114938); eclipse-temurin:25-jre is 25.0.5
+ENV JAVA_TOOL_OPTIONS="-XX:-UseBASE64Intrinsics --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED -XX:MaxDirectMemorySize=256m -XX:+DisableExplicitGC"
 ENV KINOTIC_IGNITE_WORKDIRECTORY=/var/lib/license-key-server/ignite
 # A fixed uid and gid, so a host that mounts directories into the container can own them by number
 RUN groupadd --system --gid 10001 licenses \
