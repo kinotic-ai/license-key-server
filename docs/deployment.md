@@ -22,7 +22,8 @@ whatever it likes to the left of it. A second proxy in the chain would make ever
   HSM-protected key (`--kty EC-HSM`) works the same way and keeps the private key in the HSM.
 - **Azure Communication Services** email with a verified sender on the kinotic.ai domain. The same identity needs the
   `Contributor` role on the Communication Services resource to send.
-- **Stripe**: the price lists described under [Price lists](#price-lists); Link enabled under payment methods; the
+- **Stripe**: the price lists described under [Price lists](#price-lists); the design partner coupon described under
+  [Design partners](#design-partners); Link enabled under payment methods; the
   Kinotic logo and brand colour under branding, which Checkout and the Customer Portal use; the Customer Portal
   enabled with payment method updates, invoice history and cancellation, with **subscription updates allowing quantity
   changes** (the quantity is the license's seats, one for each cluster) and **with no products to switch to**: a license
@@ -33,10 +34,10 @@ whatever it likes to the left of it. A second proxy in the chain would make ever
   Its signing secret is `KINOTIC_LICENSES_STRIPE_WEBHOOKSECRET`. Stripe delivers events in no set order, so an
   event only tells the server which subscription changed: the server reads that subscription, with its price and
   latest invoice, from Stripe and brings the license to it. A restricted secret key therefore needs read access to
-  prices, products and invoices, and write access to customers, subscriptions (a lapsed license's subscription is
-  cancelled, and one whose figures set Free ends at its anniversary), subscription schedules (plan moves), coupons (the
-  design partner coupon is created on first use) and Checkout and Customer Portal sessions. A card
-  payment makes the license ready for its clusters at `checkout.session.completed`; a bank debit through Link
+  prices, products, invoices and coupons, and write access to customers, subscriptions (a lapsed license's subscription
+  is cancelled, and one whose figures set Free ends at its anniversary), subscription schedules (plan moves) and Checkout
+  and Customer Portal sessions. A card payment makes the license ready for its clusters at
+  `checkout.session.completed`; a bank debit through Link
   completes Checkout unpaid, and the license takes clusters once Stripe reports the first invoice paid. A subscription
   the customer cancels in the Customer Portal keeps its keys until they expire and is not renewed.
 
@@ -172,8 +173,9 @@ Approval makes it a design partner (`design_partner`) and emails the contacts a 
 the link never goes stale the way a Checkout Session does after 24 hours.
 
 That Checkout Session carries the **Stripe coupon `kinotic-design-partner`**: 50% off, `duration: repeating`,
-`duration_in_months: 36`. The server creates it the first time it is needed if it does not exist; do not change it,
-since every design partner shares it. Stripe applies it to the subscription, so it follows the subscription through
+`duration_in_months: 36`. Create it in the Stripe account with that id before the first application is approved: a
+design partner's checkout fails while Stripe has no such coupon. Never change or delete it, since every design partner
+shares it. Stripe applies it to the subscription, so it follows the subscription through
 plan moves (the Subscription Schedule phases copy its discount) and ends 36 months after the subscription starts,
 which the design partner record keeps as `discount_ends_at`. After that the customer pays its locked price on the
 same terms.

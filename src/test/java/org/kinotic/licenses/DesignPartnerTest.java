@@ -41,7 +41,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * A company on a paid plan applies to be a design partner with its figures and the design partner terms; staff approve
- * it, and its discounted subscription is bought through a Checkout Session carrying the 50%, 36-month coupon, which
+ * it, and its discounted subscription is bought through a Checkout Session carrying the design partner coupon, which
  * follows the subscription through a plan move. Staff track its publications, and its case study is published only once
  * the customer approves it.
  */
@@ -74,9 +74,6 @@ class DesignPartnerTest extends ServerTest {
 
         String url = asCustomer(contact, () -> customerAccount.startDesignPartnerCheckout(application.getId()));
         assertThat(url).startsWith("https://checkout.stripe.test/");
-        StripeRequest coupon = StripeStandIn.requests("POST", "/v1/coupons").getFirst();
-        assertThat(coupon.params()).containsEntry("id", "kinotic-design-partner").containsEntry("percent_off", "50")
-                                   .containsEntry("duration", "repeating").containsEntry("duration_in_months", "36");
         StripeRequest created = sessionOf(contact);
         assertThat(created.params()).containsEntry("discounts[0][coupon]", "kinotic-design-partner")
                                     .containsEntry("line_items[0][price]", StripeStandIn.priceId(StripeStandIn.lookupKey(StripeStandIn.CURRENT_PRICE_LIST,
