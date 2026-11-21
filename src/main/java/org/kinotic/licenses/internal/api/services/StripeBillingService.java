@@ -2,7 +2,6 @@ package org.kinotic.licenses.internal.api.services;
 
 import com.stripe.StripeClient;
 import com.stripe.exception.EventDataObjectDeserializationException;
-import com.stripe.exception.InvalidRequestException;
 import com.stripe.model.Event;
 import com.stripe.model.Invoice;
 import com.stripe.model.Price;
@@ -12,7 +11,6 @@ import com.stripe.model.SubscriptionItem;
 import com.stripe.model.SubscriptionSchedule;
 import com.stripe.model.checkout.Session;
 import com.stripe.service.V1Services;
-import com.stripe.param.CouponCreateParams;
 import com.stripe.param.common.EmptyParam;
 import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.PriceListParams;
@@ -87,11 +85,9 @@ public class StripeBillingService {
     private static final String LICENSE_ID_METADATA = "kinoticLicenseId";
     // the design partner application a discounted purchase was approved on
     private static final String APPLICATION_ID_METADATA = "kinoticDesignPartnerApplicationId";
-    /** The id of the Stripe coupon every design partner's subscription carries. */
+    /** The id of the Stripe coupon every design partner's subscription carries, which the Stripe account holds. */
     public static final String DESIGN_PARTNER_COUPON = "kinotic-design-partner";
-    /** The design partner discount, in percent off. */
-    public static final int DESIGN_PARTNER_PERCENT_OFF = 50;
-    /** How many months from its start a design partner's subscription is discounted. */
+    /** How many months from its start a design partner's subscription is discounted: the coupon's {@code duration_in_months}. */
     public static final int DESIGN_PARTNER_MONTHS = 36;
     private static final String SUBSCRIPTION_MODE = "subscription";
     private static final BigDecimal MINOR_UNITS = BigDecimal.valueOf(100);
@@ -111,7 +107,6 @@ public class StripeBillingService {
     // the work under way for each subscription, which the next event for it waits for
     private final Map<String, Future<Void>> reconciling = new ConcurrentHashMap<>();
     private volatile PriceCatalog catalog;
-    private volatile boolean couponReady;
 
     /**
      * The prices the customer buys at: those of the price list its active free license or trial keeps, or of the current price
@@ -166,9 +161,9 @@ public class StripeBillingService {
 
     /**
      * Starts the purchase of the plan and billing period of an approved design partner application, as
-     * {@link #startCheckout(Customer, LicenseParticipant, CheckoutRequest)} does, with the design partner discount on
-     * the subscription: {@value #DESIGN_PARTNER_PERCENT_OFF}% off for {@value #DESIGN_PARTNER_MONTHS} months. It buys
-     * one cluster; the customer adds more from the Customer Portal.
+     * {@link #startCheckout(Customer, LicenseParticipant, CheckoutRequest)} does, with the design partner coupon
+     * {@value #DESIGN_PARTNER_COUPON} on the subscription, which discounts it for {@value #DESIGN_PARTNER_MONTHS} months. It
+     * buys one cluster; the customer adds more from the Customer Portal.
      *
      * @return the Checkout Session URL, or a failure with {@link AlreadyExistsException} when the customer already
      *         holds a paid subscription
@@ -191,8 +186,7 @@ public class StripeBillingService {
             PriceLookupKey key = new PriceLookupKey(priceListFor(moving, prices), plan, period);
             Price price = prices.prices().get(key);
             Validate.validState(price != null, "Stripe has no active Price with the lookup key %s", key.lookupKey());
-            Future<String> coupon = application != null ? designPartnerCoupon() : Future.succeededFuture();
-            return coupon.compose(couponId -> ensureStripeCustomer(customer, buyer).compose(stripeCustomerId -> blocking(() -> {
+            return ensureStripeCustomer(customer, buyer).compose(stripeCustomerId -> blocking(() -> {
                 Map<String, String> metadata = new HashMap<>();
                 metadata.put(CUSTOMER_ID_METADATA, customer.getId());
                 if (moving != null) {
@@ -215,42 +209,12 @@ public class StripeBillingService {
                         .setBillingAddressCollection(SessionCreateParams.BillingAddressCollection.REQUIRED)
                         .putAllMetadata(metadata)
                         .setSubscriptionData(SessionCreateParams.SubscriptionData.builder().putAllMetadata(metadata).build());
-                if (couponId != null) {
-                    params.addDiscount(SessionCreateParams.Discount.builder().setCoupon(couponId).build());
+                if (application != null) {
+                    params.addDiscount(SessionCreateParams.Discount.builder().setCoupon(DESIGN_PARTNER_COUPON).build());
                 }
                 return stripe().checkout().sessions().create(params.build()).getUrl();
-            })));
+            }));
         }));
-    }
-
-    // The design partner coupon, created the first time it is needed. Its id is fixed, so every design partner shares
-    // the one coupon, and a server that finds it missing creates it.
-    private Future<String> designPartnerCoupon() {
-        Future<String> ret;
-        if (couponReady) {
-            ret = Future.succeededFuture(DESIGN_PARTNER_COUPON);
-        } else {
-            ret = blocking(() -> {
-                try {
-                    stripe().coupons().retrieve(DESIGN_PARTNER_COUPON);
-                } catch (InvalidRequestException e) {
-                    if (!Integer.valueOf(404).equals(e.getStatusCode())) {
-                        throw e;
-                    }
-                    stripe().coupons().create(CouponCreateParams.builder()
-                                                                .setId(DESIGN_PARTNER_COUPON)
-                                                                .setName("Kinotic design partner")
-                                                                .setPercentOff(BigDecimal.valueOf(DESIGN_PARTNER_PERCENT_OFF))
-                                                                .setDuration(CouponCreateParams.Duration.REPEATING)
-                                                                .setDurationInMonths((long) DESIGN_PARTNER_MONTHS)
-                                                                .build());
-                    log.info("Created the Stripe coupon {}", DESIGN_PARTNER_COUPON);
-                }
-                couponReady = true;
-                return DESIGN_PARTNER_COUPON;
-            });
-        }
-        return ret;
     }
 
     /**
